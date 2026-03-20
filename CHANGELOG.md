@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.4
+
+- Add agent launcher module for managing claude CLI subprocesses (sub-agent dispatch, LLM queries, orchestrator sessions)
+- Support real, dryRun, and mock operating modes for testability
+- Add agent launcher documentation
+
 ## 0.2.3
 
 - Add git worktree manager for isolating execution runs on separate branches (create, commit, merge, cleanup)
