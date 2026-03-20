@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.5
+
+- Migrate test suite from node:test to vitest with expect-style assertions
+- Add vitest.config.ts scoped to *.test.ts files only
+- Add test/ directory for shared test concerns
+- Add typecheck script with verbose tsc output
+- Add tsconfig.test.json for typechecking test files separately from build
+
 ## 0.1.4
 
 - Add state persistence layer (stateManager) with atomic writes and Zod validation
