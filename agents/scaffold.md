@@ -1,10 +1,8 @@
 ---
 name: scaffold
 description: Generate boilerplate files and directory structures
-tools:
-  - file_write
-  - file_read
 model: haiku
+allowed-tools: Read, Write
 ---
 
 # Scaffold Sub-Agent

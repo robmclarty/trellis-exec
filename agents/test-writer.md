@@ -1,10 +1,8 @@
 ---
 name: test-writer
 description: Create test files for source modules
-tools:
-  - file_write
-  - file_read
 model: sonnet
+allowed-tools: Read, Write, Glob, Grep
 ---
 
 # Test Writer Sub-Agent

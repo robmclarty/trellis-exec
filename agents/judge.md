@@ -1,9 +1,8 @@
 ---
 name: judge
 description: Evaluate phase changes for spec compliance
-tools:
-  - file_read
 model: sonnet
+allowed-tools: Read, Glob, Grep
 ---
 
 # Judge Sub-Agent

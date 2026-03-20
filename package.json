@@ -24,13 +24,18 @@
   },
   "scripts": {
     "build": "tsc",
-    "lint": "oxlint",
-    "lint:fix": "oxlint --fix",
+    "lint": "npm run lint:code && npm run lint:md && npm run lint:agents",
+    "lint:code": "oxlint",
+    "lint:code:fix": "oxlint --fix",
+    "lint:md": "markdownlint-cli2 '**/*.md' '#node_modules'",
+    "lint:agents": "agnix --target claude-code skills/ agents/ commands/",
     "test": "vitest run",
     "typecheck": "tsc --noEmit && tsc --project tsconfig.test.json --noEmit"
   },
   "devDependencies": {
     "@types/node": "25.5.0",
+    "agnix": "0.16.2",
+    "markdownlint-cli2": "0.21.0",
     "oxlint": "1.56.0",
     "tsx": "4.21.0",
     "typescript": "5.9.3",
