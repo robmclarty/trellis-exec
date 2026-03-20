@@ -14,12 +14,16 @@
   "author": "",
   "type": "module",
   "main": "index.js",
+  "bin": {
+    "trellis-exec": "./dist/cli.js"
+  },
   "directories": {
     "doc": "docs",
     "example": "examples",
     "test": "tests"
   },
   "scripts": {
+    "build": "tsc",
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
     "test": "vitest run",
