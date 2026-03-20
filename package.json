@@ -21,7 +21,7 @@
   },
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc --noEmit --verbose"
+    "typecheck": "tsc --noEmit --verbose && tsc --project test/tsconfig.json --verbose"
   },
   "devDependencies": {
     "@types/node": "25.5.0",
