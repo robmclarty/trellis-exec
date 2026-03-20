@@ -12,7 +12,7 @@
   },
   "license": "MIT",
   "author": "",
-  "type": "commonjs",
+  "type": "module",
   "main": "index.js",
   "directories": {
     "doc": "docs",
@@ -25,5 +25,8 @@
   "devDependencies": {
     "@types/node": "^25.5.0",
     "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "zod": "^4.3.6"
   }
 }
