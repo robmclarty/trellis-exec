@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.1
+
+- Add deterministic plan parser (Stage 1 of plan compiler) that extracts phases, tasks, spec references, file paths, dependencies, sub-agent types, and acceptance criteria from plan.md without LLM calls
+- Flag ambiguous fields for Stage 2 enrichment
+- Move test fixtures to test/fixtures
+
 ## 0.2.0
 
 - Add task scheduler with dependency resolution and parallel execution grouping
