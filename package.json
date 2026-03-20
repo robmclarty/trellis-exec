@@ -23,7 +23,7 @@
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit --verbose && tsc --project tsconfig.test.json --verbose"
+    "typecheck": "tsc --noEmit && tsc --project tsconfig.test.json --noEmit"
   },
   "devDependencies": {
     "@types/node": "25.5.0",
