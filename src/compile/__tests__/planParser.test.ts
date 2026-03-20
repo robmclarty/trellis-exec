@@ -5,7 +5,7 @@ import { parsePlan } from "../planParser.js";
 
 const FIXTURE_PATH = resolve(
   import.meta.dirname,
-  "../../../test-fixtures/sample-plan.md",
+  "../../../test/fixtures/sample-plan.md",
 );
 
 const SPEC_REF = "spec.md";
