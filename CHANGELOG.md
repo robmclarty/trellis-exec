@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.5
+
+- Add phase runner — the deterministic outer loop that composes all sub-modules into the full execution pipeline
+- Implements §6 Phase Runner Logic: phase iteration, orchestrator ↔ REPL turn loop, advance/retry/skip/halt action handling, worktree commits at phase boundaries, and resume from saved state
+- Add phase runner documentation
+
 ## 0.2.4
 
 - Add agent launcher module for managing claude CLI subprocesses (sub-agent dispatch, LLM queries, orchestrator sessions)
