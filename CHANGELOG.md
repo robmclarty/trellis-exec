@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.6
+
+- Add oxlint linter with lint and lint:fix npm scripts
+- Fix no-empty-file lint violation in test setup
+
 ## 0.1.5
 
 - Migrate test suite from node:test to vitest with expect-style assertions
