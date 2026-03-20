@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.7
+
+- Add plan enricher (Stage 2) with targeted Haiku calls for ambiguous fields flagged by the deterministic parser
+- Add prompt templates for enrichment and full-plan fallback parsing
+- Add `compilePlan` pipeline wiring Stages 1–3: deterministic parse → targeted enrichment → fallback
+- Add plan compiler architecture documentation
+
 ## 0.2.6
 
 - Add CLI entry point (`src/cli.ts`) with `run`, `compile`, and `status` subcommands
