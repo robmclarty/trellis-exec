@@ -1,6 +1,6 @@
 {
   "name": "trellis-exec",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Implementation execution pipeline for Trellis",
   "homepage": "https://github.com/robmclarty/trellis-exec#readme",
   "bugs": {
