@@ -92,11 +92,23 @@ function safePath(projectRoot: string, userPath: string): string {
 export function createReplHelpers(config: ReplHelpersConfig): ReplHelpers {
   const { projectRoot, specPath, statePath, agentLauncher } = config;
 
+  /**
+   * Reads a file from the project directory and returns its contents as a string.
+   * Paths are resolved relative to projectRoot; traversal outside the root throws.
+   * @param path - Relative or absolute path to the file
+   * @returns The file contents as UTF-8 text
+   */
   function readFile(path: string): string {
     const resolved = safePath(projectRoot, path);
     return readFileSync(resolved, "utf-8");
   }
 
+  /**
+   * Lists directory contents with name, type, and size for each entry.
+   * Directories report size as 0. Results are sorted alphabetically by name.
+   * @param path - Relative or absolute path to the directory
+   * @returns Array of entries with name, type ("file" | "dir"), and size in bytes
+   */
   function listDir(
     path: string,
   ): Array<{ name: string; type: "file" | "dir"; size: number }> {
@@ -113,6 +125,14 @@ export function createReplHelpers(config: ReplHelpersConfig): ReplHelpers {
       .sort((a, b) => a.name.localeCompare(b.name));
   }
 
+  /**
+   * Searches all files under projectRoot for lines matching a regex pattern.
+   * Optionally filters files by a glob pattern. Results are capped at 100 matches.
+   * Files that fail to read as UTF-8 are silently skipped.
+   * @param pattern - Regular expression pattern to match against each line
+   * @param glob - Optional glob pattern to filter which files are searched
+   * @returns Array of matches with relative path, 1-based line number, and line content
+   */
   function searchFiles(
     pattern: string,
     glob?: string,
@@ -153,6 +173,14 @@ export function createReplHelpers(config: ReplHelpersConfig): ReplHelpers {
     return results;
   }
 
+  /**
+   * Extracts specific sections from the spec file by section identifier.
+   * Parses headings matching `## §N` and returns the content between them.
+   * Multiple sections are joined with `---` separators. Missing sections
+   * produce a `[Section §N not found]` marker.
+   * @param sections - Array of section identifiers (e.g. ["§2", "§5"])
+   * @returns Concatenated markdown content of the requested sections
+   */
   function readSpecSections(sections: string[]): string {
     if (sections.length === 0) return "";
 
@@ -192,15 +220,30 @@ export function createReplHelpers(config: ReplHelpersConfig): ReplHelpers {
     return parts.join("\n\n---\n\n");
   }
 
+  /**
+   * Reads and validates the shared state from the state.json file on disk.
+   * @returns The current SharedState, validated against the Zod schema
+   */
   function getState(): SharedState {
     const raw = readFileSync(statePath, "utf-8");
     return SharedStateSchema.parse(JSON.parse(raw));
   }
 
+  /**
+   * Writes a phase report at the end of a phase. Currently a stub that logs
+   * the report's phase ID; the real implementation will persist to disk.
+   * @param report - The phase report to write
+   */
   function writePhaseReport(report: PhaseReport): void {
     console.log("[STUB] writePhaseReport:", report.phaseId);
   }
 
+  /**
+   * Dispatches a sub-agent to execute a task. Delegates to the configured
+   * agentLauncher if provided; otherwise returns a stub success response.
+   * @param subAgentConfig - Sub-agent type, task ID, instructions, and file scoping
+   * @returns The sub-agent execution result
+   */
   async function dispatchSubAgent(
     subAgentConfig: SubAgentConfig,
   ): Promise<SubAgentResult> {
@@ -211,11 +254,23 @@ export function createReplHelpers(config: ReplHelpersConfig): ReplHelpers {
     return { success: true, output: "[stub] agent dispatched", filesModified: [] };
   }
 
+  /**
+   * Runs the user-defined check command against the project (e.g. lint + test).
+   * Currently a stub that returns a passing result.
+   * @returns The check result with pass/fail status and output
+   */
   async function runCheck(): Promise<CheckResult> {
     console.log("[STUB] runCheck");
     return { passed: true, output: "[stub] check passed", exitCode: 0 };
   }
 
+  /**
+   * Sends a prompt to a fast LLM for quick analysis (not full task execution).
+   * Currently a stub that returns a placeholder response.
+   * @param prompt - The prompt text to send
+   * @param options - Optional model override (defaults to Haiku)
+   * @returns The LLM response text
+   */
   async function llmQuery(
     prompt: string,
     options?: { model?: string },

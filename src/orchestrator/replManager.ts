@@ -108,6 +108,15 @@ export function createReplSession(config: ReplSessionConfig): ReplSession {
   let consecutiveErrors = 0;
   let destroyed = false;
 
+  /**
+   * Evaluates JavaScript code in the sandboxed vm context. Tries expression
+   * form first (returning the value) via a compile-only Script check, then
+   * falls back to statement form. Code is wrapped in an async IIFE so `await`
+   * works. Output is truncated to outputLimit. Consecutive errors are tracked
+   * (incremented on failure, reset on success).
+   * @param code - JavaScript source code to evaluate
+   * @returns Eval result with success flag, output, truncation info, and duration
+   */
   async function evalCode(code: string): Promise<ReplEvalResult> {
     if (destroyed) {
       throw new Error("Session is destroyed");
@@ -188,20 +197,31 @@ export function createReplSession(config: ReplSessionConfig): ReplSession {
     }
   }
 
+  /**
+   * Re-injects all helper function references into the vm context from the
+   * stored originals. Call after each eval to prevent LLM-generated code from
+   * accidentally overwriting helpers.
+   */
   function restoreScaffold(): void {
     for (const name of HELPER_NAMES) {
       context[name] = originals[name];
     }
   }
 
+  /**
+   * Returns the number of sequential eval failures since the last success.
+   * The phase runner uses this to detect stuck error loops.
+   */
   function getConsecutiveErrors(): number {
     return consecutiveErrors;
   }
 
+  /** Resets the consecutive error counter to zero. */
   function resetConsecutiveErrors(): void {
     consecutiveErrors = 0;
   }
 
+  /** Marks the session as destroyed. Subsequent eval calls will throw. */
   function destroy(): void {
     destroyed = true;
   }
