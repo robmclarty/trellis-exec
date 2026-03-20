@@ -12,7 +12,7 @@ This split also makes the system testable. The deterministic parser has no exter
 
 ## Three-Stage Pipeline
 
-```
+```text
 plan.md
   │
   ▼

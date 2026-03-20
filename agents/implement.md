@@ -29,7 +29,7 @@ You receive:
 
 Respond with the complete contents of each file you create or modify. Use clear file path headers so the orchestrator can parse your output:
 
-```
+```text
 --- path/to/file.ts ---
 [complete file contents]
 ```

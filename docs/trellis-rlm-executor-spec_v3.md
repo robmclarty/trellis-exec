@@ -31,7 +31,7 @@ The system has four layers:
 
 Data flows top-to-bottom: `plan.md` → Plan Compiler → `tasks.json` → Phase Runner → Phase Orchestrator (per phase) → Sub-agents (per task) → check/verify (per task) → judge (per phase) → phase report → Phase Runner decides next step.
 
-```
+```text
 ┌──────────────────────────────────────────────────────┐
 │                   plan.md (input)                     │
 └────────────────────────┬─────────────────────────────┘
@@ -301,7 +301,7 @@ If Stage 1 fails to identify phase boundaries at all (the plan's structure is to
 
 ### Compile CLI
 
-```
+```text
 trellis-exec compile <plan.md> [options]
 
 Options:
@@ -315,7 +315,7 @@ Options:
 
 The phase runner is the primary entry point. Interactive mode is the default; `--headless` is opt-in.
 
-```
+```text
 trellis-exec run <tasks.json> [options]
 
 Options:
@@ -333,7 +333,7 @@ Options:
 
 Interactive mode (the default) pauses after each phase, displays the phase report, and prompts:
 
-```
+```text
 Phase 1 complete.
 
 [Enter] continue  [r] retry  [s] skip  [q] quit
@@ -341,7 +341,7 @@ Phase 1 complete.
 
 This lets the developer inspect results, review changes, and build trust in the system's output before advancing. `--headless` skips these prompts and runs all phases automatically.
 
-```
+```text
 trellis-exec status <tasks.json>
 
 Prints current state: which phases are done, which tasks passed/failed,
@@ -408,7 +408,7 @@ Sub-agents are Claude Code agent files in the `agents/` directory. The phase run
 
 Sub-agent input (assembled by the orchestrator):
 
-```
+```text
 You are a [type] sub-agent. Your task:
 
 [instructions from orchestrator]
@@ -439,6 +439,7 @@ Three tiers of verification, evaluated per task or per phase as noted:
 A user-defined shell command configured per project. Runs after each task completes. This is the hard gate. If check fails, the task is not considered complete.
 
 Example configurations:
+
 - `"npm run lint && npm run build && npm test"`
 - `"make check"`
 - `"./scripts/verify.sh"`
@@ -450,6 +451,7 @@ Configured via `--check` CLI flag, a `trellis-exec.config.json` file, or a `chec
 The orchestrator dynamically generates a verification step based on what the sub-agent just did. This could be a quick assertion, a specific test invocation, or an inspection of the output. The orchestrator decides whether to verify and what to verify. This runs inside the orchestrator's REPL session.
 
 Examples of what the orchestrator might do:
+
 - Read the created file and check it exports the expected functions
 - Run a specific test file that covers the changed module
 - Check that a new route is registered by grepping the route config
@@ -469,7 +471,7 @@ The judge does NOT create tasks or modify files. It is read-only. If the judge i
 
 The phase runner is entirely deterministic. Zero LLM calls. Its loop:
 
-```
+```text
 for each phase in tasks.json where status != "complete":
   1. Read state.json (or initialize if first phase)
   2. Read handoff from prior phase report (if exists)
@@ -759,7 +761,7 @@ The target project being operated on is assumed to have its own `package.json`, 
 
 The executor is a Claude Code plugin with a standalone CLI at its core.
 
-```
+```text
 trellis/
 ├── .claude-plugin/
 │   └── plugin.json
@@ -886,7 +888,7 @@ The executor is published through two channels that share the same `src/` codeba
 
 **CLI tool (npm)**
 
-```
+```bash
 npm install -g @robmclarty/trellis-exec
 trellis-exec run tasks.json --interactive
 trellis-exec compile plan.md --spec spec.md
@@ -897,7 +899,7 @@ This path is for developers who want the executor as a standalone command-line t
 
 **Claude Code plugin**
 
-```
+```bash
 claude plugin install github:robmclarty/trellis
 ```
 

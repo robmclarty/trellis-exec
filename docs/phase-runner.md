@@ -14,7 +14,7 @@ Without it, the caller would need to manually sequence module calls, handle retr
 
 The runner follows a strict sequence. Each step maps to a specific sub-module:
 
-```
+```text
 Load tasks.json            →  Zod validation (TasksJsonSchema)
 Validate dependencies      →  scheduler.validateDependencies()
 Load / init state          →  stateManager.loadState() / initState()
@@ -79,7 +79,7 @@ The runner supports resuming from a saved `state.json`. On startup, it loads exi
 
 The runner connects sub-modules through dependency injection rather than direct coupling:
 
-```
+```text
 phaseRunner.runPhases()
   ├── stateManager      — load, init, save, update
   ├── scheduler         — validate dependencies, resolve execution order
@@ -147,7 +147,7 @@ Reads a single line from stdin. Maps Enter → `"continue"`, `r` → `"retry"`, 
 
 Produces a human-readable execution plan without making any LLM calls. Uses the scheduler to resolve execution groups and detect target path overlaps.
 
-```
+```text
 Spec: ./spec.md
 Plan: ./plan.md
 Phases: 2

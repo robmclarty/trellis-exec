@@ -6,13 +6,13 @@
 
 After building (`npm run build`), the CLI is available as `trellis-exec` via the `bin` field in `package.json`. For global use:
 
-```
+```bash
 npm install -g @robmclarty/trellis-exec
 ```
 
 Or run directly from the project:
 
-```
+```bash
 node dist/cli.js <command> [options]
 ```
 
@@ -20,7 +20,7 @@ node dist/cli.js <command> [options]
 
 ### `run` — Execute phases
 
-```
+```bash
 trellis-exec run <tasks.json> [options]
 ```
 
@@ -69,7 +69,7 @@ trellis-exec run tasks.json --isolation none --concurrency 5
 
 ### `compile` — Compile a plan into tasks
 
-```
+```bash
 trellis-exec compile <plan.md> --spec <spec.md> [options]
 ```
 
@@ -96,13 +96,13 @@ trellis-exec compile plan.md --spec spec.md --output .specs/feature/tasks.json
 
 On success, prints a summary line:
 
-```
+```text
 Compiled 3 phases, 12 tasks → ./tasks.json
 ```
 
 If the parser flags fields that need LLM enrichment (Stage 2), a note is printed:
 
-```
+```text
 Note: 4 field(s) flagged for enrichment.
 ```
 
@@ -115,7 +115,7 @@ Note: 4 field(s) flagged for enrichment.
 
 ### `status` — Inspect execution state
 
-```
+```bash
 trellis-exec status <tasks.json>
 ```
 
@@ -131,7 +131,7 @@ Reads the `state.json` file adjacent to the given `tasks.json` and prints a summ
 
 **Example output:**
 
-```
+```text
 Current phase: phase-3
 Completed phases: phase-1, phase-2
 
@@ -150,7 +150,7 @@ Modified files: 14
 
 If no `state.json` exists (i.e. no run has been started), prints:
 
-```
+```text
 No execution state found. Run 'trellis-exec run' first.
 ```
 
@@ -201,7 +201,7 @@ All unhandled errors are caught at the top level, printed, and result in exit co
 
 ## Help
 
-```
+```bash
 trellis-exec --help
 trellis-exec -h
 ```

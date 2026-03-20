@@ -6,7 +6,7 @@ The phase orchestrator runs inside a sandboxed JavaScript REPL powered by `node:
 
 The REPL layer is split into two files with distinct responsibilities:
 
-```
+```text
 src/orchestrator/
 ├── replHelpers.ts    ← what the orchestrator can do (filesystem, state, agents)
 ├── replManager.ts    ← how code gets executed (vm sandbox, eval, error tracking)
@@ -49,7 +49,7 @@ A bare `vm.runInContext("1 + 2", ctx)` returns `3`. But some helpers (`dispatchS
 
 ### The solution: compile-probe with `Script`
 
-```
+```text
 1. Try:   (async () => { return ( <code> ) })()
 2. If that fails to parse, fall back to:
           (async () => { <code> })()
@@ -63,7 +63,7 @@ This is the same strategy Node's built-in REPL uses. The `Script` compile check 
 
 The `vm.runInContext` `timeout` option only applies to synchronous execution. An `await dispatchSubAgent(...)` call that hangs would block forever. The eval function handles this with:
 
-```
+```typescript
 Promise.race([resultPromise, timeoutPromise])
 ```
 
@@ -83,7 +83,7 @@ This means the orchestrator sees both side-effect output (logs) and the expressi
 
 Any output exceeding `outputLimit` (default 8192 chars) is sliced with a marker:
 
-```
+```text
 [TRUNCATED — showing first 8192 chars of 34210 total]
 ```
 

@@ -66,7 +66,7 @@ Removes the worktree via `git worktree remove --force`. Silently ignores errors 
 
 ### Typical lifecycle
 
-```
+```text
 createWorktree  →  [sub-agents work in worktree]  →  commitPhase
                          ↓ (repeat per phase)
                    mergeWorktree  →  cleanupWorktree
@@ -119,6 +119,7 @@ const result = await runner.run();
 ### Configuration
 
 The check command is configured per project via:
+
 - `--check` CLI flag
 - `trellis-exec.config.json`
 - `check` field in `tasks.json`

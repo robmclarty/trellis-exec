@@ -28,7 +28,7 @@ You receive:
 
 Respond with the complete contents of each file:
 
-```
+```text
 --- path/to/config.json ---
 [complete file contents]
 ```

@@ -1,7 +1,7 @@
 ---
 name: version
 description: Bump the project version (major, minor, or patch) across all manifest files and add a changelog entry. Use when preparing a release, bumping versions, or the user says "/version".
-allowed-tools: Read, Edit, Bash(git:*)
+allowed-tools: Read Edit Bash(git:*)
 ---
 
 Bump the project version using semver. Accepts one argument: `major`, `minor`, or `patch`.

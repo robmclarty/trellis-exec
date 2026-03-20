@@ -38,7 +38,7 @@ Keep tests focused and readable. Each test should verify one behavior. Use descr
 
 Respond with the complete contents of each test file:
 
-```
+```text
 --- path/to/module.test.ts ---
 [complete file contents]
 ```

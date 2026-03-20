@@ -1,0 +1,19 @@
+{
+  "config": {
+    // Disable line length — prose-heavy agent/skill/doc files don't benefit
+    "MD013": false,
+    // Frontmatter counts as first line; don't require heading before it
+    "MD041": false,
+    // Table column spacing is pedantic; tables render fine without it
+    "MD060": false,
+    // Bold emphasis is used intentionally as sub-headings in docs
+    "MD036": false,
+    // Duplicate heading names are valid across different sections
+    "MD024": false
+  },
+  // Ignore generated and third-party files
+  "ignores": [
+    "node_modules/**",
+    "dist/**"
+  ]
+}

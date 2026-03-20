@@ -105,7 +105,7 @@ handle.kill();    // sends SIGTERM
 
 `buildSubAgentPrompt(config)` assembles the prompt per the spec's §5 sub-agent input contract:
 
-```
+```text
 You are a {type} sub-agent. Your task:
 
 {instructions}
