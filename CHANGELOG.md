@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.9
+
+- Fix agent frontmatter to use `tools` instead of `allowed-tools` per official Claude Code sub-agent docs
+- Add Zod-based agent frontmatter linter with strict schema validation to catch unknown fields
+
 ## 0.2.8
 
 - Add agent markdown files: phase-orchestrator, implement, test-writer, scaffold, and judge
