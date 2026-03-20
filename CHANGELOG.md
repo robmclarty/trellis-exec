@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.8
+
+- Add agent markdown files: phase-orchestrator, implement, test-writer, scaffold, and judge
+- Update agent frontmatter to `allowed-tools` syntax matching current Claude Code format
+- Add agnix and markdownlint-cli2 dev dependencies with `lint:code`, `lint:md`, and `lint:agents` scripts
+- Add `.markdownlint-cli2.jsonc` config and fix all markdown lint errors across docs and agents
+- Fix skill `allowed-tools` to space-delimited format per Agent Skills spec
+
 ## 0.2.7
 
 - Add plan enricher (Stage 2) with targeted Haiku calls for ambiguous fields flagged by the deterministic parser

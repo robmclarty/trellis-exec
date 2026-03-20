@@ -1,6 +1,6 @@
 {
   "name": "trellis-exec",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "description": "Implementation execution pipeline for Trellis",
   "license": "MIT",
   "author": {
