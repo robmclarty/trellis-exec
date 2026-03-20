@@ -1,0 +1,29 @@
+{
+  "name": "trellis-exec",
+  "version": "0.1.0",
+  "description": "Implementation execution pipeline for Trellis",
+  "homepage": "https://github.com/robmclarty/trellis-exec#readme",
+  "bugs": {
+    "url": "https://github.com/robmclarty/trellis-exec/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/robmclarty/trellis-exec.git"
+  },
+  "license": "MIT",
+  "author": "",
+  "type": "commonjs",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs",
+    "example": "examples",
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "typescript": "^5.9.3"
+  }
+}

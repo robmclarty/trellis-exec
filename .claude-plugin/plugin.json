@@ -1,0 +1,21 @@
+{
+  "name": "trellis-exec",
+  "version": "0.1.0",
+  "description": "Implementation execution pipeline for Trellis",
+  "license": "MIT",
+  "author": {
+    "name": "Rob McLarty",
+    "email": "hello@robmclarty.com",
+    "url": "https://robmclarty.com"
+  },
+  "keywords": [
+    "trellis",
+    "execution",
+    "implementation",
+    "build",
+    "tasks",
+    "pipeline"
+  ],
+  "repository": "https://github.com/robmclarty/trellis-exec",
+  "homepage": "https://github.com/robmclarty/trellis-exec"
+}
