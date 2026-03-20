@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.0
+
+- Add task scheduler with dependency resolution and parallel execution grouping
+- Implement targetPaths overlap detection for implicit dependency serialization
+- Add dependency validation (missing refs, self-refs, circular dependencies)
+- Document scheduler grouping vs spec §10 #8 ordering rationale
+- Fix invalid --verbose flag in typecheck script
+
 ## 0.1.6
 
 - Add oxlint linter with lint and lint:fix npm scripts
