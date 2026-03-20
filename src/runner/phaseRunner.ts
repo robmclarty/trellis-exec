@@ -1,0 +1,753 @@
+import { readFileSync } from "node:fs";
+import { resolve, dirname } from "node:path";
+import { createInterface } from "node:readline";
+import { TasksJsonSchema } from "../types/tasks.js";
+import type { TasksJson, Phase, Task } from "../types/tasks.js";
+import type { SharedState, PhaseReport } from "../types/state.js";
+import type { TrajectoryLogger } from "../logging/trajectoryLogger.js";
+import type { OrchestratorHandle } from "../orchestrator/agentLauncher.js";
+import type { ReplSession } from "../orchestrator/replManager.js";
+import type { ReplHelpers } from "../orchestrator/replHelpers.js";
+import {
+  initState,
+  loadState,
+  saveState,
+  updateStateAfterPhase,
+} from "./stateManager.js";
+import {
+  validateDependencies,
+  resolveExecutionOrder,
+  detectTargetPathOverlaps,
+} from "./scheduler.js";
+import { createTrajectoryLogger } from "../logging/trajectoryLogger.js";
+import {
+  createWorktree,
+  commitPhase,
+  mergeWorktree,
+  cleanupWorktree,
+} from "../isolation/worktreeManager.js";
+import type { WorktreeResult } from "../isolation/worktreeManager.js";
+import { createCheckRunner } from "../verification/checkRunner.js";
+import { createAgentLauncher } from "../orchestrator/agentLauncher.js";
+import { createReplHelpers } from "../orchestrator/replHelpers.js";
+import { createReplSession } from "../orchestrator/replManager.js";
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+export type PhaseRunnerConfig = {
+  tasksJsonPath: string;
+  statePath?: string;
+  trajectoryPath?: string;
+  checkCommand?: string;
+  isolation: "worktree" | "none";
+  concurrency: number;
+  model?: string;
+  maxRetries: number;
+  headless: boolean;
+  verbose: boolean;
+  dryRun: boolean;
+  turnLimit: number;
+  maxConsecutiveErrors: number;
+  pluginRoot: string;
+};
+
+export type PhaseRunnerResult = {
+  success: boolean;
+  phasesCompleted: string[];
+  phasesFailed: string[];
+  finalState: SharedState;
+};
+
+type ResolvedConfig = PhaseRunnerConfig & {
+  statePath: string;
+  trajectoryPath: string;
+};
+
+type PhaseExecResult = {
+  status: "complete" | "partial" | "failed";
+  report: PhaseReport;
+};
+
+type TurnLoopResult = {
+  reason: "complete" | "turn_limit" | "errors" | "dead";
+};
+
+// ---------------------------------------------------------------------------
+// Pure helpers
+// ---------------------------------------------------------------------------
+
+function resolveDefaults(config: PhaseRunnerConfig): ResolvedConfig {
+  const dir = dirname(resolve(config.tasksJsonPath));
+  return {
+    ...config,
+    statePath: config.statePath ?? resolve(dir, "state.json"),
+    trajectoryPath: config.trajectoryPath ?? resolve(dir, "trajectory.jsonl"),
+  };
+}
+
+function loadAndValidateTasksJson(tasksJsonPath: string): TasksJson {
+  const raw = readFileSync(resolve(tasksJsonPath), "utf-8");
+  try {
+    return TasksJsonSchema.parse(JSON.parse(raw));
+  } catch (err) {
+    throw new Error(
+      `Invalid tasks.json at ${tasksJsonPath}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
+function deriveProjectRoot(
+  config: ResolvedConfig,
+  worktreeResult: WorktreeResult | null,
+): string {
+  if (
+    config.isolation === "worktree" &&
+    worktreeResult &&
+    worktreeResult.success
+  ) {
+    return worktreeResult.worktreePath;
+  }
+  return dirname(resolve(config.tasksJsonPath));
+}
+
+function getHandoffFromState(state: SharedState): string {
+  const last = state.phaseReports.at(-1);
+  return last?.handoff ?? "";
+}
+
+function buildPhaseContext(
+  phase: Phase,
+  state: SharedState,
+  handoff: string,
+  tasksJson: TasksJson,
+  checkCommand?: string,
+): string {
+  const lines: string[] = [];
+
+  lines.push(`# Phase: ${phase.name} (${phase.id})`);
+  lines.push("");
+  lines.push("## Description");
+  lines.push(phase.description);
+  lines.push("");
+  lines.push("## Tasks");
+
+  for (const task of phase.tasks) {
+    lines.push("");
+    lines.push(`### ${task.id}: ${task.title}`);
+    lines.push(`Status: ${task.status}`);
+    lines.push(
+      `Dependencies: ${task.dependsOn.length > 0 ? task.dependsOn.join(", ") : "none"}`,
+    );
+    lines.push(`Target paths: ${task.targetPaths.join(", ")}`);
+    lines.push(`Spec sections: ${task.specSections.join(", ")}`);
+    lines.push(`Sub-agent type: ${task.subAgentType}`);
+    lines.push("Acceptance criteria:");
+    for (const criterion of task.acceptanceCriteria) {
+      lines.push(`- ${criterion}`);
+    }
+    lines.push(`Description: ${task.description}`);
+  }
+
+  lines.push("");
+  lines.push("## Prior Phase Handoff");
+  lines.push(handoff || "This is the first phase.");
+  lines.push("");
+  lines.push("## Shared State Summary");
+  lines.push(
+    `Completed phases: ${state.completedPhases.length > 0 ? state.completedPhases.join(", ") : "none"}`,
+  );
+  lines.push(`Modified files: ${state.modifiedFiles.length}`);
+  lines.push(`Schema changes: ${state.schemaChanges.length}`);
+  lines.push("");
+  lines.push("## Spec Reference");
+  lines.push(tasksJson.specRef);
+  lines.push("");
+  lines.push("## Check Command");
+  lines.push(checkCommand ?? "none configured");
+
+  return lines.join("\n");
+}
+
+function buildPartialReport(
+  phaseId: string,
+  phase: Phase,
+  reason: string,
+): PhaseReport {
+  const tasksCompleted = phase.tasks
+    .filter((t) => t.status === "complete")
+    .map((t) => t.id);
+  const tasksFailed = phase.tasks
+    .filter((t) => t.status !== "complete" && t.status !== "skipped")
+    .map((t) => t.id);
+
+  return {
+    phaseId,
+    status: "partial",
+    summary: `Phase halted: ${reason}`,
+    tasksCompleted,
+    tasksFailed,
+    orchestratorAnalysis: `Phase terminated due to ${reason}. Manual intervention required.`,
+    recommendedAction: "halt",
+    correctiveTasks: [],
+    decisionsLog: [],
+    handoff: "",
+  };
+}
+
+function makeCorrectiveTask(
+  phaseId: string,
+  description: string,
+  index: number,
+): Task {
+  return {
+    id: `${phaseId}-corrective-${index}`,
+    title: description,
+    description,
+    dependsOn: [],
+    specSections: [],
+    targetPaths: [],
+    acceptanceCriteria: [],
+    subAgentType: "implement",
+    status: "pending",
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Dry run report
+// ---------------------------------------------------------------------------
+
+export function dryRunReport(tasksJson: TasksJson): string {
+  const lines: string[] = [];
+  lines.push(`Spec: ${tasksJson.specRef}`);
+  lines.push(`Plan: ${tasksJson.planRef}`);
+  lines.push(`Phases: ${tasksJson.phases.length}`);
+  lines.push("");
+
+  for (const phase of tasksJson.phases) {
+    lines.push(`## ${phase.id}: ${phase.name}`);
+    lines.push(phase.description);
+    lines.push("");
+
+    const groups = resolveExecutionOrder(phase.tasks);
+    for (const group of groups) {
+      const label = group.parallelizable ? "[parallel]" : "[sequential]";
+      lines.push(`  Group ${group.groupIndex} ${label}:`);
+      for (const taskId of group.taskIds) {
+        const task = phase.tasks.find((t) => t.id === taskId);
+        if (task) {
+          lines.push(
+            `    - ${task.id}: ${task.title} (${task.subAgentType})`,
+          );
+          lines.push(`      targets: ${task.targetPaths.join(", ")}`);
+        }
+      }
+    }
+
+    const overlaps = detectTargetPathOverlaps(phase.tasks);
+    if (overlaps.length > 0) {
+      lines.push("  Implicit dependencies (path overlaps):");
+      for (const [a, b] of overlaps) {
+        lines.push(`    ${a} <-> ${b}`);
+      }
+    }
+    lines.push("");
+  }
+
+  return lines.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Interactive prompt
+// ---------------------------------------------------------------------------
+
+export async function promptForContinuation(): Promise<
+  "continue" | "retry" | "skip" | "quit"
+> {
+  const rl = createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+
+  return new Promise((resolvePromise) => {
+    rl.question(
+      "\n[Enter] continue  [r] retry  [s] skip  [q] quit\n> ",
+      (answer) => {
+        rl.close();
+        const trimmed = answer.trim().toLowerCase();
+        if (trimmed === "r") resolvePromise("retry");
+        else if (trimmed === "s") resolvePromise("skip");
+        else if (trimmed === "q") resolvePromise("quit");
+        else resolvePromise("continue");
+      },
+    );
+  });
+}
+
+// ---------------------------------------------------------------------------
+// REPL turn loop
+// ---------------------------------------------------------------------------
+
+async function replTurnLoop(
+  orchestrator: OrchestratorHandle,
+  repl: ReplSession,
+  logger: TrajectoryLogger,
+  phaseId: string,
+  turnLimit: number,
+  maxConsecutiveErrors: number,
+  verbose: boolean,
+  isCaptured: () => boolean,
+): Promise<TurnLoopResult> {
+  let previousOutput = "Begin phase execution.";
+
+  for (let turnNumber = 1; turnNumber <= turnLimit; turnNumber++) {
+    if (!orchestrator.isAlive()) {
+      return { reason: "dead" };
+    }
+
+    const code = await orchestrator.send(previousOutput);
+
+    // Check if writePhaseReport was triggered by the orchestrator's response
+    if (isCaptured()) {
+      return { reason: "complete" };
+    }
+
+    const startTime = performance.now();
+    const evalResult = await repl.eval(code);
+    const duration = performance.now() - startTime;
+
+    repl.restoreScaffold();
+
+    logger.append({
+      phaseId,
+      turnNumber,
+      type: "repl_exec",
+      input: code,
+      output: evalResult.output,
+      duration,
+    });
+
+    if (verbose) {
+      console.log(`[turn ${turnNumber}] code: ${code.slice(0, 200)}`);
+      console.log(
+        `[turn ${turnNumber}] result: ${evalResult.output.slice(0, 200)}`,
+      );
+    }
+
+    if (repl.getConsecutiveErrors() >= maxConsecutiveErrors) {
+      return { reason: "errors" };
+    }
+
+    previousOutput = evalResult.success
+      ? evalResult.output
+      : `ERROR: ${evalResult.error ?? "unknown"}\n${evalResult.output}`;
+
+    // Check if writePhaseReport was called inside the eval'd code
+    if (isCaptured()) {
+      return { reason: "complete" };
+    }
+  }
+
+  return { reason: "turn_limit" };
+}
+
+// ---------------------------------------------------------------------------
+// Single phase execution
+// ---------------------------------------------------------------------------
+
+async function executePhase(
+  config: ResolvedConfig,
+  phase: Phase,
+  state: SharedState,
+  tasksJson: TasksJson,
+  projectRoot: string,
+  logger: TrajectoryLogger,
+): Promise<PhaseExecResult> {
+  const handoff = getHandoffFromState(state);
+
+  const launcher = createAgentLauncher({
+    pluginRoot: config.pluginRoot,
+    projectRoot,
+    dryRun: false,
+  });
+
+  const checkRunner = config.checkCommand
+    ? createCheckRunner({ command: config.checkCommand, cwd: projectRoot })
+    : null;
+
+  let capturedReport: PhaseReport | null = null;
+
+  const baseHelpers = createReplHelpers({
+    projectRoot,
+    specPath: resolve(projectRoot, tasksJson.specRef),
+    statePath: config.statePath,
+    agentLauncher: (c) => launcher.dispatchSubAgent(c),
+  });
+
+  const helpers: ReplHelpers = {
+    ...baseHelpers,
+    writePhaseReport: (report: PhaseReport) => {
+      capturedReport = report;
+    },
+    runCheck: checkRunner
+      ? () => checkRunner.run()
+      : baseHelpers.runCheck,
+    llmQuery: (prompt: string, options?: { model?: string }) =>
+      launcher.llmQuery(prompt, options),
+  };
+
+  const repl = createReplSession({
+    projectRoot,
+    outputLimit: 8192,
+    timeout: 30_000,
+    helpers,
+  });
+
+  const phaseContext = buildPhaseContext(
+    phase,
+    state,
+    handoff,
+    tasksJson,
+    config.checkCommand,
+  );
+
+  let orchestrator: OrchestratorHandle | null = null;
+
+  try {
+    const launchConfig = {
+      agentFile: resolve(config.pluginRoot, "agents/phase-orchestrator.md"),
+      skillsDir: resolve(config.pluginRoot, "skills"),
+      phaseContext,
+      ...(config.model !== undefined ? { model: config.model } : {}),
+    };
+    orchestrator = await launcher.launchOrchestrator(launchConfig);
+
+    const loopResult = await replTurnLoop(
+      orchestrator,
+      repl,
+      logger,
+      phase.id,
+      config.turnLimit,
+      config.maxConsecutiveErrors,
+      config.verbose,
+      () => capturedReport !== null,
+    );
+
+    const report =
+      capturedReport ??
+      buildPartialReport(phase.id, phase, loopResult.reason);
+
+    return {
+      status: report.status === "complete" ? "complete" : report.status,
+      report,
+    };
+  } catch (err) {
+    const reason =
+      err instanceof Error ? err.message : "unexpected error";
+    const report =
+      capturedReport ?? buildPartialReport(phase.id, phase, reason);
+    return { status: "failed", report };
+  } finally {
+    repl.destroy();
+    if (orchestrator) {
+      orchestrator.kill();
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Main loop
+// ---------------------------------------------------------------------------
+
+export async function runPhases(
+  config: PhaseRunnerConfig,
+): Promise<PhaseRunnerResult> {
+  const resolved = resolveDefaults(config);
+  const tasksJson = loadAndValidateTasksJson(resolved.tasksJsonPath);
+
+  // Validate dependencies for all phases upfront
+  for (const phase of tasksJson.phases) {
+    const validation = validateDependencies(phase.tasks);
+    if (!validation.valid) {
+      throw new Error(
+        `Phase ${phase.id} has invalid dependencies: ${validation.errors.join("; ")}`,
+      );
+    }
+  }
+
+  let state = loadState(resolved.statePath) ?? initState(tasksJson);
+  const logger = createTrajectoryLogger(resolved.trajectoryPath);
+  const phasesCompleted: string[] = [];
+  const phasesFailed: string[] = [];
+
+  // Worktree setup
+  let worktreeResult: WorktreeResult | null = null;
+  if (resolved.isolation === "worktree") {
+    worktreeResult = createWorktree({
+      projectRoot: dirname(resolve(resolved.tasksJsonPath)),
+      specName: tasksJson.specRef,
+    });
+    if (!worktreeResult.success) {
+      logger.close();
+      throw new Error(
+        `Failed to create worktree: ${worktreeResult.error ?? "unknown"}`,
+      );
+    }
+  }
+
+  const projectRoot = deriveProjectRoot(resolved, worktreeResult);
+
+  // Handle dry run early
+  if (resolved.dryRun) {
+    const report = dryRunReport(tasksJson);
+    console.log(report);
+    logger.close();
+    return {
+      success: true,
+      phasesCompleted: [],
+      phasesFailed: [],
+      finalState: state,
+    };
+  }
+
+  try {
+    let phaseIndex = 0;
+    while (phaseIndex < tasksJson.phases.length) {
+      const phase = tasksJson.phases[phaseIndex]!;
+
+      // Skip completed phases (resume support)
+      if (state.completedPhases.includes(phase.id)) {
+        phasesCompleted.push(phase.id);
+        phaseIndex++;
+        continue;
+      }
+
+      state = { ...state, currentPhase: phase.id };
+
+      const phaseResult = await executePhase(
+        resolved,
+        phase,
+        state,
+        tasksJson,
+        projectRoot,
+        logger,
+      );
+
+      const report = phaseResult.report;
+
+      // Determine action: combine report recommendation with user input
+      let action: "advance" | "retry" | "skip" | "halt" =
+        report.recommendedAction === "advance" ? "advance" : "halt";
+
+      if (!resolved.headless) {
+        const userChoice = await promptForContinuation();
+        if (userChoice === "quit") {
+          // Save report to state before exiting
+          state = {
+            ...state,
+            phaseReports: [...state.phaseReports, report],
+          };
+          phasesFailed.push(phase.id);
+          saveState(resolved.statePath, state);
+          break;
+        }
+        if (userChoice === "retry") {
+          action = "retry";
+        } else if (userChoice === "skip") {
+          action = "skip";
+        }
+        // "continue" defers to report's recommendation
+      }
+
+      // In headless mode, follow the report's recommendation
+      if (resolved.headless && report.recommendedAction === "retry") {
+        action = "retry";
+      }
+
+      if (action === "retry") {
+        const retryCount = state.phaseRetries[phase.id] ?? 0;
+        if (retryCount < resolved.maxRetries) {
+          state = {
+            ...state,
+            phaseReports: [...state.phaseReports, report],
+            phaseRetries: {
+              ...state.phaseRetries,
+              [phase.id]: retryCount + 1,
+            },
+          };
+          // Append corrective tasks
+          if (report.correctiveTasks.length > 0) {
+            const newTasks = report.correctiveTasks.map((desc, i) =>
+              makeCorrectiveTask(phase.id, desc, i),
+            );
+            phase.tasks.push(...newTasks);
+          }
+          saveState(resolved.statePath, state);
+          // Don't increment phaseIndex — re-enter same phase
+          continue;
+        }
+        // Max retries exceeded — halt
+        phasesFailed.push(phase.id);
+        state = {
+          ...state,
+          phaseReports: [...state.phaseReports, report],
+        };
+        saveState(resolved.statePath, state);
+        break;
+      }
+
+      if (action === "skip") {
+        phasesCompleted.push(phase.id);
+        state = {
+          ...state,
+          completedPhases: [...state.completedPhases, phase.id],
+          phaseReports: [...state.phaseReports, report],
+        };
+        saveState(resolved.statePath, state);
+        phaseIndex++;
+        continue;
+      }
+
+      if (action === "halt") {
+        phasesFailed.push(phase.id);
+        state = {
+          ...state,
+          phaseReports: [...state.phaseReports, report],
+        };
+        saveState(resolved.statePath, state);
+        break;
+      }
+
+      // action === "advance"
+      phasesCompleted.push(phase.id);
+      state = updateStateAfterPhase(state, report, tasksJson.phases);
+      if (worktreeResult) {
+        commitPhase(worktreeResult.worktreePath, phase.id);
+      }
+      saveState(resolved.statePath, state);
+      phaseIndex++;
+    }
+
+    // Merge worktree on success
+    if (
+      worktreeResult &&
+      phasesFailed.length === 0 &&
+      phasesCompleted.length > 0
+    ) {
+      const mergeResult = mergeWorktree({
+        projectRoot: dirname(resolve(resolved.tasksJsonPath)),
+        worktreePath: worktreeResult.worktreePath,
+        branchName: worktreeResult.branchName,
+      });
+      if (!mergeResult.success) {
+        console.error("Worktree merge failed:", mergeResult.error);
+      }
+    }
+  } finally {
+    if (worktreeResult) {
+      cleanupWorktree(worktreeResult.worktreePath);
+    }
+    logger.close();
+  }
+
+  return {
+    success: phasesFailed.length === 0,
+    phasesCompleted,
+    phasesFailed,
+    finalState: state,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Single phase runner
+// ---------------------------------------------------------------------------
+
+export async function runSinglePhase(
+  config: PhaseRunnerConfig,
+  phaseId: string,
+): Promise<PhaseRunnerResult> {
+  const resolved = resolveDefaults(config);
+  const tasksJson = loadAndValidateTasksJson(resolved.tasksJsonPath);
+
+  const phase = tasksJson.phases.find((p) => p.id === phaseId);
+  if (!phase) {
+    throw new Error(`Phase not found: ${phaseId}`);
+  }
+
+  const validation = validateDependencies(phase.tasks);
+  if (!validation.valid) {
+    throw new Error(
+      `Phase ${phase.id} has invalid dependencies: ${validation.errors.join("; ")}`,
+    );
+  }
+
+  let state = loadState(resolved.statePath) ?? initState(tasksJson);
+  const logger = createTrajectoryLogger(resolved.trajectoryPath);
+  const phasesCompleted: string[] = [];
+  const phasesFailed: string[] = [];
+
+  let worktreeResult: WorktreeResult | null = null;
+  if (resolved.isolation === "worktree") {
+    worktreeResult = createWorktree({
+      projectRoot: dirname(resolve(resolved.tasksJsonPath)),
+      specName: tasksJson.specRef,
+    });
+    if (!worktreeResult.success) {
+      logger.close();
+      throw new Error(
+        `Failed to create worktree: ${worktreeResult.error ?? "unknown"}`,
+      );
+    }
+  }
+
+  const projectRoot = deriveProjectRoot(resolved, worktreeResult);
+
+  try {
+    state = { ...state, currentPhase: phase.id };
+
+    const phaseResult = await executePhase(
+      resolved,
+      phase,
+      state,
+      tasksJson,
+      projectRoot,
+      logger,
+    );
+
+    const report = phaseResult.report;
+
+    if (phaseResult.status === "complete") {
+      phasesCompleted.push(phase.id);
+      state = updateStateAfterPhase(state, report, tasksJson.phases);
+      if (worktreeResult) {
+        commitPhase(worktreeResult.worktreePath, phase.id);
+        mergeWorktree({
+          projectRoot: dirname(resolve(resolved.tasksJsonPath)),
+          worktreePath: worktreeResult.worktreePath,
+          branchName: worktreeResult.branchName,
+        });
+      }
+    } else {
+      phasesFailed.push(phase.id);
+      state = {
+        ...state,
+        phaseReports: [...state.phaseReports, report],
+      };
+    }
+
+    saveState(resolved.statePath, state);
+  } finally {
+    if (worktreeResult) {
+      cleanupWorktree(worktreeResult.worktreePath);
+    }
+    logger.close();
+  }
+
+  return {
+    success: phasesFailed.length === 0,
+    phasesCompleted,
+    phasesFailed,
+    finalState: state,
+  };
+}
