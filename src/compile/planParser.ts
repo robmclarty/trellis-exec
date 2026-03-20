@@ -10,6 +10,11 @@ const PHASE_HEADING_PATTERNS = [
   /^#{1,3}\s+(\d+)\.\s+(.+)$/,
 ];
 
+/**
+ * Attempts to parse a markdown heading as a phase boundary.
+ * Supports formats like "## Phase 1: Name", "## 1. Name", "# Phase 1 — Name".
+ * Returns the phase number and name, or null if the line is not a phase heading.
+ */
 function parsePhaseHeading(
   line: string,
 ): { number: number; name: string } | null {
@@ -30,6 +35,10 @@ function parsePhaseHeading(
 
 const TASK_LINE_PATTERN = /^(?:-|\d+\.)\s+(.+)$/;
 
+/**
+ * Detects a zero-indent list item ("- " or "N. ") and returns the title text.
+ * Indented sub-items are not matched — they belong to the current task's description.
+ */
 function parseTaskLine(line: string): string | null {
   const match = TASK_LINE_PATTERN.exec(line);
   if (match && match[1] !== undefined) {
@@ -38,16 +47,19 @@ function parseTaskLine(line: string): string | null {
   return null;
 }
 
+/** Returns true if the line starts with 2+ spaces or a tab (task description continuation). */
 function isIndentedContent(line: string): boolean {
   return /^(?:  |\t)/.test(line);
 }
 
+/** Returns true if the line is a code fence boundary (triple backticks). */
 function isCodeFenceBoundary(line: string): boolean {
   return /^\s*```/.test(line);
 }
 
 // --- Extractors ---
 
+/** Finds all §N spec section references in the text and returns them deduplicated. */
 function extractSpecSections(text: string): string[] {
   const matches = new Set<string>();
   const regex = /§(\d+)/g;
@@ -63,10 +75,15 @@ function extractSpecSections(text: string): string[] {
 const PATH_EXTENSIONS =
   /\.(ts|tsx|js|jsx|json|md|yaml|yml|toml|css|html|sql|sh|env|py|go|rs|vue|svelte)$/;
 
+/** Heuristic: returns true if the string contains a "/" or ends with a known file extension. */
 function looksLikePath(s: string): boolean {
   return s.includes("/") || PATH_EXTENSIONS.test(s);
 }
 
+/**
+ * Extracts file paths from backtick-delimited strings in the text.
+ * Code fence blocks are stripped first to avoid false positives from code examples.
+ */
 function extractBacktickPaths(text: string): string[] {
   // Remove code fence blocks before extracting
   const withoutFences = text.replace(/```[\s\S]*?```/g, "");
@@ -82,6 +99,11 @@ function extractBacktickPaths(text: string): string[] {
   return [...paths];
 }
 
+/**
+ * Extracts acceptance criteria from a task description.
+ * Recognizes checkbox items ("- [ ] ..."), and lines following
+ * "Acceptance:", "Verify:", or "Criteria:" labels.
+ */
 function extractAcceptanceCriteria(description: string): string[] {
   const criteria: string[] = [];
   const lines = description.split("\n");
@@ -137,6 +159,11 @@ const AGENT_KEYWORDS: Array<{ type: string; pattern: RegExp }> = [
   { type: "judge", pattern: /\breview\b|\bevaluat\w*\b|\bjudge\b|\bassess\b/i },
 ];
 
+/**
+ * Classifies a task's sub-agent type based on keyword matching against the
+ * title and description. Priority order: test-writer > scaffold > judge > implement.
+ * If multiple categories match, returns the highest-priority match and marks ambiguous.
+ */
 function classifySubAgentType(
   title: string,
   description: string,
@@ -162,6 +189,11 @@ function classifySubAgentType(
 
 // --- Dependency inference ---
 
+/**
+ * Infers task dependencies by checking for targetPaths overlap.
+ * If task B shares a file path with an earlier task A, B depends on A.
+ * Tasks are compared in order (flattened across phases).
+ */
 function inferDependencies(
   allTasks: Array<{ id: string; targetPaths: string[] }>,
 ): Map<string, string[]> {
@@ -186,6 +218,7 @@ function inferDependencies(
   return deps;
 }
 
+/** Returns true if any path in pathsA exactly matches any path in pathsB. */
 function hasPathOverlap(pathsA: string[], pathsB: string[]): boolean {
   for (const a of pathsA) {
     for (const b of pathsB) {
@@ -215,6 +248,7 @@ type ParserState = {
   phases: RawPhase[];
 };
 
+/** Pushes the current in-progress task onto the current phase's task list and resets it. */
 function finalizeTask(state: ParserState): void {
   if (state.currentTask && state.currentPhase) {
     const lastPhase = state.phases[state.phases.length - 1];
@@ -225,11 +259,16 @@ function finalizeTask(state: ParserState): void {
   state.currentTask = null;
 }
 
+/** Finalizes the current task (if any) and resets the current phase. */
 function finalizePhase(state: ParserState): void {
   finalizeTask(state);
   state.currentPhase = null;
 }
 
+/**
+ * Line-by-line state machine that splits markdown into raw phases and tasks.
+ * Tracks code fence state to avoid misinterpreting fenced content as structure.
+ */
 function parseLines(lines: string[]): RawPhase[] {
   const state: ParserState = {
     currentPhase: null,
@@ -295,6 +334,11 @@ function parseLines(lines: string[]): RawPhase[] {
 
 // --- Assembly ---
 
+/**
+ * Assembles raw parsed phases into a complete TasksJson structure.
+ * Runs all extractors (spec sections, paths, criteria, agent type) on each task,
+ * infers cross-task dependencies, and collects enrichment flags for ambiguous fields.
+ */
 function buildTasksJson(
   rawPhases: RawPhase[],
   specRef: string,
@@ -377,6 +421,13 @@ function buildTasksJson(
 
 // --- Public API ---
 
+/**
+ * Deterministic Stage 1 parser that converts plan.md markdown into a TasksJson structure.
+ * Extracts phases, tasks, spec references, file paths, dependencies, sub-agent types,
+ * and acceptance criteria without any LLM calls. Fields that cannot be resolved
+ * deterministically are flagged in enrichmentNeeded for Stage 2 (Haiku enrichment).
+ * Returns success: false if no phase boundaries can be identified.
+ */
 export function parsePlan(
   planContent: string,
   specRef: string,

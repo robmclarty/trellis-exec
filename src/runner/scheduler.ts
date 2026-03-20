@@ -40,6 +40,7 @@ export function validateDependencies(tasks: Task[]): ValidationResult {
   return { valid: errors.length === 0, errors };
 }
 
+/** Detects circular dependencies via DFS (white/gray/black coloring). Returns an error message or null. */
 function detectCycle(tasks: Task[]): string | null {
   const WHITE = 0;
   const GRAY = 1;
@@ -114,10 +115,12 @@ export function detectTargetPathOverlaps(
   return pairs;
 }
 
+/** Strips a trailing slash from a path for consistent comparison. */
 function normalizePath(p: string): string {
   return p.endsWith("/") ? p.slice(0, -1) : p;
 }
 
+/** Returns true if two paths are identical or one is a parent directory of the other. */
 function twoPathsOverlap(a: string, b: string): boolean {
   const na = normalizePath(a);
   const nb = normalizePath(b);
@@ -126,6 +129,7 @@ function twoPathsOverlap(a: string, b: string): boolean {
   );
 }
 
+/** Returns true if any path in pathsA overlaps with any path in pathsB. */
 function pathsOverlap(pathsA: string[], pathsB: string[]): boolean {
   for (const a of pathsA) {
     for (const b of pathsB) {
