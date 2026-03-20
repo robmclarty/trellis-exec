@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.2
+
+- Add REPL manager (replManager.ts) with vm-based sandboxed eval, expression-first async execution, output truncation, scaffold restoration, and consecutive error tracking
+- Add REPL helper factory (replHelpers.ts) with filesystem helpers (readFile, listDir, searchFiles, readSpecSections, getState) and stubs for agent/LLM helpers
+- Add REPL architecture documentation
+- Add JSDoc comments to orchestrator, planParser, and scheduler functions
+
 ## 0.2.1
 
 - Add deterministic plan parser (Stage 1 of plan compiler) that extracts phases, tasks, spec references, file paths, dependencies, sub-agent types, and acceptance criteria from plan.md without LLM calls
