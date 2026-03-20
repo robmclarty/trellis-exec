@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.3
+
+- Add git worktree manager for isolating execution runs on separate branches (create, commit, merge, cleanup)
+- Add check runner for executing user-defined verification commands as a deterministic gate after each task
+- Add documentation for worktree manager and check runner modules
+
 ## 0.2.2
 
 - Add REPL manager (replManager.ts) with vm-based sandboxed eval, expression-first async execution, output truncation, scaffold restoration, and consecutive error tracking
