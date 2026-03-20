@@ -20,7 +20,8 @@
     "test": "tests"
   },
   "scripts": {
-    "test": "vitest run"
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit --verbose"
   },
   "devDependencies": {
     "@types/node": "25.5.0",
