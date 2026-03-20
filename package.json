@@ -20,7 +20,7 @@
     "test": "tests"
   },
   "scripts": {
-    "test": "node --import tsx/esm --test src/**/__tests__/**/*.test.ts"
+    "test": "vitest run"
   },
   "devDependencies": {
     "@types/node": "25.5.0",

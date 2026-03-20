@@ -1,5 +1,4 @@
-import { describe, it, beforeEach, afterEach } from "node:test";
-import assert from "node:assert/strict";
+import { describe, it, beforeEach, afterEach, expect } from "vitest";
 import {
   mkdtempSync,
   rmSync,
@@ -96,12 +95,12 @@ describe("stateManager", () => {
       const tasks = makeTasksJson();
       const state = initState(tasks);
 
-      assert.equal(state.currentPhase, "phase-1");
-      assert.deepEqual(state.completedPhases, []);
-      assert.deepEqual(state.modifiedFiles, []);
-      assert.deepEqual(state.schemaChanges, []);
-      assert.deepEqual(state.phaseReports, []);
-      assert.deepEqual(state.phaseRetries, {});
+      expect(state.currentPhase).toBe("phase-1");
+      expect(state.completedPhases).toEqual([]);
+      expect(state.modifiedFiles).toEqual([]);
+      expect(state.schemaChanges).toEqual([]);
+      expect(state.phaseReports).toEqual([]);
+      expect(state.phaseRetries).toEqual({});
     });
 
     it("throws if TasksJson has no phases", () => {
@@ -112,7 +111,7 @@ describe("stateManager", () => {
         phases: [],
       };
 
-      assert.throws(() => initState(tasks), /at least one phase/);
+      expect(() => initState(tasks)).toThrow(/at least one phase/);
     });
   });
 
@@ -125,7 +124,7 @@ describe("stateManager", () => {
       saveState(statePath, state);
       const loaded = loadState(statePath);
 
-      assert.deepEqual(loaded, state);
+      expect(loaded).toEqual(state);
     });
 
     it("atomic write leaves no .tmp file behind", () => {
@@ -135,8 +134,8 @@ describe("stateManager", () => {
 
       saveState(statePath, state);
 
-      assert.equal(existsSync(`${statePath}.tmp`), false);
-      assert.equal(existsSync(statePath), true);
+      expect(existsSync(`${statePath}.tmp`)).toBe(false);
+      expect(existsSync(statePath)).toBe(true);
     });
 
     it("saveState writes valid JSON", () => {
@@ -148,21 +147,21 @@ describe("stateManager", () => {
 
       const raw = readFileSync(statePath, "utf-8");
       const parsed = JSON.parse(raw);
-      assert.equal(parsed.currentPhase, "phase-1");
+      expect(parsed.currentPhase).toBe("phase-1");
     });
   });
 
   describe("loadState", () => {
     it("returns null for missing file", () => {
       const result = loadState(join(tmpDir, "nonexistent.json"));
-      assert.equal(result, null);
+      expect(result).toBeNull();
     });
 
     it("throws for malformed JSON", () => {
       const statePath = join(tmpDir, "bad.json");
       writeFileSync(statePath, "not json at all", "utf-8");
 
-      assert.throws(() => loadState(statePath));
+      expect(() => loadState(statePath)).toThrow();
     });
 
     it("throws for invalid schema", () => {
@@ -173,7 +172,7 @@ describe("stateManager", () => {
         "utf-8",
       );
 
-      assert.throws(() => loadState(statePath));
+      expect(() => loadState(statePath)).toThrow();
     });
   });
 
@@ -185,10 +184,10 @@ describe("stateManager", () => {
 
       const updated = updateStateAfterPhase(state, report, tasks.phases);
 
-      assert.equal(updated.currentPhase, "phase-2");
-      assert.deepEqual(updated.completedPhases, ["phase-1"]);
-      assert.equal(updated.phaseReports.length, 1);
-      assert.equal(updated.phaseReports[0]?.phaseId, "phase-1");
+      expect(updated.currentPhase).toBe("phase-2");
+      expect(updated.completedPhases).toEqual(["phase-1"]);
+      expect(updated.phaseReports.length).toBe(1);
+      expect(updated.phaseReports[0]?.phaseId).toBe("phase-1");
     });
 
     it("sets currentPhase to empty string when last phase completes", () => {
@@ -207,8 +206,8 @@ describe("stateManager", () => {
         tasks.phases,
       );
 
-      assert.equal(state.currentPhase, "");
-      assert.deepEqual(state.completedPhases, ["phase-1", "phase-2"]);
+      expect(state.currentPhase).toBe("");
+      expect(state.completedPhases).toEqual(["phase-1", "phase-2"]);
     });
 
     it("does not mutate the original state", () => {
@@ -218,9 +217,9 @@ describe("stateManager", () => {
 
       const updated = updateStateAfterPhase(state, report, tasks.phases);
 
-      assert.equal(state.currentPhase, "phase-1");
-      assert.deepEqual(state.completedPhases, []);
-      assert.notEqual(state, updated);
+      expect(state.currentPhase).toBe("phase-1");
+      expect(state.completedPhases).toEqual([]);
+      expect(state).not.toBe(updated);
     });
   });
 
@@ -231,7 +230,7 @@ describe("stateManager", () => {
 
       const phase = updated.phases.find((p) => p.id === "phase-1");
       const task = phase?.tasks.find((t) => t.id === "task-1-1");
-      assert.equal(task?.status, "complete");
+      expect(task?.status).toBe("complete");
     });
 
     it("does not mutate the original TasksJson", () => {
@@ -239,23 +238,21 @@ describe("stateManager", () => {
       updateTaskStatus(tasks, "phase-1", "task-1-1", "complete");
 
       const task = tasks.phases[0]?.tasks[0];
-      assert.equal(task?.status, "pending");
+      expect(task?.status).toBe("pending");
     });
 
     it("throws for unknown phase", () => {
       const tasks = makeTasksJson();
-      assert.throws(
+      expect(
         () => updateTaskStatus(tasks, "phase-99", "task-1-1", "complete"),
-        /Phase not found/,
-      );
+      ).toThrow(/Phase not found/);
     });
 
     it("throws for unknown task", () => {
       const tasks = makeTasksJson();
-      assert.throws(
+      expect(
         () => updateTaskStatus(tasks, "phase-1", "task-99", "complete"),
-        /Task not found/,
-      );
+      ).toThrow(/Task not found/);
     });
   });
 });

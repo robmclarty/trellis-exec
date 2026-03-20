@@ -1,5 +1,4 @@
-import { describe, it, beforeEach, afterEach } from "node:test";
-import assert from "node:assert/strict";
+import { describe, it, beforeEach, afterEach, expect } from "vitest";
 import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -36,11 +35,11 @@ describe("trajectoryLogger", () => {
     logger.close();
 
     const lines = readFileSync(logPath, "utf-8").trim().split("\n");
-    assert.equal(lines.length, 1);
+    expect(lines.length).toBe(1);
 
     const parsed = JSON.parse(lines[0]!);
-    assert.equal(parsed.phaseId, "phase-1");
-    assert.equal(parsed.type, "repl_exec");
+    expect(parsed.phaseId).toBe("phase-1");
+    expect(parsed.type).toBe("repl_exec");
   });
 
   it("append includes timestamp automatically", () => {
@@ -55,9 +54,9 @@ describe("trajectoryLogger", () => {
     const lines = readFileSync(logPath, "utf-8").trim().split("\n");
     const parsed = JSON.parse(lines[0]!);
 
-    assert.ok(parsed.timestamp);
-    assert.ok(parsed.timestamp >= before);
-    assert.ok(parsed.timestamp <= after);
+    expect(parsed.timestamp).toBeTruthy();
+    expect(parsed.timestamp >= before).toBe(true);
+    expect(parsed.timestamp <= after).toBe(true);
   });
 
   it("multiple appends produce valid JSONL", () => {
@@ -70,15 +69,15 @@ describe("trajectoryLogger", () => {
     logger.close();
 
     const lines = readFileSync(logPath, "utf-8").trim().split("\n");
-    assert.equal(lines.length, 3);
+    expect(lines.length).toBe(3);
 
     // Each line should be valid JSON
     const entries = lines.map((line) => JSON.parse(line));
-    assert.equal(entries[0]?.turnNumber, 1);
-    assert.equal(entries[1]?.turnNumber, 2);
-    assert.equal(entries[2]?.turnNumber, 3);
-    assert.equal(entries[1]?.type, "check_run");
-    assert.equal(entries[2]?.type, "judge_invoke");
+    expect(entries[0]?.turnNumber).toBe(1);
+    expect(entries[1]?.turnNumber).toBe(2);
+    expect(entries[2]?.turnNumber).toBe(3);
+    expect(entries[1]?.type).toBe("check_run");
+    expect(entries[2]?.type).toBe("judge_invoke");
   });
 
   it("close prevents further writes", () => {
@@ -88,6 +87,6 @@ describe("trajectoryLogger", () => {
     logger.append(makeEvent());
     logger.close();
 
-    assert.throws(() => logger.append(makeEvent()), /closed/);
+    expect(() => logger.append(makeEvent())).toThrow(/closed/);
   });
 });
