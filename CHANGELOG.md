@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.6
+
+- Add CLI entry point (`src/cli.ts`) with `run`, `compile`, and `status` subcommands
+- Argument parsing via Node built-in `util.parseArgs()` with environment variable fallbacks
+- CLI flags override environment variables; environment variables override defaults
+- Add `bin` field and `build` script to `package.json`
+- Include compiled `dist/` output for direct installation
+- Add CLI reference documentation (`docs/cli.md`)
+
 ## 0.2.5
 
 - Add phase runner — the deterministic outer loop that composes all sub-modules into the full execution pipeline
