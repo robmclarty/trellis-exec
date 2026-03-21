@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.10
+
+- Add eight orchestrator skills: compile, dispatch-agent, explore-codebase, manage-phase, quick-query, run, status, and verify-work
+- Add skill architecture documentation explaining the rationale for skill-based orchestrator design
+- Add agnix linter configuration
+- Fix agent tools frontmatter to use YAML array syntax
+
 ## 0.2.9
 
 - Fix agent frontmatter to use `tools` instead of `allowed-tools` per official Claude Code sub-agent docs
