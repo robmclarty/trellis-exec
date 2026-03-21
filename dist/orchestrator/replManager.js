@@ -51,11 +51,25 @@ export function createReplSession(config) {
             consoleBuffer.push("[error] " + args.map(String).join(" "));
         },
     };
+    // Tracked timers — cleared on destroy to prevent leaks from LLM-generated code
+    const activeTimers = new Set();
+    const sandboxSetTimeout = (fn, ms) => {
+        const id = setTimeout((...args) => {
+            activeTimers.delete(id);
+            fn(...args);
+        }, ms);
+        activeTimers.add(id);
+        return id;
+    };
+    const sandboxClearTimeout = (id) => {
+        activeTimers.delete(id);
+        clearTimeout(id);
+    };
     // Build sandbox with helpers, console, and safe globals
     const sandbox = {
         console: capturedConsole,
-        setTimeout,
-        clearTimeout,
+        setTimeout: sandboxSetTimeout,
+        clearTimeout: sandboxClearTimeout,
         JSON,
         Math,
         Date,
@@ -172,9 +186,13 @@ export function createReplSession(config) {
     function resetConsecutiveErrors() {
         consecutiveErrors = 0;
     }
-    /** Marks the session as destroyed. Subsequent eval calls will throw. */
+    /** Marks the session as destroyed. Clears outstanding timers and rejects subsequent eval calls. */
     function destroy() {
         destroyed = true;
+        for (const id of activeTimers) {
+            clearTimeout(id);
+        }
+        activeTimers.clear();
     }
     return {
         eval: evalCode,

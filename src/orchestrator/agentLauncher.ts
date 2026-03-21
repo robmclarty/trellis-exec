@@ -1,5 +1,4 @@
 import { spawn } from "node:child_process";
-import type { ChildProcess } from "node:child_process";
 import { resolve } from "node:path";
 import type { SubAgentConfig, SubAgentResult } from "../types/agents.js";
 
@@ -67,7 +66,7 @@ export function buildSubAgentPrompt(config: SubAgentConfig): string {
   }
 
   lines.push(
-    "Respond with the complete contents of each file you create or modify.",
+    "Use the Write tool to create new files and the Edit tool to modify existing files. Do not just output code as text.",
   );
 
   return lines.join("\n");
@@ -80,7 +79,14 @@ export function buildSubAgentArgs(
   agentFile: string,
   model: string,
 ): string[] {
-  return ["--agent-file", agentFile, "--print", "--model", model];
+  return [
+    "--agent",
+    agentFile,
+    "--print",
+    "--dangerously-skip-permissions",
+    "--model",
+    model,
+  ];
 }
 
 /**
@@ -90,15 +96,53 @@ export function buildLlmQueryArgs(model: string): string[] {
   return ["--print", "--model", model];
 }
 
+const REPL_SYSTEM_PROMPT =
+  "CRITICAL: You are communicating through a JavaScript REPL. " +
+  "Your ENTIRE response must be valid JavaScript code. " +
+  "Do NOT include any natural language, markdown, or explanations. " +
+  "Output ONLY plain JavaScript (no TypeScript, no export/import, no module.exports). " +
+  "Use REPL helpers: readFile(), listDir(), dispatchSubAgent(), runCheck(), writePhaseReport(), llmQuery(). " +
+  "After dispatchSubAgent succeeds, call runCheck() then writePhaseReport().";
+
 /**
- * Builds the CLI args array for launching an interactive orchestrator.
+ * Builds the CLI args for the first orchestrator turn.
+ * Subsequent turns use --continue to resume the session.
  */
 export function buildOrchestratorArgs(
   config: OrchestratorLaunchConfig,
 ): string[] {
   const args = [
-    "--agent-file",
+    "--agent",
     config.agentFile,
+    "--print",
+    "--dangerously-skip-permissions",
+    "--disallowedTools",
+    "Write,Edit,Bash,Read,Glob,Grep,NotebookEdit,Agent,WebFetch,WebSearch,TodoWrite",
+    "--append-system-prompt",
+    REPL_SYSTEM_PROMPT,
+    "--add-dir",
+    config.skillsDir,
+  ];
+  if (config.model) {
+    args.push("--model", config.model);
+  }
+  return args;
+}
+
+/**
+ * Builds the CLI args for continuing an orchestrator session (turn 2+).
+ */
+export function buildOrchestratorContinueArgs(
+  config: OrchestratorLaunchConfig,
+): string[] {
+  const args = [
+    "--print",
+    "--continue",
+    "--dangerously-skip-permissions",
+    "--disallowedTools",
+    "Write,Edit,Bash,Read,Glob,Grep,NotebookEdit,Agent,WebFetch,WebSearch,TodoWrite",
+    "--append-system-prompt",
+    REPL_SYSTEM_PROMPT,
     "--add-dir",
     config.skillsDir,
   ];
@@ -239,23 +283,23 @@ export function createAgentLauncher(config: AgentLauncherConfig): AgentLauncher 
   async function launchOrchestrator(
     orchestratorConfig: OrchestratorLaunchConfig,
   ): Promise<OrchestratorHandle> {
-    const args = buildOrchestratorArgs(orchestratorConfig);
+    const firstArgs = buildOrchestratorArgs(orchestratorConfig);
 
     if (dryRun) {
-      console.log("[dry-run] launchOrchestrator:", "claude", args.join(" "));
+      console.log("[dry-run] launchOrchestrator:", "claude", firstArgs.join(" "));
       return createDryRunHandle();
     }
 
-    // Spawn as a long-running interactive process (no --print).
-    // Assumption: the claude CLI accepts input on stdin and produces
-    // responses on stdout. The exact framing protocol (line-delimited,
-    // JSON, etc.) will be validated during integration testing (phase 14).
-    const child = spawn("claude", args, {
-      cwd: projectRoot,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-
-    return createProcessHandle(child, orchestratorConfig.phaseContext);
+    // Use sequential one-shot calls with --continue for multi-turn.
+    // Turn 1: claude --print --agent ... <phaseContext>
+    // Turn 2+: claude --print --continue ... <input>
+    const continueArgs = buildOrchestratorContinueArgs(orchestratorConfig);
+    return createSequentialHandle(
+      firstArgs,
+      continueArgs,
+      projectRoot,
+      orchestratorConfig.phaseContext,
+    );
   }
 
   return { dispatchSubAgent, llmQuery, launchOrchestrator };
@@ -282,65 +326,51 @@ function createDryRunHandle(): OrchestratorHandle {
 }
 
 /**
- * Creates an OrchestratorHandle wrapping a long-running claude subprocess.
+ * Creates an OrchestratorHandle using sequential one-shot claude calls.
  *
- * Assumptions (to be validated in integration testing):
- * - The initial phaseContext is sent to stdin on launch.
- * - Subsequent send() calls write to stdin and collect the response
- *   from stdout until a delimiter or silence indicates completion.
- * - Currently uses a simple approach: write input, collect all stdout
- *   data until a configurable idle timeout, then return accumulated output.
- *   This may need refinement once the real interactive protocol is known.
+ * Turn 1 uses the full args (--agent, etc.) with the phaseContext as stdin.
+ * Subsequent turns use --continue to resume the session.
+ * Each turn spawns a fresh claude process via execClaude().
  */
-function createProcessHandle(
-  child: ChildProcess,
+function createSequentialHandle(
+  firstArgs: string[],
+  continueArgs: string[],
+  projectRoot: string,
   phaseContext: string,
 ): OrchestratorHandle {
-  // Send the initial phase context to the orchestrator
-  child.stdin!.write(phaseContext + "\n");
+  let turnCount = 0;
+  let alive = true;
+  let lastError: string | null = null;
 
   return {
-    send(input: string): Promise<string> {
-      return new Promise((resolvePromise, reject) => {
-        if (child.exitCode !== null) {
-          reject(new Error("Orchestrator process has exited"));
-          return;
-        }
+    async send(input: string): Promise<string> {
+      if (!alive) {
+        throw new Error(
+          `Orchestrator has been killed${lastError ? `: ${lastError}` : ""}`,
+        );
+      }
 
-        const chunks: Buffer[] = [];
+      turnCount++;
+      const isFirstTurn = turnCount === 1;
+      const args = isFirstTurn ? firstArgs : continueArgs;
+      const prompt = isFirstTurn ? phaseContext + "\n\n" + input : input;
 
-        const onData = (chunk: Buffer) => {
-          chunks.push(chunk);
-        };
-        child.stdout!.on("data", onData);
+      const result = await execClaude(args, projectRoot, prompt);
 
-        // Use an idle timeout to detect end of response.
-        // This is a simplistic approach; the real protocol may use
-        // explicit delimiters or structured framing.
-        const IDLE_TIMEOUT = 5_000;
-        let idleTimer: ReturnType<typeof setTimeout>;
+      if (result.exitCode !== 0) {
+        lastError = result.stderr || `exit code ${result.exitCode}`;
+        throw new Error(`Orchestrator turn failed: ${lastError}`);
+      }
 
-        const resetIdle = () => {
-          clearTimeout(idleTimer);
-          idleTimer = setTimeout(() => {
-            child.stdout!.removeListener("data", onData);
-            child.stdout!.removeListener("data", resetIdle);
-            resolvePromise(Buffer.concat(chunks).toString("utf-8"));
-          }, IDLE_TIMEOUT);
-        };
-
-        child.stdout!.on("data", resetIdle);
-        child.stdin!.write(input + "\n");
-        resetIdle();
-      });
+      return result.stdout;
     },
 
     isAlive(): boolean {
-      return child.exitCode === null;
+      return alive;
     },
 
     kill(): void {
-      child.kill("SIGTERM");
+      alive = false;
     },
   };
 }

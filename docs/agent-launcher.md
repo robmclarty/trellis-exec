@@ -132,7 +132,7 @@ All subprocess spawning goes through a shared `execClaude` helper that uses `chi
 | Timeout | 5 minutes default for sub-agents; SIGTERM on expiry |
 | stdout/stderr | Collected as buffers, decoded to UTF-8 on completion |
 | Exit codes | Non-zero exit → `SubAgentResult.success = false` with error |
-| Orchestrator idle | 5-second idle timeout detects end of response (see assumptions below) |
+| Orchestrator turn | Sequential one-shot calls with `--continue`; 5-minute timeout per call |
 
 ## Path resolution
 
@@ -156,15 +156,15 @@ const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT ?? resolve(__dirname, "../..")
 | `SubAgentConfig` | `type`, `taskId`, `instructions`, `filePaths`, `outputPaths`, `model?` (from `types/agents.ts`) |
 | `SubAgentResult` | `success`, `output`, `filesModified`, `error?` (from `types/agents.ts`) |
 
-## Assumptions and future work
+## Orchestrator protocol
 
-The `OrchestratorHandle` is the least-proven part of this module. Its current implementation makes assumptions about the `claude` CLI's interactive stdin/stdout protocol:
+The `OrchestratorHandle` communicates with the Claude CLI using sequential one-shot `--print` calls:
 
-1. **Input framing**: newline-terminated text written to stdin.
-2. **Response detection**: idle timeout (5 seconds of no stdout data) signals end of response.
-3. **Initial context**: the `phaseContext` string is sent immediately on process launch.
-
-These assumptions will be validated during integration testing (phase 14 of the implementation plan). The handle's `send()` method may need to switch to delimiter-based framing, structured JSON messages, or a different signaling mechanism depending on what the real `claude` CLI supports.
+1. **Turn 1**: `claude --print --agent <agentFile> --dangerously-skip-permissions --disallowedTools ... --append-system-prompt <REPL_PROMPT> --add-dir <skillsDir> [--model <model>]` with phaseContext + initial input as stdin.
+2. **Turn 2+**: `claude --print --continue --dangerously-skip-permissions --disallowedTools ... --append-system-prompt <REPL_PROMPT> --add-dir <skillsDir> [--model <model>]` with REPL output as stdin.
+3. **Tool restrictions**: The orchestrator has file-manipulation tools disabled (`--disallowedTools`) and uses REPL helpers (`readFile`, `dispatchSubAgent`, `runCheck`, `writePhaseReport`, etc.) instead.
+4. **Response extraction**: The phase runner's `extractCode()` extracts JavaScript from Claude's response (from code fences or raw text), filtering out natural language responses.
+5. **Sub-agents**: Use `--dangerously-skip-permissions` and have full tool access (Write, Edit, Read) to actually create/modify files.
 
 The `filesModified` field in `SubAgentResult` is returned as an empty array from real mode — populating it requires parsing the sub-agent's output to detect which files were actually written. This parsing logic belongs in the phase runner or orchestrator, not the launcher.
 
@@ -175,4 +175,4 @@ The `filesModified` field in `SubAgentResult` is returned as an empty array from
 | Sub-agent model | Sonnet |
 | llmQuery model | Haiku |
 | Sub-agent timeout | 300,000ms (5 minutes) |
-| Orchestrator idle timeout | 5,000ms |
+| Orchestrator turn timeout | 300,000ms (5 minutes per turn) |

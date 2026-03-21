@@ -1,5 +1,5 @@
-import { execSync } from "node:child_process";
-import path from "node:path";
+import { execFileSync } from "node:child_process";
+import path, { resolve } from "node:path";
 /**
  * Generates a compact ISO timestamp suitable for branch names.
  * @returns Timestamp string like "20260319T1423"
@@ -41,7 +41,7 @@ export function createWorktree(config) {
     const slug = branchToSlug(branch);
     const worktreePath = path.join(projectRoot, ".trellis-worktrees", slug);
     try {
-        execSync("git rev-parse --git-dir", {
+        execFileSync("git", ["rev-parse", "--git-dir"], {
             cwd: projectRoot,
             encoding: "utf-8",
             stdio: "pipe",
@@ -51,7 +51,7 @@ export function createWorktree(config) {
         return { success: false, worktreePath: "", branchName: branch, error: "Not a git repository" };
     }
     try {
-        execSync(`git worktree add -b "${branch}" "${worktreePath}" HEAD`, {
+        execFileSync("git", ["worktree", "add", "-b", branch, worktreePath, "HEAD"], {
             cwd: projectRoot,
             encoding: "utf-8",
             stdio: "pipe",
@@ -74,13 +74,13 @@ export function createWorktree(config) {
 export function commitPhase(worktreePath, phaseId, message) {
     const commitMessage = message ?? `trellis-exec: complete ${phaseId}`;
     try {
-        execSync("git add -A", { cwd: worktreePath, encoding: "utf-8", stdio: "pipe" });
+        execFileSync("git", ["add", "-A"], { cwd: worktreePath, encoding: "utf-8", stdio: "pipe" });
     }
     catch {
         return false;
     }
     try {
-        execSync("git diff --cached --quiet", {
+        execFileSync("git", ["diff", "--cached", "--quiet"], {
             cwd: worktreePath,
             encoding: "utf-8",
             stdio: "pipe",
@@ -92,7 +92,7 @@ export function commitPhase(worktreePath, phaseId, message) {
         // Exit non-zero means there are staged changes — proceed to commit
     }
     try {
-        execSync(`git commit -m "${commitMessage}"`, {
+        execFileSync("git", ["commit", "-m", commitMessage], {
             cwd: worktreePath,
             encoding: "utf-8",
             stdio: "pipe",
@@ -115,7 +115,7 @@ export function commitPhase(worktreePath, phaseId, message) {
 export function mergeWorktree(config) {
     const { projectRoot, branchName } = config;
     try {
-        execSync(`git merge ${branchName} --no-edit`, {
+        execFileSync("git", ["merge", branchName, "--no-edit"], {
             cwd: projectRoot,
             encoding: "utf-8",
             stdio: "pipe",
@@ -134,9 +134,11 @@ export function mergeWorktree(config) {
  * @param worktreePath - Absolute path to the worktree to remove
  */
 export function cleanupWorktree(worktreePath) {
+    // Derive project root: worktreePath is always <projectRoot>/.trellis-worktrees/<slug>
+    const projectRoot = resolve(worktreePath, "..", "..");
     try {
-        execSync(`git worktree remove "${worktreePath}" --force`, {
-            cwd: worktreePath,
+        execFileSync("git", ["worktree", "remove", worktreePath, "--force"], {
+            cwd: projectRoot,
             encoding: "utf-8",
             stdio: "pipe",
         });

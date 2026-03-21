@@ -6,6 +6,7 @@ import {
   buildSubAgentArgs,
   buildLlmQueryArgs,
   buildOrchestratorArgs,
+  buildOrchestratorContinueArgs,
 } from "../agentLauncher.js";
 import type {
   AgentLauncherConfig,
@@ -69,10 +70,10 @@ describe("buildSubAgentPrompt", () => {
     expect(prompt).toContain("src/db/schema.ts");
   });
 
-  it("includes the response instruction", () => {
+  it("includes the tool usage instruction", () => {
     const prompt = buildSubAgentPrompt(makeSubAgentConfig());
     expect(prompt).toContain(
-      "Respond with the complete contents of each file you create or modify.",
+      "Use the Write tool to create new files",
     );
   });
 
@@ -93,9 +94,10 @@ describe("buildSubAgentArgs", () => {
   it("builds the correct args array", () => {
     const args = buildSubAgentArgs("/plugin/agents/implementer.md", "sonnet");
     expect(args).toEqual([
-      "--agent-file",
+      "--agent",
       "/plugin/agents/implementer.md",
       "--print",
+      "--dangerously-skip-permissions",
       "--model",
       "sonnet",
     ]);
@@ -110,7 +112,7 @@ describe("buildLlmQueryArgs", () => {
 });
 
 describe("buildOrchestratorArgs", () => {
-  it("builds args with model", () => {
+  it("builds first-turn args with model", () => {
     const config: OrchestratorLaunchConfig = {
       agentFile: "/plugin/agents/phase-orchestrator.md",
       skillsDir: "/plugin/skills",
@@ -118,14 +120,14 @@ describe("buildOrchestratorArgs", () => {
       model: "sonnet",
     };
     const args = buildOrchestratorArgs(config);
-    expect(args).toEqual([
-      "--agent-file",
-      "/plugin/agents/phase-orchestrator.md",
-      "--add-dir",
-      "/plugin/skills",
-      "--model",
-      "sonnet",
-    ]);
+    expect(args).toContain("--agent");
+    expect(args).toContain("--print");
+    expect(args).toContain("--dangerously-skip-permissions");
+    expect(args).toContain("--disallowedTools");
+    expect(args).toContain("--append-system-prompt");
+    expect(args).toContain("--add-dir");
+    expect(args).toContain("--model");
+    expect(args).toContain("sonnet");
   });
 
   it("omits model flag when not specified", () => {
@@ -136,6 +138,28 @@ describe("buildOrchestratorArgs", () => {
     };
     const args = buildOrchestratorArgs(config);
     expect(args).not.toContain("--model");
+  });
+});
+
+describe("buildOrchestratorContinueArgs", () => {
+  it("builds continuation args with --continue", () => {
+    const config: OrchestratorLaunchConfig = {
+      agentFile: "/plugin/agents/phase-orchestrator.md",
+      skillsDir: "/plugin/skills",
+      phaseContext: "phase context",
+      model: "sonnet",
+    };
+    const args = buildOrchestratorContinueArgs(config);
+    expect(args).toContain("--print");
+    expect(args).toContain("--continue");
+    expect(args).toContain("--dangerously-skip-permissions");
+    expect(args).toContain("--disallowedTools");
+    expect(args).toContain("--append-system-prompt");
+    expect(args).toContain("--add-dir");
+    expect(args).toContain("--model");
+    expect(args).toContain("sonnet");
+    // Should not include --agent (session already knows the agent)
+    expect(args).not.toContain("--agent");
   });
 });
 
@@ -249,17 +273,9 @@ describe("createAgentLauncher", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Issue #4: In createProcessHandle, `resetIdle` was attached to
-  // child.stdout via `.on("data", resetIdle)` but never removed when the
-  // idle timer fired — only `onData` was removed. Each `send()` call added
-  // another persistent `resetIdle` listener, accumulating unbounded
-  // listeners and timers across the process lifetime.
-  //
-  // Mitigation: The idle timeout callback now removes both `onData` and
-  // `resetIdle` from child.stdout, ensuring clean listener teardown after
-  // each send/response cycle. This is tested indirectly below through the
-  // dry-run handle's lifecycle, and directly through the listener removal
-  // code path in the production implementation.
+  // The real orchestrator uses sequential one-shot calls with --continue
+  // for multi-turn conversation. Each send() spawns a fresh claude process.
+  // The dry-run handle tests below verify the OrchestratorHandle contract.
   // -------------------------------------------------------------------------
 
   describe("launchOrchestrator", () => {

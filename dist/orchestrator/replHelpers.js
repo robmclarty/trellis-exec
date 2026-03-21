@@ -103,7 +103,16 @@ export function createReplHelpers(config) {
      * @returns Array of matches with relative path, 1-based line number, and line content
      */
     function searchFiles(pattern, glob) {
-        const regex = new RegExp(pattern);
+        let regex;
+        try {
+            if (pattern.length > 200) {
+                return [];
+            }
+            regex = new RegExp(pattern);
+        }
+        catch {
+            return [];
+        }
         const globRegex = glob ? globToRegex(glob) : null;
         const results = [];
         const entries = readdirSync(projectRoot, {
@@ -186,7 +195,25 @@ export function createReplHelpers(config) {
      * @returns The current SharedState, validated against the Zod schema
      */
     function getState() {
-        const raw = readFileSync(statePath, "utf-8");
+        let raw;
+        try {
+            raw = readFileSync(statePath, "utf-8");
+        }
+        catch (err) {
+            if (err instanceof Error &&
+                "code" in err &&
+                err.code === "ENOENT") {
+                return SharedStateSchema.parse({
+                    currentPhase: "",
+                    completedPhases: [],
+                    phaseReports: [],
+                    phaseRetries: {},
+                    modifiedFiles: [],
+                    schemaChanges: [],
+                });
+            }
+            throw err;
+        }
         return SharedStateSchema.parse(JSON.parse(raw));
     }
     /**

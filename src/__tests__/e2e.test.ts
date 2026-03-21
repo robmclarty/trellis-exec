@@ -267,8 +267,9 @@ function setupMocksForSuccess(
 }
 
 function hasClaude(): boolean {
+  if (!process.env["TRELLIS_E2E_CLAUDE"]) return false;
   try {
-    execSync("which claude", { stdio: "pipe" });
+    execSync("claude --version", { stdio: "pipe", timeout: 5_000 });
     return true;
   } catch {
     return false;

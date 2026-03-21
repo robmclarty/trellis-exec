@@ -78,6 +78,23 @@ function buildPhaseContext(phase, state, handoff, tasksJson, checkCommand) {
     lines.push("");
     lines.push("## Check Command");
     lines.push(checkCommand ?? "none configured");
+    lines.push("");
+    lines.push("## REPL Protocol");
+    lines.push("IMPORTANT: You are communicating through a JavaScript REPL. " +
+        "Every response you give will be eval'd as JavaScript. " +
+        "Do NOT include any natural language, explanations, or markdown. " +
+        "Output ONLY plain JavaScript code (no TypeScript, no `export`, no `module.exports`).");
+    lines.push("");
+    lines.push("Available REPL helper functions:");
+    lines.push("- readFile(path) — read a file, returns string");
+    lines.push("- listDir(path) — list directory contents");
+    lines.push("- searchFiles(pattern) — search files by glob pattern");
+    lines.push("- readSpecSections(...sections) — read specific spec sections");
+    lines.push("- await dispatchSubAgent({ type, taskId, instructions, filePaths, outputPaths }) — dispatch a sub-agent to create/modify files");
+    lines.push("- await runCheck() — run the project check command");
+    lines.push("- getState() — get current shared state");
+    lines.push("- await writePhaseReport({ status, recommendedAction, ... }) — write the phase report (signals completion)");
+    lines.push("- await llmQuery(prompt, options?) — quick LLM query for analysis");
     return lines.join("\n");
 }
 function buildPartialReport(phaseId, phase, reason) {
@@ -173,6 +190,47 @@ export async function promptForContinuation() {
     });
 }
 // ---------------------------------------------------------------------------
+// Code extraction from orchestrator responses
+// ---------------------------------------------------------------------------
+/**
+ * Extracts executable JS code from an orchestrator response.
+ *
+ * The orchestrator may wrap code in markdown fences (```js ... ```) or
+ * include explanatory text alongside code. This function extracts the
+ * code blocks, falling back to the raw response if no fences are found.
+ * If the response is clearly natural language (not JS), returns empty string.
+ */
+export function extractCode(response) {
+    // Match fenced code blocks: ```js, ```javascript, ```typescript, or plain ```
+    const fencePattern = /```(?:js|javascript|typescript|ts)?\s*\n([\s\S]*?)```/g;
+    const blocks = [];
+    let match;
+    while ((match = fencePattern.exec(response)) !== null) {
+        blocks.push(match[1].trim());
+    }
+    if (blocks.length > 0) {
+        return blocks.join("\n\n");
+    }
+    const trimmed = response.trim();
+    // Heuristic: detect natural language responses.
+    // JS code typically starts with: const, let, var, await, function, //, (,
+    // or an identifier followed by ( or =.
+    // Natural language starts with: The, I, This, It, File, Task, etc.
+    const jsStartPattern = /^(?:const |let |var |await |function |\/\/|\/\*|\(|[a-z_$][a-z0-9_$]*\s*[=(.])/i;
+    if (!jsStartPattern.test(trimmed)) {
+        return "";
+    }
+    // Additional check: if the first line is a sentence (contains spaces and
+    // no operators), it's likely natural language
+    const firstLine = trimmed.split("\n")[0];
+    if (/^[A-Z][a-z]/.test(firstLine) &&
+        firstLine.includes(" ") &&
+        !/[=;{}[\]]/.test(firstLine)) {
+        return "";
+    }
+    return trimmed;
+}
+// ---------------------------------------------------------------------------
 // REPL turn loop
 // ---------------------------------------------------------------------------
 async function replTurnLoop(orchestrator, repl, logger, phaseId, turnLimit, maxConsecutiveErrors, verbose, isCaptured) {
@@ -181,10 +239,29 @@ async function replTurnLoop(orchestrator, repl, logger, phaseId, turnLimit, maxC
         if (!orchestrator.isAlive()) {
             return { reason: "dead" };
         }
-        const code = await orchestrator.send(previousOutput);
+        const rawResponse = await orchestrator.send(previousOutput);
+        const code = extractCode(rawResponse);
         // Check if writePhaseReport was triggered by the orchestrator's response
         if (isCaptured()) {
             return { reason: "complete" };
+        }
+        // If extractCode returned empty (natural language response), skip eval
+        // and send a corrective nudge
+        if (!code) {
+            if (verbose) {
+                console.log(`[turn ${turnNumber}] skipped: response was natural language`);
+            }
+            previousOutput =
+                "REPL: Your response was natural language and was skipped. " +
+                    "You MUST output ONLY JavaScript code. The functions runCheck() and " +
+                    "writePhaseReport() are real JavaScript functions available in this REPL. " +
+                    "Example of what you should output next:\n\n" +
+                    "await runCheck()\n\n" +
+                    "Or if checks pass, write the report:\n\n" +
+                    'await writePhaseReport({ status: "complete", recommendedAction: "advance", ' +
+                    'taskOutcomes: [{ taskId: "phase-1-task-1", status: "passed" }], ' +
+                    'handoffBriefing: "Phase 1 complete." })';
+            continue;
         }
         const startTime = performance.now();
         const evalResult = await repl.eval(code);
@@ -205,9 +282,11 @@ async function replTurnLoop(orchestrator, repl, logger, phaseId, turnLimit, maxC
         if (repl.getConsecutiveErrors() >= maxConsecutiveErrors) {
             return { reason: "errors" };
         }
-        previousOutput = evalResult.success
+        const rawOutput = evalResult.success
             ? evalResult.output
             : `ERROR: ${evalResult.error ?? "unknown"}\n${evalResult.output}`;
+        // Ensure we never send an empty string (claude --print requires input)
+        previousOutput = rawOutput.trim() || "(no output)";
         // Check if writePhaseReport was called inside the eval'd code
         if (isCaptured()) {
             return { reason: "complete" };
@@ -223,7 +302,7 @@ async function executePhase(config, phase, state, tasksJson, projectRoot, logger
     const launcher = createAgentLauncher({
         pluginRoot: config.pluginRoot,
         projectRoot,
-        dryRun: false,
+        dryRun: config.dryRun,
     });
     const checkRunner = config.checkCommand
         ? createCheckRunner({ command: config.checkCommand, cwd: projectRoot })
@@ -271,6 +350,9 @@ async function executePhase(config, phase, state, tasksJson, projectRoot, logger
     }
     catch (err) {
         const reason = err instanceof Error ? err.message : "unexpected error";
+        if (config.verbose) {
+            console.error(`[executePhase] error:`, err);
+        }
         const report = capturedReport ?? buildPartialReport(phase.id, phase, reason);
         return { status: "failed", report };
     }
@@ -375,8 +457,11 @@ export async function runPhases(config) {
                     };
                     // Append corrective tasks
                     if (report.correctiveTasks.length > 0) {
-                        const newTasks = report.correctiveTasks.map((desc, i) => makeCorrectiveTask(phase.id, desc, i));
-                        phase.tasks.push(...newTasks);
+                        const newTasks = report.correctiveTasks.map((desc, i) => makeCorrectiveTask(phase.id, desc, i + retryCount * 100));
+                        tasksJson.phases[phaseIndex] = {
+                            ...phase,
+                            tasks: [...phase.tasks, ...newTasks],
+                        };
                     }
                     saveState(resolved.statePath, state);
                     // Don't increment phaseIndex — re-enter same phase

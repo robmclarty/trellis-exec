@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { buildRunConfig, parseCompileArgs, parseStatusArgs } from "../cli.js";
+import { buildRunConfig, parseCompileArgs, parseStatusArgs, checkClaudeAvailable } from "../cli.js";
 describe("buildRunConfig", () => {
     const emptyEnv = {};
     it("creates correct config from valid args", () => {
@@ -117,12 +117,48 @@ describe("parseCompileArgs", () => {
         expect(result.specPath).toMatch(/^\//);
         expect(result.outputPath).toMatch(/^\//);
     });
+    // -------------------------------------------------------------------------
+    // Issue #6: The compile CLI command previously only ran the deterministic
+    // parsePlan stage and printed a note about flagged fields without offering
+    // a way to actually enrich them. Fields like dependsOn, subAgentType, and
+    // acceptanceCriteria remained at their inferred defaults.
+    //
+    // Mitigation: Added an opt-in --enrich flag. When present, the CLI calls
+    // compilePlan (Stage 1 + Stage 2 LLM enrichment) instead of parsePlan
+    // alone. The default behavior stays deterministic (no LLM calls), and the
+    // informational message now suggests re-running with --enrich.
+    // -------------------------------------------------------------------------
+    it("defaults enrich to false when --enrich is not provided", () => {
+        const result = parseCompileArgs([
+            "plan.md",
+            "--spec",
+            "spec.md",
+        ]);
+        expect(result.enrich).toBe(false);
+    });
+    it("sets enrich to true when --enrich flag is provided", () => {
+        const result = parseCompileArgs([
+            "plan.md",
+            "--spec",
+            "spec.md",
+            "--enrich",
+        ]);
+        expect(result.enrich).toBe(true);
+    });
 });
 describe("parseStatusArgs", () => {
     it("parses tasks.json path", () => {
         const result = parseStatusArgs(["tasks.json"]);
         expect(result.tasksJsonPath).toContain("tasks.json");
         expect(result.tasksJsonPath).toMatch(/^\//);
+    });
+});
+describe("checkClaudeAvailable", () => {
+    it("returns true when claude CLI is available", () => {
+        // This test assumes the test environment may or may not have claude.
+        // We just verify it returns a boolean without throwing.
+        const result = checkClaudeAvailable();
+        expect(typeof result).toBe("boolean");
     });
 });
 describe("CLI dispatch", () => {

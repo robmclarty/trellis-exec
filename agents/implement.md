@@ -27,9 +27,4 @@ You receive:
 
 ## Output
 
-Respond with the complete contents of each file you create or modify. Use clear file path headers so the orchestrator can parse your output:
-
-```text
---- path/to/file.ts ---
-[complete file contents]
-```
+Use the Write tool to create files and the Edit tool to modify existing files. After making all changes, confirm which files you created or modified.

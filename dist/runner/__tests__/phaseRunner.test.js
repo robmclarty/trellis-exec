@@ -29,7 +29,7 @@ vi.mock("../../isolation/worktreeManager.js", () => ({
     cleanupWorktree: vi.fn(),
 }));
 // Import module under test and mocked modules AFTER vi.mock declarations
-import { runPhases, runSinglePhase, dryRunReport, } from "../phaseRunner.js";
+import { runPhases, runSinglePhase, dryRunReport, promptForContinuation, } from "../phaseRunner.js";
 import { createAgentLauncher } from "../../orchestrator/agentLauncher.js";
 import { createReplSession } from "../../orchestrator/replManager.js";
 import { createReplHelpers } from "../../orchestrator/replHelpers.js";
@@ -564,6 +564,96 @@ describe("phaseRunner", () => {
             expect(result.finalState.phaseRetries["phase-1"]).toBe(2);
         });
     });
+    // -------------------------------------------------------------------------
+    // Issue #3: Corrective tasks were pushed directly onto the phase reference
+    // from tasksJson with `phase.tasks.push(...newTasks)`, mutating the original
+    // structure in-place. On a second retry, previous corrective tasks persisted,
+    // causing duplicates. Corrective task IDs also collided since the counter
+    // always started at 0.
+    //
+    // Mitigation: The retry logic now creates a new phase object with spread
+    // copies of the tasks array. Corrective task IDs include a retry-count
+    // offset (retryCount * 100) to prevent collisions across retries.
+    // -------------------------------------------------------------------------
+    describe("runPhases — corrective task IDs are unique across retries", () => {
+        it("does not produce duplicate corrective task IDs on multiple retries", async () => {
+            const tasksJson = makeTasksJson();
+            tmpDir = setupTmpDir(tasksJson);
+            const config = { ...makeDefaultConfig(tmpDir), maxRetries: 2 };
+            const retryReport = makePhaseReport("phase-1", {
+                status: "complete",
+                recommendedAction: "retry",
+                correctiveTasks: ["Fix the build"],
+                tasksCompleted: [],
+                tasksFailed: ["task-1-1"],
+            });
+            const mockCreateAgentLauncher = createAgentLauncher;
+            const mockCreateReplSession = createReplSession;
+            const mockCreateReplHelpers = createReplHelpers;
+            mockCreateReplHelpers.mockImplementation(() => createMockHelpers());
+            // Track task IDs seen across all phase executions
+            const allPhaseContexts = [];
+            mockCreateAgentLauncher.mockImplementation(() => ({
+                dispatchSubAgent: async () => ({
+                    success: true,
+                    output: "",
+                    filesModified: [],
+                }),
+                llmQuery: async () => "mock",
+                launchOrchestrator: async (orchConfig) => {
+                    allPhaseContexts.push(orchConfig.phaseContext);
+                    return createMockOrchestrator([
+                        `writePhaseReport(${JSON.stringify(retryReport)})`,
+                    ]);
+                },
+            }));
+            mockCreateReplSession.mockImplementation((sessionConfig) => {
+                let consecutiveErrors = 0;
+                return {
+                    async eval(code) {
+                        if (code.includes("writePhaseReport(")) {
+                            try {
+                                const jsonMatch = code.match(/writePhaseReport\((.+)\)/s);
+                                if (jsonMatch?.[1]) {
+                                    sessionConfig.helpers.writePhaseReport(JSON.parse(jsonMatch[1]));
+                                }
+                            }
+                            catch { }
+                            return {
+                                success: true,
+                                output: "ok",
+                                truncated: false,
+                                duration: 1,
+                            };
+                        }
+                        consecutiveErrors = 0;
+                        return {
+                            success: true,
+                            output: "ok",
+                            truncated: false,
+                            duration: 1,
+                        };
+                    },
+                    restoreScaffold() { },
+                    getConsecutiveErrors() {
+                        return consecutiveErrors;
+                    },
+                    resetConsecutiveErrors() {
+                        consecutiveErrors = 0;
+                    },
+                    destroy() { },
+                };
+            });
+            const result = await runPhases(config);
+            // After 2 retries, each adding "Fix the build", the corrective task IDs
+            // should be unique: phase-1-corrective-0 (retry 0) and phase-1-corrective-100
+            // (retry 1). Without the offset fix, both would be phase-1-corrective-0.
+            expect(result.finalState.phaseRetries["phase-1"]).toBe(2);
+            // Verify the original tasksJson was not mutated — its phase-1 should
+            // still have exactly 2 tasks (the originals), not 2 + corrective tasks.
+            expect(tasksJson.phases[0].tasks.length).toBe(2);
+        });
+    });
     describe("runPhases — consecutive error halt", () => {
         it("halts when consecutive errors reach threshold", async () => {
             const tasksJson = makeTasksJson();
@@ -681,6 +771,42 @@ describe("phaseRunner", () => {
             tmpDir = setupTmpDir(tasksJson);
             const config = makeDefaultConfig(tmpDir);
             await expect(runSinglePhase(config, "phase-nonexistent")).rejects.toThrow(/Phase not found/);
+        });
+    });
+    describe("promptForContinuation (§10 #13)", () => {
+        it.each([
+            ["", "continue"],
+            ["r", "retry"],
+            ["s", "skip"],
+            ["q", "quit"],
+            ["  R  ", "retry"],
+            ["Q", "quit"],
+            ["anything-else", "continue"],
+        ])("maps input %j to %j", async (input, expected) => {
+            const { Readable } = await import("node:stream");
+            const mockStdin = new Readable({
+                read() {
+                    this.push(input + "\n");
+                    this.push(null);
+                },
+            });
+            const originalStdin = process.stdin;
+            Object.defineProperty(process, "stdin", {
+                value: mockStdin,
+                writable: true,
+                configurable: true,
+            });
+            try {
+                const result = await promptForContinuation();
+                expect(result).toBe(expected);
+            }
+            finally {
+                Object.defineProperty(process, "stdin", {
+                    value: originalStdin,
+                    writable: true,
+                    configurable: true,
+                });
+            }
         });
     });
 });

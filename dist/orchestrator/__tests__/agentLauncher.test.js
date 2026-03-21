@@ -1,6 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { resolve } from "node:path";
-import { createAgentLauncher, buildSubAgentPrompt, buildSubAgentArgs, buildLlmQueryArgs, buildOrchestratorArgs, } from "../agentLauncher.js";
+import { createAgentLauncher, buildSubAgentPrompt, buildSubAgentArgs, buildLlmQueryArgs, buildOrchestratorArgs, buildOrchestratorContinueArgs, } from "../agentLauncher.js";
 function makeSubAgentConfig(overrides) {
     return {
         type: "implementer",
@@ -49,9 +49,9 @@ describe("buildSubAgentPrompt", () => {
         expect(prompt).toContain("src/types/user.ts");
         expect(prompt).toContain("src/db/schema.ts");
     });
-    it("includes the response instruction", () => {
+    it("includes the tool usage instruction", () => {
         const prompt = buildSubAgentPrompt(makeSubAgentConfig());
-        expect(prompt).toContain("Respond with the complete contents of each file you create or modify.");
+        expect(prompt).toContain("Use the Write tool to create new files");
     });
     it("omits output paths section when empty", () => {
         const config = makeSubAgentConfig({ outputPaths: [] });
@@ -68,9 +68,10 @@ describe("buildSubAgentArgs", () => {
     it("builds the correct args array", () => {
         const args = buildSubAgentArgs("/plugin/agents/implementer.md", "sonnet");
         expect(args).toEqual([
-            "--agent-file",
+            "--agent",
             "/plugin/agents/implementer.md",
             "--print",
+            "--dangerously-skip-permissions",
             "--model",
             "sonnet",
         ]);
@@ -83,7 +84,7 @@ describe("buildLlmQueryArgs", () => {
     });
 });
 describe("buildOrchestratorArgs", () => {
-    it("builds args with model", () => {
+    it("builds first-turn args with model", () => {
         const config = {
             agentFile: "/plugin/agents/phase-orchestrator.md",
             skillsDir: "/plugin/skills",
@@ -91,14 +92,14 @@ describe("buildOrchestratorArgs", () => {
             model: "sonnet",
         };
         const args = buildOrchestratorArgs(config);
-        expect(args).toEqual([
-            "--agent-file",
-            "/plugin/agents/phase-orchestrator.md",
-            "--add-dir",
-            "/plugin/skills",
-            "--model",
-            "sonnet",
-        ]);
+        expect(args).toContain("--agent");
+        expect(args).toContain("--print");
+        expect(args).toContain("--dangerously-skip-permissions");
+        expect(args).toContain("--disallowedTools");
+        expect(args).toContain("--append-system-prompt");
+        expect(args).toContain("--add-dir");
+        expect(args).toContain("--model");
+        expect(args).toContain("sonnet");
     });
     it("omits model flag when not specified", () => {
         const config = {
@@ -108,6 +109,27 @@ describe("buildOrchestratorArgs", () => {
         };
         const args = buildOrchestratorArgs(config);
         expect(args).not.toContain("--model");
+    });
+});
+describe("buildOrchestratorContinueArgs", () => {
+    it("builds continuation args with --continue", () => {
+        const config = {
+            agentFile: "/plugin/agents/phase-orchestrator.md",
+            skillsDir: "/plugin/skills",
+            phaseContext: "phase context",
+            model: "sonnet",
+        };
+        const args = buildOrchestratorContinueArgs(config);
+        expect(args).toContain("--print");
+        expect(args).toContain("--continue");
+        expect(args).toContain("--dangerously-skip-permissions");
+        expect(args).toContain("--disallowedTools");
+        expect(args).toContain("--append-system-prompt");
+        expect(args).toContain("--add-dir");
+        expect(args).toContain("--model");
+        expect(args).toContain("sonnet");
+        // Should not include --agent (session already knows the agent)
+        expect(args).not.toContain("--agent");
     });
 });
 describe("createAgentLauncher", () => {
@@ -167,15 +189,27 @@ describe("createAgentLauncher", () => {
             const result = await launcher.llmQuery("What is 2+2?");
             expect(result).toBe("[mock] llmQuery response");
         });
-        it("defaults to haiku model", () => {
-            const args = buildLlmQueryArgs("haiku");
-            expect(args).toContain("haiku");
+        it("defaults to haiku model when no options provided (§10 #19)", async () => {
+            const logSpy = vi.spyOn(console, "log").mockImplementation(() => { });
+            const launcher = createAgentLauncher(makeLauncherConfig({ dryRun: true }));
+            await launcher.llmQuery("test prompt");
+            // console.log("[dry-run] llmQuery:", prompt, "model:", model)
+            expect(logSpy).toHaveBeenCalledWith("[dry-run] llmQuery:", expect.any(String), "model:", "haiku");
+            logSpy.mockRestore();
         });
-        it("accepts model override", () => {
-            const args = buildLlmQueryArgs("sonnet");
-            expect(args).toContain("sonnet");
+        it("uses sonnet when model override provided (§10 #19)", async () => {
+            const logSpy = vi.spyOn(console, "log").mockImplementation(() => { });
+            const launcher = createAgentLauncher(makeLauncherConfig({ dryRun: true }));
+            await launcher.llmQuery("test prompt", { model: "sonnet" });
+            expect(logSpy).toHaveBeenCalledWith("[dry-run] llmQuery:", expect.any(String), "model:", "sonnet");
+            logSpy.mockRestore();
         });
     });
+    // -------------------------------------------------------------------------
+    // The real orchestrator uses sequential one-shot calls with --continue
+    // for multi-turn conversation. Each send() spawns a fresh claude process.
+    // The dry-run handle tests below verify the OrchestratorHandle contract.
+    // -------------------------------------------------------------------------
     describe("launchOrchestrator", () => {
         it("returns a mock handle in dryRun mode", async () => {
             const launcher = createAgentLauncher(makeLauncherConfig({ dryRun: true }));
@@ -189,6 +223,27 @@ describe("createAgentLauncher", () => {
             expect(response).toBe("[dry-run] orchestrator response");
             handle.kill();
             expect(handle.isAlive()).toBe(false);
+        });
+        it("dryRun handle supports multiple sequential send() calls without leaking", async () => {
+            // Verifies that the handle contract works cleanly across multiple
+            // send/response cycles. In the real implementation (createProcessHandle),
+            // the fix ensures listeners are removed after each idle timeout,
+            // preventing accumulation across send() calls.
+            const launcher = createAgentLauncher(makeLauncherConfig({ dryRun: true }));
+            const handle = await launcher.launchOrchestrator({
+                agentFile: "/plugin/agents/phase-orchestrator.md",
+                skillsDir: "/plugin/skills",
+                phaseContext: "test context",
+            });
+            // Multiple sequential sends should each return cleanly
+            const r1 = await handle.send("first message");
+            const r2 = await handle.send("second message");
+            const r3 = await handle.send("third message");
+            expect(r1).toBe("[dry-run] orchestrator response");
+            expect(r2).toBe("[dry-run] orchestrator response");
+            expect(r3).toBe("[dry-run] orchestrator response");
+            expect(handle.isAlive()).toBe(true);
+            handle.kill();
         });
     });
 });
