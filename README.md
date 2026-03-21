@@ -66,6 +66,77 @@ Show execution status for all phases and tasks.
 
 ## Architecture
 
+```
+                          plan.md + spec.md
+                                │
+                    ┌───────────▼───────────┐
+                    │    PLAN COMPILER      │
+                    │  src/compile/         │
+                    │                       │
+                    │  planParser.ts        │  Stage 1: deterministic
+                    │  planEnricher.ts      │  Stage 2: LLM enrichment
+                    │  compilePlan.ts       │  Stage 3: fallback parse
+                    └───────────┬───────────┘
+                                │
+                           tasks.json
+                                │
+                    ┌───────────▼───────────┐
+                    │    PHASE RUNNER       │
+                    │  src/runner/          │
+                    │                       │
+                    │  phaseRunner.ts       │  Deterministic loop
+                    │  stateManager.ts      │  Load/save state.json
+                    │  scheduler.ts         │  Dependency validation
+                    └───────────┬───────────┘
+                                │
+               ┌────────────────┼────────────────┐
+               │                │                │
+               ▼                ▼                ▼
+        state.json    trajectory.jsonl      git worktree
+                                │
+          ┌─────────────────────▼───────────────────────┐
+          │         PHASE ORCHESTRATOR                  │
+          │  agents/phase-orchestrator.md               │
+          │                                             │
+          │  Persistent JS REPL session (node:vm)       │
+          │  ┌───────────────────────────────────────┐  │
+          │  │ REPL Helpers                          │  │
+          │  │  readFile, listDir, searchFiles       │  │
+          │  │  getState, writePhaseReport           │  │
+          │  │  dispatchSubAgent, runCheck, llmQuery │  │
+          │  └───────────┬───────────────────────────┘  │
+          └──────────────┼──────────────────────────────┘
+                         │
+         ┌───────────────┼──────────────┐
+         │               │              │
+         ▼               ▼              ▼
+   ┌────────────┐ ┌───────────┐ ┌─────────────┐
+   │ implement  │ │ scaffold  │ │ test-writer │
+   │  (Sonnet)  │ │  (Haiku)  │ │   (Sonnet)  │
+   └─────┬──────┘ └──────┬────┘ └───────┬─────┘
+         │               │              │
+         └───────────────┼──────────────┘
+                         │
+                         ▼
+               ┌───────────────────┐
+               │      judge        │
+               │  (Sonnet, r/o)    │
+               │  Spec compliance  │
+               └────────┬──────────┘
+                        │
+                        ▼
+                   phase report
+                  (in state.json)
+                        │
+               ┌────────▼──────────┐
+               │  advance phase?   │
+               │  retry? halt?     │
+               └────────┬──────────┘
+                        │
+                        ▼
+                    next phase
+```
+
 The system has four layers:
 
 1. **Plan Compiler** -- Parses `plan.md` into `tasks.json` using a deterministic TypeScript parser with targeted LLM enrichment for ambiguous fields.
