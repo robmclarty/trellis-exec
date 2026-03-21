@@ -37,6 +37,10 @@ export type AgentLauncher = {
  * Assembles the sub-agent prompt following the §5 input contract.
  * Lists file paths (rather than inlining contents) since the claude agent
  * can read files directly from the filesystem.
+ *
+ * Note on permission enforcement (§10 #6): outputPaths are listed in the prompt
+ * as a soft constraint. Runtime enforcement is handled by Claude CLI's --agent-file
+ * permission model, not by this TypeScript code.
  */
 export function buildSubAgentPrompt(config: SubAgentConfig): string {
   const lines: string[] = [];

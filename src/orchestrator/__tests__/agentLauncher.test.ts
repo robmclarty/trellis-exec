@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { resolve } from "node:path";
 import {
   createAgentLauncher,
@@ -216,14 +216,35 @@ describe("createAgentLauncher", () => {
       expect(result).toBe("[mock] llmQuery response");
     });
 
-    it("defaults to haiku model", () => {
-      const args = buildLlmQueryArgs("haiku");
-      expect(args).toContain("haiku");
+    it("defaults to haiku model when no options provided (§10 #19)", async () => {
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      const launcher = createAgentLauncher(
+        makeLauncherConfig({ dryRun: true }),
+      );
+      await launcher.llmQuery("test prompt");
+      // console.log("[dry-run] llmQuery:", prompt, "model:", model)
+      expect(logSpy).toHaveBeenCalledWith(
+        "[dry-run] llmQuery:",
+        expect.any(String),
+        "model:",
+        "haiku",
+      );
+      logSpy.mockRestore();
     });
 
-    it("accepts model override", () => {
-      const args = buildLlmQueryArgs("sonnet");
-      expect(args).toContain("sonnet");
+    it("uses sonnet when model override provided (§10 #19)", async () => {
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      const launcher = createAgentLauncher(
+        makeLauncherConfig({ dryRun: true }),
+      );
+      await launcher.llmQuery("test prompt", { model: "sonnet" });
+      expect(logSpy).toHaveBeenCalledWith(
+        "[dry-run] llmQuery:",
+        expect.any(String),
+        "model:",
+        "sonnet",
+      );
+      logSpy.mockRestore();
     });
   });
 

@@ -49,6 +49,7 @@ import {
   runPhases,
   runSinglePhase,
   dryRunReport,
+  promptForContinuation,
 } from "../phaseRunner.js";
 import type { PhaseRunnerConfig } from "../phaseRunner.js";
 import { createAgentLauncher } from "../../orchestrator/agentLauncher.js";
@@ -809,6 +810,44 @@ describe("phaseRunner", () => {
       await expect(
         runSinglePhase(config, "phase-nonexistent"),
       ).rejects.toThrow(/Phase not found/);
+    });
+  });
+
+  describe("promptForContinuation (§10 #13)", () => {
+    it.each([
+      ["", "continue"],
+      ["r", "retry"],
+      ["s", "skip"],
+      ["q", "quit"],
+      ["  R  ", "retry"],
+      ["Q", "quit"],
+      ["anything-else", "continue"],
+    ] as const)("maps input %j to %j", async (input, expected) => {
+      const { Readable } = await import("node:stream");
+      const mockStdin = new Readable({
+        read() {
+          this.push(input + "\n");
+          this.push(null);
+        },
+      });
+
+      const originalStdin = process.stdin;
+      Object.defineProperty(process, "stdin", {
+        value: mockStdin,
+        writable: true,
+        configurable: true,
+      });
+
+      try {
+        const result = await promptForContinuation();
+        expect(result).toBe(expected);
+      } finally {
+        Object.defineProperty(process, "stdin", {
+          value: originalStdin,
+          writable: true,
+          configurable: true,
+        });
+      }
     });
   });
 });

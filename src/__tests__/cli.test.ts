@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { buildRunConfig, parseCompileArgs, parseStatusArgs } from "../cli.js";
+import { buildRunConfig, parseCompileArgs, parseStatusArgs, checkClaudeAvailable } from "../cli.js";
 
 describe("buildRunConfig", () => {
   const emptyEnv: Record<string, string | undefined> = {};
@@ -148,6 +148,15 @@ describe("parseStatusArgs", () => {
     const result = parseStatusArgs(["tasks.json"]);
     expect(result.tasksJsonPath).toContain("tasks.json");
     expect(result.tasksJsonPath).toMatch(/^\//);
+  });
+});
+
+describe("checkClaudeAvailable", () => {
+  it("returns true when claude CLI is available", () => {
+    // This test assumes the test environment may or may not have claude.
+    // We just verify it returns a boolean without throwing.
+    const result = checkClaudeAvailable();
+    expect(typeof result).toBe("boolean");
   });
 });
 

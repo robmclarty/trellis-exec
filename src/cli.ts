@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { readFileSync, writeFileSync } from "node:fs";
+import { execSync } from "node:child_process";
 import { resolve, dirname } from "node:path";
 import { parseArgs } from "node:util";
 import { TasksJsonSchema } from "./types/tasks.js";
@@ -47,7 +48,6 @@ Environment variables:
   TRELLIS_EXEC_MAX_RETRIES          Max phase retries
   TRELLIS_EXEC_CONCURRENCY          Max parallel sub-agents
   TRELLIS_EXEC_MAX_CONSECUTIVE_ERRORS  Consecutive errors before halt
-  TRELLIS_EXEC_COMPACTION_THRESHOLD    Context compaction threshold %
 `;
 
 // ---------------------------------------------------------------------------
@@ -174,11 +174,32 @@ export function parseStatusArgs(args: string[]): { tasksJsonPath: string } {
 }
 
 // ---------------------------------------------------------------------------
+// Pre-flight checks
+// ---------------------------------------------------------------------------
+
+export function checkClaudeAvailable(): boolean {
+  try {
+    execSync("claude --version", { stdio: "pipe" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Subcommand handlers
 // ---------------------------------------------------------------------------
 
 async function handleRun(args: string[]): Promise<void> {
   const config = buildRunConfig(args);
+
+  if (!config.dryRun && !checkClaudeAvailable()) {
+    console.error(
+      "Error: Claude Code CLI is required but not found on PATH.\n" +
+        "Install it from: https://docs.anthropic.com/en/docs/claude-code",
+    );
+    process.exit(1);
+  }
 
   if (config.dryRun) {
     const raw = readFileSync(config.tasksJsonPath, "utf-8");

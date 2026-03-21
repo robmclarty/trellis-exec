@@ -49,7 +49,7 @@ writePhaseReport({
   synthesis: "All 4 tasks completed and passed check. The judge found no issues. One style suggestion noted (named return type in stateManager) — this is a minor readability improvement that doesn't affect correctness. Recommend advancing.",
   handoff: {
     summary: "Phase 1 established the foundation: type definitions (src/types/*.ts), state manager (src/runner/stateManager.ts), and the phase runner outer loop (src/runner/phaseRunner.ts). The phase runner reads tasks.json, iterates phases, and manages state.json.",
-    watchFor: "The phaseRunner.ts currently has a placeholder for the orchestrator launch step (marked with a TODO). Phase 2 should implement the actual claude CLI subprocess launch.",
+    watchFor: "Phase 2 should implement the actual claude CLI subprocess launch in phaseRunner.ts.",
     unresolvedIssues: [],
   },
 })
