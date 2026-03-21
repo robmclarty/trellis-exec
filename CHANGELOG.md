@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.13
+
+- Add Claude CLI pre-flight check with clear install message on failure
+- Remove dead TRELLIS_EXEC_COMPACTION_THRESHOLD env var from help text
+- Add tests for llmQuery default model and interactive mode promptForContinuation
+- Document sub-agent permission enforcement model (Claude CLI --agent-file)
+- Clean up stale TODO reference in skills doc
+
 ## 0.2.12
 
 - Add e2e integration tests verifying §10 success criteria (compile, dry run, state round-trip, parallel scheduling, phase retry, handoff, REPL truncation, architectural validation)
