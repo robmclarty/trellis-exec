@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.3.0
+
+- Rewrite orchestrator to use sequential `--print --continue` calls instead of persistent process
+- Fix `--agent-file` → `--agent` CLI flag for sub-agents and orchestrator
+- Add `--dangerously-skip-permissions` for headless sub-agent execution
+- Disable orchestrator file tools via `--disallowedTools` to enforce REPL-only interaction
+- Add `extractCode()` to parse JS from Claude responses, filtering natural language
+- Add corrective nudge when orchestrator outputs natural language instead of JS
+- Add REPL helper function docs to phase context
+- Fix `dryRun` passthrough in `executePhase` (was hardcoded to `false`)
+- Gate e2e CLI test behind `TRELLIS_E2E_CLAUDE` env var
+- Split vitest config into unit and e2e with dedicated scripts
+- Add `docs/cli-integration-architecture-changes.md` documenting the new architecture
+- Update sub-agent prompt and agent files to use Write/Edit tools instead of text output
+
 ## 0.2.14
 
 - Fix command injection in worktreeManager by replacing execSync with execFileSync
