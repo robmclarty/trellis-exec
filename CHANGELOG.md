@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.14
+
+- Fix command injection in worktreeManager by replacing execSync with execFileSync
+- Fix getState() ENOENT crash on first phase turn (returns empty initial state)
+- Fix in-place mutation of phase tasks during retry (spread copies + unique IDs)
+- Fix listener leak in agentLauncher orchestrator handle
+- Add regex validation in searchFiles to prevent ReDoS and SyntaxError
+- Add `--enrich` flag to compile CLI for opt-in LLM enrichment
+- Fix cleanupWorktree running from inside the directory being deleted
+- Track and clear sandbox timers on session destroy to prevent leaks
+- Add 14 new security and edge-case tests
+- Add docs/security.md documenting attack surface and mitigations
+- Redesign README banner and add architecture diagram drafts
+
 ## 0.2.13
 
 - Add Claude CLI pre-flight check with clear install message on failure

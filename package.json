@@ -1,6 +1,6 @@
 {
   "name": "trellis-exec",
-  "version": "0.2.13",
+  "version": "0.2.14",
   "description": "Implementation executor. Runs phased task plans with sub-agent dispatch, verification, and iterative refinement.",
   "homepage": "https://github.com/robmclarty/trellis-exec#readme",
   "bugs": {
