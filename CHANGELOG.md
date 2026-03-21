@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.12
+
+- Add e2e integration tests verifying §10 success criteria (compile, dry run, state round-trip, parallel scheduling, phase retry, handoff, REPL truncation, architectural validation)
+- Add test fixtures: minimal Node.js test project, sample spec, and sample plan
+- Add Group 2 claude CLI tests that skip gracefully when CLI is unavailable
+- Add e2e integration tests documentation
+
 ## 0.2.11
 
 - Package for dual npm CLI and Claude Code plugin distribution
