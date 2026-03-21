@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.11
+
+- Package for dual npm CLI and Claude Code plugin distribution
+- Add README with installation, CLI reference, architecture, configuration, and custom agents docs
+- Update package.json with files, keywords, author, and prepublishOnly script
+- Update plugin.json description and keywords
+- Fix Zod 4 `z.record()` arity in agent linter
+
 ## 0.2.10
 
 - Add eight orchestrator skills: compile, dispatch-agent, explore-codebase, manage-phase, quick-query, run, status, and verify-work
