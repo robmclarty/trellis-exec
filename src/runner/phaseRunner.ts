@@ -579,9 +579,12 @@ export async function runPhases(
           // Append corrective tasks
           if (report.correctiveTasks.length > 0) {
             const newTasks = report.correctiveTasks.map((desc, i) =>
-              makeCorrectiveTask(phase.id, desc, i),
+              makeCorrectiveTask(phase.id, desc, i + retryCount * 100),
             );
-            phase.tasks.push(...newTasks);
+            tasksJson.phases[phaseIndex] = {
+              ...phase,
+              tasks: [...phase.tasks, ...newTasks],
+            };
           }
           saveState(resolved.statePath, state);
           // Don't increment phaseIndex — re-enter same phase

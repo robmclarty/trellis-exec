@@ -137,7 +137,15 @@ export function createReplHelpers(config: ReplHelpersConfig): ReplHelpers {
     pattern: string,
     glob?: string,
   ): Array<{ path: string; line: number; content: string }> {
-    const regex = new RegExp(pattern);
+    let regex: RegExp;
+    try {
+      if (pattern.length > 200) {
+        return [];
+      }
+      regex = new RegExp(pattern);
+    } catch {
+      return [];
+    }
     const globRegex = glob ? globToRegex(glob) : null;
     const results: Array<{ path: string; line: number; content: string }> = [];
 
@@ -225,7 +233,26 @@ export function createReplHelpers(config: ReplHelpersConfig): ReplHelpers {
    * @returns The current SharedState, validated against the Zod schema
    */
   function getState(): SharedState {
-    const raw = readFileSync(statePath, "utf-8");
+    let raw: string;
+    try {
+      raw = readFileSync(statePath, "utf-8");
+    } catch (err: unknown) {
+      if (
+        err instanceof Error &&
+        "code" in err &&
+        (err as NodeJS.ErrnoException).code === "ENOENT"
+      ) {
+        return SharedStateSchema.parse({
+          currentPhase: "",
+          completedPhases: [],
+          phaseReports: [],
+          phaseRetries: {},
+          modifiedFiles: [],
+          schemaChanges: [],
+        });
+      }
+      throw err;
+    }
     return SharedStateSchema.parse(JSON.parse(raw));
   }
 

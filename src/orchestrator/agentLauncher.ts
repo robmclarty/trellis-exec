@@ -324,6 +324,7 @@ function createProcessHandle(
           clearTimeout(idleTimer);
           idleTimer = setTimeout(() => {
             child.stdout!.removeListener("data", onData);
+            child.stdout!.removeListener("data", resetIdle);
             resolvePromise(Buffer.concat(chunks).toString("utf-8"));
           }, IDLE_TIMEOUT);
         };

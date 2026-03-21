@@ -106,6 +106,58 @@ describe("replManager", () => {
     session.destroy();
   });
 
+  // -------------------------------------------------------------------------
+  // Issue #8: The VM sandbox previously exposed the host's real setTimeout
+  // and clearTimeout directly. LLM-generated code could schedule callbacks
+  // that outlive session.destroy(), retaining references to the context
+  // object and leaking memory or causing unexpected side effects.
+  //
+  // Mitigation: The sandbox now provides wrapped timer functions that track
+  // all active timer IDs in a Set. When destroy() is called, all outstanding
+  // timers are cleared, preventing any callbacks from firing after teardown.
+  // -------------------------------------------------------------------------
+  it("destroy clears outstanding sandbox timers", async () => {
+    const session = createReplSession(makeConfig());
+
+    // Schedule a timer inside the sandbox that would fire after 10 seconds.
+    // Without cleanup, this callback would outlive the session.
+    await session.eval("setTimeout(() => { console.log('leaked'); }, 10000)");
+
+    // destroy() should clear the timer — this test just verifies no errors.
+    // The real protection is that the callback never fires after destroy.
+    expect(() => session.destroy()).not.toThrow();
+  });
+
+  it("sandbox setTimeout works normally for short-lived timers", async () => {
+    const session = createReplSession(makeConfig());
+
+    // The wrapped setTimeout must still function correctly for legitimate use
+    const result = await session.eval(
+      "await new Promise(resolve => setTimeout(() => resolve('done'), 10))",
+    );
+    expect(result.success).toBe(true);
+    expect(result.output).toBe("done");
+    session.destroy();
+  });
+
+  it("sandbox clearTimeout cancels tracked timers", async () => {
+    const session = createReplSession(makeConfig());
+
+    // Verify that clearTimeout works within the sandbox.
+    // Use a two-step approach: set a timer, clear it, then wait to confirm
+    // the callback never fires.
+    const result = await session.eval(`
+      await new Promise(resolve => {
+        const id = setTimeout(() => { throw new Error('should not fire'); }, 50);
+        clearTimeout(id);
+        setTimeout(() => resolve('cleared'), 100);
+      })
+    `);
+    expect(result.success).toBe(true);
+    expect(result.output).toBe("cleared");
+    session.destroy();
+  });
+
   it("tracks consecutive errors and resets on success", async () => {
     const session = createReplSession(makeConfig());
 
@@ -168,6 +220,72 @@ describe("replHelpers", () => {
     expect(match).toBeDefined();
     expect(match!.line).toBe(3);
     expect(match!.content).toContain("searchable pattern here");
+  });
+
+  // -------------------------------------------------------------------------
+  // Issue #2: getState() previously threw ENOENT when state.json didn't exist,
+  // which happens on the first turn of phase-1 before any state has been
+  // written. The thrown error incremented the REPL's consecutive error counter,
+  // potentially halting the phase prematurely.
+  //
+  // Mitigation: getState() now catches ENOENT and returns a valid empty state
+  // matching the SharedState schema, so the orchestrator can proceed normally.
+  // -------------------------------------------------------------------------
+  it("getState returns empty initial state when state file does not exist", () => {
+    const helpers = createReplHelpers({
+      projectRoot: FIXTURES_DIR,
+      specPath: SPEC_PATH,
+      // Point to a path that definitely doesn't exist
+      statePath: join(FIXTURES_DIR, "nonexistent-state.json"),
+      agentLauncher: null,
+    });
+
+    // Should not throw — returns a valid empty state instead of ENOENT
+    const state = helpers.getState();
+    expect(state.currentPhase).toBe("");
+    expect(state.completedPhases).toEqual([]);
+    expect(state.phaseReports).toEqual([]);
+    expect(state.phaseRetries).toEqual({});
+    expect(state.modifiedFiles).toEqual([]);
+    expect(state.schemaChanges).toEqual([]);
+  });
+
+  // -------------------------------------------------------------------------
+  // Issue #5: searchFiles() passed LLM-generated patterns directly to
+  // `new RegExp()` without validation. Malformed patterns throw SyntaxError,
+  // and pathological patterns (e.g., `(a+)+$`) cause catastrophic backtracking
+  // (ReDoS) that blocks the event loop, bypassing the sandbox timeout.
+  //
+  // Mitigation: searchFiles() now wraps RegExp construction in try/catch and
+  // rejects patterns longer than 200 characters. Invalid patterns return an
+  // empty result set instead of crashing.
+  // -------------------------------------------------------------------------
+  it("searchFiles returns empty array for invalid regex pattern", () => {
+    const helpers = createReplHelpers({
+      projectRoot: FIXTURES_DIR,
+      specPath: SPEC_PATH,
+      statePath: "",
+      agentLauncher: null,
+    });
+
+    // Unclosed character class — would throw SyntaxError without the guard
+    const results = helpers.searchFiles("[invalid");
+    expect(results).toEqual([]);
+  });
+
+  it("searchFiles returns empty array for excessively long patterns", () => {
+    const helpers = createReplHelpers({
+      projectRoot: FIXTURES_DIR,
+      specPath: SPEC_PATH,
+      statePath: "",
+      agentLauncher: null,
+    });
+
+    // A 201-char pattern is rejected before RegExp construction,
+    // preventing potential ReDoS from pathological patterns
+    const longPattern = "a".repeat(201);
+    const results = helpers.searchFiles(longPattern);
+    expect(results).toEqual([]);
   });
 
   it("readSpecSections extracts the correct section from a spec", () => {

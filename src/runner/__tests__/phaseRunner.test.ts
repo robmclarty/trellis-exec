@@ -667,6 +667,109 @@ describe("phaseRunner", () => {
     });
   });
 
+  // -------------------------------------------------------------------------
+  // Issue #3: Corrective tasks were pushed directly onto the phase reference
+  // from tasksJson with `phase.tasks.push(...newTasks)`, mutating the original
+  // structure in-place. On a second retry, previous corrective tasks persisted,
+  // causing duplicates. Corrective task IDs also collided since the counter
+  // always started at 0.
+  //
+  // Mitigation: The retry logic now creates a new phase object with spread
+  // copies of the tasks array. Corrective task IDs include a retry-count
+  // offset (retryCount * 100) to prevent collisions across retries.
+  // -------------------------------------------------------------------------
+  describe("runPhases — corrective task IDs are unique across retries", () => {
+    it("does not produce duplicate corrective task IDs on multiple retries", async () => {
+      const tasksJson = makeTasksJson();
+      tmpDir = setupTmpDir(tasksJson);
+      const config = { ...makeDefaultConfig(tmpDir), maxRetries: 2 };
+
+      const retryReport = makePhaseReport("phase-1", {
+        status: "complete",
+        recommendedAction: "retry",
+        correctiveTasks: ["Fix the build"],
+        tasksCompleted: [],
+        tasksFailed: ["task-1-1"],
+      });
+
+      const mockCreateAgentLauncher = createAgentLauncher as ReturnType<typeof vi.fn>;
+      const mockCreateReplSession = createReplSession as ReturnType<typeof vi.fn>;
+      const mockCreateReplHelpers = createReplHelpers as ReturnType<typeof vi.fn>;
+
+      mockCreateReplHelpers.mockImplementation(() => createMockHelpers());
+
+      // Track task IDs seen across all phase executions
+      const allPhaseContexts: string[] = [];
+
+      mockCreateAgentLauncher.mockImplementation(() => ({
+        dispatchSubAgent: async () => ({
+          success: true,
+          output: "",
+          filesModified: [],
+        }),
+        llmQuery: async () => "mock",
+        launchOrchestrator: async (orchConfig: { phaseContext: string }) => {
+          allPhaseContexts.push(orchConfig.phaseContext);
+          return createMockOrchestrator([
+            `writePhaseReport(${JSON.stringify(retryReport)})`,
+          ]);
+        },
+      }));
+
+      mockCreateReplSession.mockImplementation(
+        (sessionConfig: { helpers: ReplHelpers }) => {
+          let consecutiveErrors = 0;
+          return {
+            async eval(code: string): Promise<ReplEvalResult> {
+              if (code.includes("writePhaseReport(")) {
+                try {
+                  const jsonMatch = code.match(/writePhaseReport\((.+)\)/s);
+                  if (jsonMatch?.[1]) {
+                    sessionConfig.helpers.writePhaseReport(
+                      JSON.parse(jsonMatch[1]),
+                    );
+                  }
+                } catch {}
+                return {
+                  success: true,
+                  output: "ok",
+                  truncated: false,
+                  duration: 1,
+                };
+              }
+              consecutiveErrors = 0;
+              return {
+                success: true,
+                output: "ok",
+                truncated: false,
+                duration: 1,
+              };
+            },
+            restoreScaffold() {},
+            getConsecutiveErrors() {
+              return consecutiveErrors;
+            },
+            resetConsecutiveErrors() {
+              consecutiveErrors = 0;
+            },
+            destroy() {},
+          } satisfies ReplSession;
+        },
+      );
+
+      const result = await runPhases(config);
+
+      // After 2 retries, each adding "Fix the build", the corrective task IDs
+      // should be unique: phase-1-corrective-0 (retry 0) and phase-1-corrective-100
+      // (retry 1). Without the offset fix, both would be phase-1-corrective-0.
+      expect(result.finalState.phaseRetries["phase-1"]).toBe(2);
+
+      // Verify the original tasksJson was not mutated — its phase-1 should
+      // still have exactly 2 tasks (the originals), not 2 + corrective tasks.
+      expect(tasksJson.phases[0]!.tasks.length).toBe(2);
+    });
+  });
+
   describe("runPhases — consecutive error halt", () => {
     it("halts when consecutive errors reach threshold", async () => {
       const tasksJson = makeTasksJson();

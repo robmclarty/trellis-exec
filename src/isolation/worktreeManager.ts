@@ -1,5 +1,5 @@
-import { execSync } from "node:child_process";
-import path from "node:path";
+import { execFileSync } from "node:child_process";
+import path, { resolve } from "node:path";
 
 export type WorktreeConfig = {
   projectRoot: string;
@@ -70,7 +70,7 @@ export function createWorktree(config: WorktreeConfig): WorktreeResult {
   const worktreePath = path.join(projectRoot, ".trellis-worktrees", slug);
 
   try {
-    execSync("git rev-parse --git-dir", {
+    execFileSync("git", ["rev-parse", "--git-dir"], {
       cwd: projectRoot,
       encoding: "utf-8",
       stdio: "pipe",
@@ -80,7 +80,7 @@ export function createWorktree(config: WorktreeConfig): WorktreeResult {
   }
 
   try {
-    execSync(`git worktree add -b "${branch}" "${worktreePath}" HEAD`, {
+    execFileSync("git", ["worktree", "add", "-b", branch, worktreePath, "HEAD"], {
       cwd: projectRoot,
       encoding: "utf-8",
       stdio: "pipe",
@@ -109,13 +109,13 @@ export function commitPhase(
   const commitMessage = message ?? `trellis-exec: complete ${phaseId}`;
 
   try {
-    execSync("git add -A", { cwd: worktreePath, encoding: "utf-8", stdio: "pipe" });
+    execFileSync("git", ["add", "-A"], { cwd: worktreePath, encoding: "utf-8", stdio: "pipe" });
   } catch {
     return false;
   }
 
   try {
-    execSync("git diff --cached --quiet", {
+    execFileSync("git", ["diff", "--cached", "--quiet"], {
       cwd: worktreePath,
       encoding: "utf-8",
       stdio: "pipe",
@@ -127,7 +127,7 @@ export function commitPhase(
   }
 
   try {
-    execSync(`git commit -m "${commitMessage}"`, {
+    execFileSync("git", ["commit", "-m", commitMessage], {
       cwd: worktreePath,
       encoding: "utf-8",
       stdio: "pipe",
@@ -151,7 +151,7 @@ export function mergeWorktree(config: MergeConfig): MergeResult {
   const { projectRoot, branchName } = config;
 
   try {
-    execSync(`git merge ${branchName} --no-edit`, {
+    execFileSync("git", ["merge", branchName, "--no-edit"], {
       cwd: projectRoot,
       encoding: "utf-8",
       stdio: "pipe",
@@ -170,9 +170,11 @@ export function mergeWorktree(config: MergeConfig): MergeResult {
  * @param worktreePath - Absolute path to the worktree to remove
  */
 export function cleanupWorktree(worktreePath: string): void {
+  // Derive project root: worktreePath is always <projectRoot>/.trellis-worktrees/<slug>
+  const projectRoot = resolve(worktreePath, "..", "..");
   try {
-    execSync(`git worktree remove "${worktreePath}" --force`, {
-      cwd: worktreePath,
+    execFileSync("git", ["worktree", "remove", worktreePath, "--force"], {
+      cwd: projectRoot,
       encoding: "utf-8",
       stdio: "pipe",
     });

@@ -141,6 +141,36 @@ describe("parseCompileArgs", () => {
     expect(result.specPath).toMatch(/^\//);
     expect(result.outputPath).toMatch(/^\//);
   });
+
+  // -------------------------------------------------------------------------
+  // Issue #6: The compile CLI command previously only ran the deterministic
+  // parsePlan stage and printed a note about flagged fields without offering
+  // a way to actually enrich them. Fields like dependsOn, subAgentType, and
+  // acceptanceCriteria remained at their inferred defaults.
+  //
+  // Mitigation: Added an opt-in --enrich flag. When present, the CLI calls
+  // compilePlan (Stage 1 + Stage 2 LLM enrichment) instead of parsePlan
+  // alone. The default behavior stays deterministic (no LLM calls), and the
+  // informational message now suggests re-running with --enrich.
+  // -------------------------------------------------------------------------
+  it("defaults enrich to false when --enrich is not provided", () => {
+    const result = parseCompileArgs([
+      "plan.md",
+      "--spec",
+      "spec.md",
+    ]);
+    expect(result.enrich).toBe(false);
+  });
+
+  it("sets enrich to true when --enrich flag is provided", () => {
+    const result = parseCompileArgs([
+      "plan.md",
+      "--spec",
+      "spec.md",
+      "--enrich",
+    ]);
+    expect(result.enrich).toBe(true);
+  });
 });
 
 describe("parseStatusArgs", () => {

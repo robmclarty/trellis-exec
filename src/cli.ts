@@ -7,6 +7,8 @@ import { parseArgs } from "node:util";
 import { TasksJsonSchema } from "./types/tasks.js";
 import { loadState } from "./runner/stateManager.js";
 import { parsePlan } from "./compile/planParser.js";
+import { compilePlan } from "./compile/compilePlan.js";
+import { createAgentLauncher } from "./orchestrator/agentLauncher.js";
 import {
   runPhases,
   runSinglePhase,
@@ -40,6 +42,7 @@ Run options:
 Compile options:
   --spec <spec.md>       Path to the spec (required)
   --output <path>        Output path (default: ./tasks.json)
+  --enrich               Run LLM enrichment to fill ambiguous fields
 
 Environment variables:
   TRELLIS_EXEC_MODEL                Override orchestrator model
@@ -127,12 +130,14 @@ export function parseCompileArgs(args: string[]): {
   planPath: string;
   specPath: string;
   outputPath: string;
+  enrich: boolean;
 } {
   const { values, positionals } = parseArgs({
     args,
     options: {
       spec: { type: "string" },
       output: { type: "string" },
+      enrich: { type: "boolean", default: false },
     },
     allowPositionals: true,
   });
@@ -152,6 +157,7 @@ export function parseCompileArgs(args: string[]): {
     planPath: resolve(planPath),
     specPath: resolve(values.spec),
     outputPath: resolve(values.output ?? "./tasks.json"),
+    enrich: values.enrich ?? false,
   };
 }
 
@@ -234,7 +240,7 @@ async function handleRun(args: string[]): Promise<void> {
 }
 
 async function handleCompile(args: string[]): Promise<void> {
-  const { planPath, specPath, outputPath } = parseCompileArgs(args);
+  const { planPath, specPath, outputPath, enrich } = parseCompileArgs(args);
 
   const planContent = readFileSync(planPath, "utf-8");
   const result = parsePlan(planContent, specPath, planPath);
@@ -245,6 +251,28 @@ async function handleCompile(args: string[]): Promise<void> {
       console.error(`  - ${err}`);
     }
     process.exit(1);
+  }
+
+  if (enrich && result.enrichmentNeeded.length > 0) {
+    const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT ?? process.cwd();
+    const launcher = createAgentLauncher({
+      pluginRoot,
+      projectRoot: dirname(resolve(planPath)),
+    });
+    const tasksJson = await compilePlan({
+      planPath,
+      specPath,
+      outputPath,
+      agentLauncher: launcher,
+    });
+    const taskCount = tasksJson.phases.reduce(
+      (sum, phase) => sum + phase.tasks.length,
+      0,
+    );
+    console.log(
+      `Compiled and enriched ${tasksJson.phases.length} phases, ${taskCount} tasks → ${outputPath}`,
+    );
+    return;
   }
 
   writeFileSync(outputPath, JSON.stringify(result.tasksJson, null, 2) + "\n");
@@ -259,7 +287,7 @@ async function handleCompile(args: string[]): Promise<void> {
 
   if (result.enrichmentNeeded.length > 0) {
     console.log(
-      `Note: ${result.enrichmentNeeded.length} field(s) flagged for enrichment.`,
+      `Note: ${result.enrichmentNeeded.length} field(s) flagged for enrichment. Re-run with --enrich to fill gaps.`,
     );
   }
 }
