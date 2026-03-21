@@ -1,7 +1,7 @@
 {
   "name": "trellis-exec",
   "version": "0.2.10",
-  "description": "Implementation execution pipeline for Trellis",
+  "description": "Implementation executor. Runs phased task plans with sub-agent dispatch, verification, and iterative refinement.",
   "license": "MIT",
   "author": {
     "name": "Rob McLarty",
@@ -10,11 +10,12 @@
   },
   "keywords": [
     "trellis",
+    "claude-code",
+    "plugin",
+    "task-runner",
+    "rlm",
     "execution",
-    "implementation",
-    "build",
-    "tasks",
-    "pipeline"
+    "implementation"
   ],
   "repository": "https://github.com/robmclarty/trellis-exec",
   "homepage": "https://github.com/robmclarty/trellis-exec"

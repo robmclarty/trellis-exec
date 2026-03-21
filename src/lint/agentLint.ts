@@ -34,7 +34,7 @@ export const AgentFrontmatterSchema = z
     maxTurns: z.number().int().positive().optional(),
     skills: z.array(z.string()).optional(),
     mcpServers: z.array(z.unknown()).optional(),
-    hooks: z.record(z.unknown()).optional(),
+    hooks: z.record(z.string(), z.unknown()).optional(),
     memory: z.enum(["user", "project", "local"]).optional(),
     background: z.boolean().optional(),
     effort: z.enum(["low", "medium", "high", "max"]).optional(),
