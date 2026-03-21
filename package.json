@@ -32,7 +32,9 @@
     "lint:code:fix": "oxlint --fix",
     "lint:md": "markdownlint-cli2 '**/*.md' '#node_modules'",
     "lint:agents": "agnix --target claude-code",
-    "test": "vitest run",
+    "test": "npm run test:unit && npm run test:e2e",
+    "test:unit": "vitest run",
+    "test:e2e": "vitest run --config vitest.e2e.config.ts",
     "typecheck": "tsc --noEmit && tsc --project tsconfig.test.json --noEmit",
     "prepublishOnly": "npm run build"
   },
