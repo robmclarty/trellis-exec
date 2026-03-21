@@ -1,0 +1,8 @@
+{
+  "name": "e2e-test-project",
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "test": "node --test --experimental-strip-types src/*.test.ts"
+  }
+}
