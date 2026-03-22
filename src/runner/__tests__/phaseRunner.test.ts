@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { TasksJson } from "../../types/tasks.js";
 import type { PhaseReport, SharedState } from "../../types/state.js";
+import type { Phase } from "../../types/tasks.js";
 import type { OrchestratorHandle } from "../../orchestrator/agentLauncher.js";
 import type { ReplSession, ReplEvalResult } from "../../orchestrator/replManager.js";
 import type { ReplHelpers } from "../../orchestrator/replHelpers.js";
@@ -50,6 +51,7 @@ import {
   runSinglePhase,
   dryRunReport,
   promptForContinuation,
+  buildPhaseContext,
 } from "../phaseRunner.js";
 import type { PhaseRunnerConfig } from "../phaseRunner.js";
 import { createAgentLauncher } from "../../orchestrator/agentLauncher.js";
@@ -950,6 +952,45 @@ describe("phaseRunner", () => {
           configurable: true,
         });
       }
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // buildPhaseContext — guidelines reference
+  // -------------------------------------------------------------------------
+
+  describe("buildPhaseContext", () => {
+    const phase: Phase = {
+      id: "phase-1",
+      name: "scaffolding",
+      description: "Set up project",
+      tasks: [],
+    };
+
+    const state: SharedState = {
+      currentPhase: "phase-1",
+      completedPhases: [],
+      modifiedFiles: [],
+      schemaChanges: [],
+      phaseReports: [],
+      phaseRetries: {},
+    };
+
+    it("includes guidelines reference when guidelinesRef is present", () => {
+      const tasksJson = {
+        ...makeTasksJson(),
+        guidelinesRef: "guidelines.md",
+      };
+      const context = buildPhaseContext(phase, state, "", tasksJson);
+      expect(context).toContain("## Guidelines Reference");
+      expect(context).toContain("guidelines.md");
+    });
+
+    it("shows 'none configured' when guidelinesRef is absent", () => {
+      const tasksJson = makeTasksJson();
+      const context = buildPhaseContext(phase, state, "", tasksJson);
+      expect(context).toContain("## Guidelines Reference");
+      expect(context).toContain("none configured");
     });
   });
 

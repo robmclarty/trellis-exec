@@ -173,6 +173,28 @@ describe("parseCompileArgs", () => {
     ]);
     expect(result.enrich).toBe(true);
   });
+
+  it("parses --guidelines flag as resolved absolute path", () => {
+    const result = parseCompileArgs([
+      "plan.md",
+      "--spec",
+      "spec.md",
+      "--guidelines",
+      "guidelines.md",
+    ]);
+    expect(result.guidelinesPath).toBeDefined();
+    expect(result.guidelinesPath).toContain("guidelines.md");
+    expect(result.guidelinesPath).toMatch(/^\//);
+  });
+
+  it("omits guidelinesPath when --guidelines is not provided", () => {
+    const result = parseCompileArgs([
+      "plan.md",
+      "--spec",
+      "spec.md",
+    ]);
+    expect(result.guidelinesPath).toBeUndefined();
+  });
 });
 
 describe("parseStatusArgs", () => {

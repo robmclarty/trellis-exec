@@ -30,6 +30,7 @@ export const PhaseSchema = z.object({
 export const TasksJsonSchema = z.object({
   specRef: z.string(),
   planRef: z.string(),
+  guidelinesRef: z.string().optional(),
   createdAt: z.string(),
   phases: z.array(PhaseSchema),
 });

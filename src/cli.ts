@@ -41,6 +41,7 @@ Run options:
 
 Compile options:
   --spec <spec.md>       Path to the spec (required)
+  --guidelines <path>    Path to project guidelines (optional)
   --output <path>        Output path (default: ./tasks.json)
   --enrich               Run LLM enrichment to fill ambiguous fields
 
@@ -131,6 +132,7 @@ export function buildRunConfig(
 export function parseCompileArgs(args: string[]): {
   planPath: string;
   specPath: string;
+  guidelinesPath?: string;
   outputPath: string;
   enrich: boolean;
 } {
@@ -138,6 +140,7 @@ export function parseCompileArgs(args: string[]): {
     args,
     options: {
       spec: { type: "string" },
+      guidelines: { type: "string" },
       output: { type: "string" },
       enrich: { type: "boolean", default: false },
     },
@@ -158,6 +161,7 @@ export function parseCompileArgs(args: string[]): {
   return {
     planPath: resolve(planPath),
     specPath: resolve(values.spec),
+    ...(values.guidelines ? { guidelinesPath: resolve(values.guidelines) } : {}),
     outputPath: resolve(values.output ?? "./tasks.json"),
     enrich: values.enrich ?? false,
   };
@@ -242,21 +246,21 @@ async function handleRun(args: string[]): Promise<void> {
 }
 
 async function handleCompile(args: string[]): Promise<void> {
-  const { planPath, specPath, outputPath, enrich } = parseCompileArgs(args);
+  const { planPath, specPath, guidelinesPath, outputPath, enrich } = parseCompileArgs(args);
 
   const planContent = readFileSync(planPath, "utf-8");
   const result = parsePlan(planContent, specPath, planPath);
 
-  // Deterministic parse failed — fall back to full LLM parse automatically
-  const needsLlmFallback = !result.success || !result.tasksJson;
+  // Deterministic parse failed — decompose via LLM using spec + plan + guidelines
+  const needsDecompose = !result.success || !result.tasksJson;
   // Deterministic parse succeeded but has fields that need LLM enrichment
   const needsEnrichment = enrich && result.enrichmentNeeded.length > 0;
 
-  if (needsLlmFallback || needsEnrichment) {
+  if (needsDecompose || needsEnrichment) {
     if (!checkClaudeAvailable()) {
-      if (needsLlmFallback) {
+      if (needsDecompose) {
         console.error(
-          "Error: Plan requires LLM parsing but Claude Code CLI is not available.\n" +
+          "Error: Plan requires LLM decomposition but Claude Code CLI is not available.\n" +
             "The deterministic parser could not identify phase boundaries.\n" +
             "Install Claude Code CLI from: https://docs.anthropic.com/en/docs/claude-code",
         );
@@ -269,8 +273,8 @@ async function handleCompile(args: string[]): Promise<void> {
       process.exit(1);
     }
 
-    if (needsLlmFallback) {
-      console.log("Deterministic parser could not identify phase boundaries. Falling back to LLM parsing...");
+    if (needsDecompose) {
+      console.log("Decomposing plan into tasks via LLM...");
     }
 
     const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT ?? process.cwd();
@@ -281,6 +285,7 @@ async function handleCompile(args: string[]): Promise<void> {
     const tasksJson = await compilePlan({
       planPath,
       specPath,
+      ...(guidelinesPath ? { guidelinesPath } : {}),
       outputPath,
       agentLauncher: launcher,
     });
@@ -288,7 +293,7 @@ async function handleCompile(args: string[]): Promise<void> {
       (sum, phase) => sum + phase.tasks.length,
       0,
     );
-    const suffix = needsLlmFallback ? " (via LLM)" : " (enriched)";
+    const suffix = needsDecompose ? " (decomposed)" : " (enriched)";
     console.log(
       `Compiled ${tasksJson.phases.length} phases, ${taskCount} tasks${suffix} → ${outputPath}`,
     );

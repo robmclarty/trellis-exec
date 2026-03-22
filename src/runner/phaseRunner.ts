@@ -165,6 +165,9 @@ export function buildPhaseContext(
   lines.push("## Spec Reference");
   lines.push(tasksJson.specRef);
   lines.push("");
+  lines.push("## Guidelines Reference");
+  lines.push(tasksJson.guidelinesRef ?? "none configured");
+  lines.push("");
   lines.push("## Check Command");
   lines.push(checkCommand ?? "none configured");
   lines.push("");
@@ -611,6 +614,21 @@ export async function runPhases(
     copyFileSync(specSrcPath, specDestPath);
   }
 
+  // Copy guidelines file into project root (same pattern as spec).
+  let guidelinesCopied = false;
+  let guidelinesDestPath = "";
+  if (tasksJson.guidelinesRef) {
+    const guidelinesSrcPath = resolve(
+      dirname(resolve(resolved.tasksJsonPath)),
+      tasksJson.guidelinesRef,
+    );
+    guidelinesDestPath = join(projectRoot, basename(guidelinesSrcPath));
+    guidelinesCopied = guidelinesSrcPath !== guidelinesDestPath;
+    if (guidelinesCopied) {
+      copyFileSync(guidelinesSrcPath, guidelinesDestPath);
+    }
+  }
+
   // Handle dry run early
   if (resolved.dryRun) {
     const report = dryRunReport(tasksJson);
@@ -769,6 +787,14 @@ export async function runPhases(
         // Ignore — file may already be gone
       }
     }
+    // Remove the guidelines file copy from project root (only if we copied it)
+    if (guidelinesCopied) {
+      try {
+        unlinkSync(guidelinesDestPath);
+      } catch {
+        // Ignore — file may already be gone
+      }
+    }
     if (worktreeResult) {
       cleanupWorktree(worktreeResult.worktreePath);
     }
@@ -840,6 +866,21 @@ export async function runSinglePhase(
     copyFileSync(specSrcPath, specDestPath);
   }
 
+  // Copy guidelines file into project root (same pattern as spec).
+  let guidelinesCopied = false;
+  let guidelinesDestPath = "";
+  if (tasksJson.guidelinesRef) {
+    const guidelinesSrcPath = resolve(
+      dirname(resolve(resolved.tasksJsonPath)),
+      tasksJson.guidelinesRef,
+    );
+    guidelinesDestPath = join(projectRoot, basename(guidelinesSrcPath));
+    guidelinesCopied = guidelinesSrcPath !== guidelinesDestPath;
+    if (guidelinesCopied) {
+      copyFileSync(guidelinesSrcPath, guidelinesDestPath);
+    }
+  }
+
   try {
     state = { ...state, currentPhase: phase.id };
 
@@ -879,6 +920,14 @@ export async function runSinglePhase(
     if (specCopied) {
       try {
         unlinkSync(specDestPath);
+      } catch {
+        // Ignore — file may already be gone
+      }
+    }
+    // Remove the guidelines file copy from project root (only if we copied it)
+    if (guidelinesCopied) {
+      try {
+        unlinkSync(guidelinesDestPath);
       } catch {
         // Ignore — file may already be gone
       }

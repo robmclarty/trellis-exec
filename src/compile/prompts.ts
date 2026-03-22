@@ -48,21 +48,65 @@ Respond with ONLY a JSON object in this exact shape, no preamble, no markdown fe
 }
 
 /**
- * Fallback prompt for when the deterministic parser fails entirely (no phase
- * boundaries found). Sends the full plan to Haiku and asks for a complete
- * TasksJson structure.
+ * Decomposes a technical plan into implementable phases and tasks using the
+ * spec for requirements and acceptance criteria, the plan for architecture and
+ * design decisions, and (optionally) project guidelines for coding conventions
+ * and file structure.
+ *
+ * This is the primary compilation path for plans that are not already formatted
+ * as phase/task lists.
  */
-export function buildFullParseFallbackPrompt(
+export function buildDecomposePrompt(
   planContent: string,
+  specContent: string,
   specRef: string,
+  planRef: string,
+  guidelinesContent?: string,
+  guidelinesRef?: string,
 ): string {
-  return `You are converting a software implementation plan into a structured JSON task breakdown.
+  const guidelinesSection = guidelinesContent
+    ? `
+## Guidelines
 
-The plan markdown is provided below. Parse it into phases and tasks following this exact JSON schema:
+The following project guidelines define coding conventions, architecture patterns, and file structure. Tasks should follow these conventions, and targetPaths should reflect the directory layout described here.
+
+<guidelines>
+${guidelinesContent}
+</guidelines>
+`
+    : "";
+
+  const guidelinesRefField = guidelinesRef
+    ? `\n  "guidelinesRef": "${guidelinesRef}",`
+    : "";
+
+  return `You are decomposing a software project into implementable phases and tasks.
+
+You are given three documents:
+1. **Spec** — defines what to build: functional requirements, data model, business rules, failure modes, and success criteria.
+2. **Plan** — the technical design: architecture, technology decisions, data access patterns, interface implementation details, and testing strategy.${guidelinesContent ? "\n3. **Guidelines** — coding conventions, architecture patterns, directory structure, and naming rules." : ""}
+
+Your job is to read all documents and produce a structured JSON task breakdown that a team of sub-agents can execute sequentially to build the project.
+
+## Spec
+
+<spec>
+${specContent}
+</spec>
+
+## Plan
+
+<plan>
+${planContent}
+</plan>
+${guidelinesSection}
+## Output Schema
+
+Produce a JSON object matching this exact schema:
 
 {
   "specRef": "${specRef}",
-  "planRef": "${specRef.replace(/spec\.md$/, "plan.md")}",
+  "planRef": "${planRef}",${guidelinesRefField}
   "createdAt": "<ISO 8601 timestamp>",
   "phases": [
     {
@@ -72,10 +116,10 @@ The plan markdown is provided below. Parse it into phases and tasks following th
       "tasks": [
         {
           "id": "phase-<N>-task-<M>",
-          "title": "<task title>",
-          "description": "<detailed task description>",
-          "dependsOn": ["<task IDs this task depends on within the same phase>"],
-          "specSections": ["§N", ...],
+          "title": "<concise task title>",
+          "description": "<detailed implementation instructions>",
+          "dependsOn": ["<task IDs this task depends on>"],
+          "specSections": ["§N"],
           "targetPaths": ["<file paths this task creates or modifies>"],
           "acceptanceCriteria": ["<verifiable criteria>"],
           "subAgentType": "implement" | "test-writer" | "scaffold" | "judge",
@@ -86,19 +130,33 @@ The plan markdown is provided below. Parse it into phases and tasks following th
   ]
 }
 
-Rules:
-- Phase IDs are "phase-1", "phase-2", etc.
-- Task IDs are "phase-N-task-M" (e.g., "phase-1-task-1").
-- dependsOn only references task IDs within the same phase.
-- specSections are §N references found in the task text.
-- targetPaths are file paths mentioned in backticks.
-- subAgentType: use "scaffold" for setup/config tasks, "test-writer" for test tasks, "implement" for everything else.
-- All tasks start with status "pending".
-- Set createdAt to the current time in ISO 8601 format.
+## Decomposition Rules
 
-Plan markdown:
+### Phases
+- Organize into logical build stages, NOT by mirroring the plan's section headings.
+- A typical ordering: project scaffolding → data layer (adapters, repositories) → business logic (behaviors) → UI (views, routing) → integration tests → polish.
+- Each phase should be completable independently once its dependencies are done.
 
-${planContent}
+### Tasks
+- Each task must be **concrete and implementable**: specify exactly which files to create or modify.
+- Task descriptions should include enough detail for an agent to implement without re-reading the full plan — reference specific data shapes, function signatures, and patterns from the plan.
+- Keep tasks focused: one concern per task. A task that creates a module and tests it should be split into two tasks.
 
-Respond with ONLY the JSON object. No preamble, no markdown fences.`;
+### Fields
+- **id**: "phase-N-task-M" (e.g., "phase-1-task-1").
+- **dependsOn**: task IDs this task requires to be completed first. Can reference tasks in earlier phases or the same phase.
+- **specSections**: spec section references (§N) relevant to this task. Derive from the spec's section numbering (§1 Context, §2 Functional Overview, §4 Data Model, §6 Business Rules, §8 Success Criteria, etc.).
+- **targetPaths**: actual file paths this task creates or modifies.${guidelinesContent ? " Derive from the guidelines' directory structure." : ""}
+- **acceptanceCriteria**: verifiable conditions. Derive from the spec's success criteria (§8) where applicable. Each criterion should be testable — "file exists", "function returns X given Y", "test passes".
+- **subAgentType**: "scaffold" for project setup, config, and boilerplate. "test-writer" for creating test files. "judge" for review/validation tasks. "implement" for everything else.
+- **status**: always "pending".
+
+### Sizing
+- Aim for 3–8 tasks per phase, 3–6 phases total.
+- If a phase has more than 8 tasks, split it into sub-phases.
+- If a task touches more than 4–5 files, consider splitting it.
+
+## Response Format
+
+Respond with ONLY the JSON object. No preamble, no explanation, no markdown fences.`;
 }
