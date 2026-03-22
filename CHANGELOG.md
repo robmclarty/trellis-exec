@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.8
+
+- Replace spec-section-injection with spec file copy into project root for simpler, more reliable spec access
+- Remove `readSpecSections` REPL helper and `parseSpecSections` — orchestrator now reads spec directly via `readFile()`
+- Update phase-orchestrator and skill docs to reference `readFile('spec.md')` instead of `readSpecSections()`
+
 ## 0.3.7
 
 - Fix readSpecSections to accept both array and varargs calling conventions
