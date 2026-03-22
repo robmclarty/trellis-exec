@@ -72,6 +72,7 @@ export function buildRunConfig(
       concurrency: { type: "string" },
       model: { type: "string" },
       "max-retries": { type: "string" },
+      "project-root": { type: "string" },
       headless: { type: "boolean", default: false },
       verbose: { type: "boolean", default: false },
     },
@@ -112,6 +113,7 @@ export function buildRunConfig(
 
   return {
     tasksJsonPath: resolve(tasksJsonPath),
+    ...(values["project-root"] !== undefined ? { projectRoot: resolve(values["project-root"]) } : {}),
     ...(values.check !== undefined ? { checkCommand: values.check } : {}),
     isolation,
     concurrency,

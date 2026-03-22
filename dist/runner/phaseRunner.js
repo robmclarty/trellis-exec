@@ -36,7 +36,7 @@ function deriveProjectRoot(config, worktreeResult) {
         worktreeResult.success) {
         return worktreeResult.worktreePath;
     }
-    return dirname(resolve(config.tasksJsonPath));
+    return config.projectRoot ?? dirname(resolve(config.tasksJsonPath));
 }
 function getHandoffFromState(state) {
     const last = state.phaseReports.at(-1);
@@ -310,7 +310,7 @@ async function executePhase(config, phase, state, tasksJson, projectRoot, logger
     let capturedReport = null;
     const baseHelpers = createReplHelpers({
         projectRoot,
-        specPath: resolve(projectRoot, tasksJson.specRef),
+        specPath: resolve(dirname(resolve(config.tasksJsonPath)), tasksJson.specRef),
         statePath: config.statePath,
         agentLauncher: (c) => launcher.dispatchSubAgent(c),
     });
@@ -381,10 +381,11 @@ export async function runPhases(config) {
     const phasesCompleted = [];
     const phasesFailed = [];
     // Worktree setup
+    const baseProjectRoot = resolved.projectRoot ?? dirname(resolve(resolved.tasksJsonPath));
     let worktreeResult = null;
     if (resolved.isolation === "worktree") {
         worktreeResult = createWorktree({
-            projectRoot: dirname(resolve(resolved.tasksJsonPath)),
+            projectRoot: baseProjectRoot,
             specName: tasksJson.specRef,
         });
         if (!worktreeResult.success) {
@@ -510,7 +511,7 @@ export async function runPhases(config) {
             phasesFailed.length === 0 &&
             phasesCompleted.length > 0) {
             const mergeResult = mergeWorktree({
-                projectRoot: dirname(resolve(resolved.tasksJsonPath)),
+                projectRoot: baseProjectRoot,
                 worktreePath: worktreeResult.worktreePath,
                 branchName: worktreeResult.branchName,
             });
@@ -550,10 +551,11 @@ export async function runSinglePhase(config, phaseId) {
     const logger = createTrajectoryLogger(resolved.trajectoryPath);
     const phasesCompleted = [];
     const phasesFailed = [];
+    const baseProjectRoot = resolved.projectRoot ?? dirname(resolve(resolved.tasksJsonPath));
     let worktreeResult = null;
     if (resolved.isolation === "worktree") {
         worktreeResult = createWorktree({
-            projectRoot: dirname(resolve(resolved.tasksJsonPath)),
+            projectRoot: baseProjectRoot,
             specName: tasksJson.specRef,
         });
         if (!worktreeResult.success) {
@@ -572,7 +574,7 @@ export async function runSinglePhase(config, phaseId) {
             if (worktreeResult) {
                 commitPhase(worktreeResult.worktreePath, phase.id);
                 mergeWorktree({
-                    projectRoot: dirname(resolve(resolved.tasksJsonPath)),
+                    projectRoot: baseProjectRoot,
                     worktreePath: worktreeResult.worktreePath,
                     branchName: worktreeResult.branchName,
                 });

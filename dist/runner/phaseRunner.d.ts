@@ -2,6 +2,7 @@ import type { TasksJson } from "../types/tasks.js";
 import type { SharedState } from "../types/state.js";
 export type PhaseRunnerConfig = {
     tasksJsonPath: string;
+    projectRoot?: string;
     statePath?: string;
     trajectoryPath?: string;
     checkCommand?: string;
