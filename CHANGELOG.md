@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.2
+
+- Auto-fallback to LLM parsing when deterministic plan parser cannot identify phase boundaries
+
 ## 0.3.1
 
 - Fix CLI entrypoint detection for `npx` and `npm link` by resolving symlinks with `realpathSync`
