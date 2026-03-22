@@ -6,14 +6,12 @@ import type { ReplHelpers } from "../replHelpers.js";
 import type { ReplSessionConfig } from "../replManager.js";
 
 const FIXTURES_DIR = join(import.meta.dirname, "../../../test/fixtures/repl-test");
-const SPEC_PATH = join(FIXTURES_DIR, "sample-spec.md");
 
 function makeHelpers(overrides?: Partial<ReplHelpers>): ReplHelpers {
   return {
     readFile: () => "",
     listDir: () => [],
     searchFiles: () => [],
-    readSpecSections: () => "",
     getState: () => ({
       currentPhase: "phase-1",
       completedPhases: [],
@@ -90,7 +88,6 @@ describe("replManager", () => {
   it("restoreScaffold recovers after a helper is overwritten", async () => {
     const realHelpers = createReplHelpers({
       projectRoot: FIXTURES_DIR,
-      specPath: SPEC_PATH,
       statePath: "",
       agentLauncher: null,
     });
@@ -176,7 +173,6 @@ describe("replHelpers", () => {
   it("readFile reads a real file from a fixture directory", () => {
     const helpers = createReplHelpers({
       projectRoot: FIXTURES_DIR,
-      specPath: SPEC_PATH,
       statePath: "",
       agentLauncher: null,
     });
@@ -187,7 +183,6 @@ describe("replHelpers", () => {
   it("listDir lists a fixture directory correctly", () => {
     const helpers = createReplHelpers({
       projectRoot: FIXTURES_DIR,
-      specPath: SPEC_PATH,
       statePath: "",
       agentLauncher: null,
     });
@@ -209,7 +204,6 @@ describe("replHelpers", () => {
   it("searchFiles finds a pattern in fixture files", () => {
     const helpers = createReplHelpers({
       projectRoot: FIXTURES_DIR,
-      specPath: SPEC_PATH,
       statePath: "",
       agentLauncher: null,
     });
@@ -234,7 +228,6 @@ describe("replHelpers", () => {
   it("getState returns empty initial state when state file does not exist", () => {
     const helpers = createReplHelpers({
       projectRoot: FIXTURES_DIR,
-      specPath: SPEC_PATH,
       // Point to a path that definitely doesn't exist
       statePath: join(FIXTURES_DIR, "nonexistent-state.json"),
       agentLauncher: null,
@@ -263,7 +256,6 @@ describe("replHelpers", () => {
   it("searchFiles returns empty array for invalid regex pattern", () => {
     const helpers = createReplHelpers({
       projectRoot: FIXTURES_DIR,
-      specPath: SPEC_PATH,
       statePath: "",
       agentLauncher: null,
     });
@@ -276,7 +268,6 @@ describe("replHelpers", () => {
   it("searchFiles returns empty array for excessively long patterns", () => {
     const helpers = createReplHelpers({
       projectRoot: FIXTURES_DIR,
-      specPath: SPEC_PATH,
       statePath: "",
       agentLauncher: null,
     });
@@ -288,35 +279,4 @@ describe("replHelpers", () => {
     expect(results).toEqual([]);
   });
 
-  it("readSpecSections extracts the correct section from a spec", () => {
-    const helpers = createReplHelpers({
-      projectRoot: FIXTURES_DIR,
-      specPath: SPEC_PATH,
-      statePath: "",
-      agentLauncher: null,
-    });
-    const section = helpers.readSpecSections(["§2"]);
-    expect(section).toContain("Architecture");
-    expect(section).toContain("multiple paragraphs");
-    expect(section).not.toContain("Introduction");
-    expect(section).not.toContain("API section");
-  });
-
-  it("readSpecSections accepts varargs in addition to array form", () => {
-    const helpers = createReplHelpers({
-      projectRoot: FIXTURES_DIR,
-      specPath: SPEC_PATH,
-      statePath: "",
-      agentLauncher: null,
-    });
-    // Simulate how LLM-generated code calls it: individual string arguments
-    const varargs = (helpers.readSpecSections as (...args: unknown[]) => string)(
-      "§2",
-      "§3",
-    );
-    const arrayForm = helpers.readSpecSections(["§2", "§3"]);
-    expect(varargs).toBe(arrayForm);
-    expect(varargs).toContain("Architecture");
-    expect(varargs).toContain("API section");
-  });
 });

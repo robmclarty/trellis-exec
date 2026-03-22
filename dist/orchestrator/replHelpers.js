@@ -64,7 +64,7 @@ function safePath(projectRoot, userPath) {
  * helpers are stubs that log and return mock responses.
  */
 export function createReplHelpers(config) {
-    const { projectRoot, specPath, statePath, agentLauncher } = config;
+    const { projectRoot, statePath, agentLauncher } = config;
     /**
      * Reads a file from the project directory and returns its contents as a string.
      * Paths are resolved relative to projectRoot; traversal outside the root throws.
@@ -146,65 +146,6 @@ export function createReplHelpers(config) {
         return results;
     }
     /**
-     * Extracts specific sections from the spec file by section identifier.
-     * Parses headings matching `## §N` and returns the content between them.
-     * Multiple sections are joined with `---` separators. Missing sections
-     * produce a `[Section §N not found]` marker.
-     * Accepts both array form readSpecSections(["§2", "§5"]) and varargs
-     * form readSpecSections("§2", "§5").
-     * @param args - Section identifiers as an array or individual arguments
-     * @returns Concatenated markdown content of the requested sections
-     */
-    function readSpecSections(...args) {
-        // Normalize: accept readSpecSections(['§3', '§6']) or readSpecSections('§3', '§6')
-        const sections = args.length === 1 && Array.isArray(args[0])
-            ? args[0].filter((a) => typeof a === "string")
-            : args.filter((a) => typeof a === "string");
-        if (sections.length === 0)
-            return "";
-        let content;
-        try {
-            content = readFileSync(specPath, "utf-8");
-        }
-        catch {
-            return sections
-                .map((s) => `[Section ${s} not found — spec file unavailable]`)
-                .join("\n\n---\n\n");
-        }
-        const lines = content.split("\n");
-        // Parse the spec into sections keyed by §N identifier
-        const sectionMap = new Map();
-        let currentKey = null;
-        let currentLines = [];
-        for (const line of lines) {
-            const match = line.match(/^## §(\d+)/);
-            if (match) {
-                if (currentKey !== null) {
-                    sectionMap.set(currentKey, currentLines.join("\n").trim());
-                }
-                currentKey = "§" + match[1];
-                currentLines = [line];
-            }
-            else if (currentKey !== null) {
-                currentLines.push(line);
-            }
-        }
-        if (currentKey !== null) {
-            sectionMap.set(currentKey, currentLines.join("\n").trim());
-        }
-        const parts = [];
-        for (const section of sections) {
-            const found = sectionMap.get(section);
-            if (found !== undefined) {
-                parts.push(found);
-            }
-            else {
-                parts.push(`[Section ${section} not found]`);
-            }
-        }
-        return parts.join("\n\n---\n\n");
-    }
-    /**
      * Reads and validates the shared state from the state.json file on disk.
      * @returns The current SharedState, validated against the Zod schema
      */
@@ -275,7 +216,6 @@ export function createReplHelpers(config) {
         readFile,
         listDir,
         searchFiles,
-        readSpecSections,
         getState,
         writePhaseReport,
         dispatchSubAgent,

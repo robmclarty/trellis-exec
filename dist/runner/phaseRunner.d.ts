@@ -23,12 +23,7 @@ export type PhaseRunnerResult = {
     phasesFailed: string[];
     finalState: SharedState;
 };
-/**
- * Read spec sections from a spec file by §N identifiers.
- * Returns a map of section key to content. Gracefully returns empty map on error.
- */
-export declare function parseSpecSections(specPath: string): Map<string, string>;
-export declare function buildPhaseContext(phase: Phase, state: SharedState, handoff: string, tasksJson: TasksJson, specPath: string, checkCommand?: string): string;
+export declare function buildPhaseContext(phase: Phase, state: SharedState, handoff: string, tasksJson: TasksJson, checkCommand?: string): string;
 export declare function dryRunReport(tasksJson: TasksJson): string;
 export declare function promptForContinuation(): Promise<"continue" | "retry" | "skip" | "quit">;
 /**

@@ -67,8 +67,8 @@ const content = readFile("src/compile/planParser.ts")
 // 4. Find what it exports (these are the functions to test)
 searchFiles("export function|export const", "src/compile/planParser.ts")
 
-// 5. Read the spec section for expected behavior
-readSpecSections(["§5"])
+// 5. Read the spec for expected behavior
+readFile("spec.md")
 ```
 
 **Why this order:** First check if tests already exist (avoid duplicating). Then understand the test conventions. Then read the source to know what to test.

@@ -110,7 +110,7 @@ The quality of a sub-agent's output depends directly on the quality of context y
 
 - Target files the agent will read or modify
 - Type definitions used by those files
-- Relevant spec sections (via `readSpecSections()`)
+- Relevant spec sections (via `readFile('spec.md')`)
 - Clear, specific instructions with acceptance criteria
 
 **Exclude:**
@@ -126,7 +126,7 @@ The quality of a sub-agent's output depends directly on the quality of context y
 // Read the files you want to include
 const types = readFile("src/types/tasks.ts")
 const existing = readFile("src/runner/scheduler.ts")
-const spec = readSpecSections(["§6"])
+const spec = readFile("spec.md")
 
 // Dispatch with focused context
 const result = await dispatchSubAgent({

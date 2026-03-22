@@ -1,5 +1,5 @@
-import { readFileSync } from "node:fs";
-import { resolve, dirname } from "node:path";
+import { readFileSync, copyFileSync, unlinkSync } from "node:fs";
+import { resolve, dirname, basename, join } from "node:path";
 import { createInterface } from "node:readline";
 import { TasksJsonSchema } from "../types/tasks.js";
 import { initState, loadState, saveState, updateStateAfterPhase, } from "./stateManager.js";
@@ -42,53 +42,8 @@ function getHandoffFromState(state) {
     const last = state.phaseReports.at(-1);
     return last?.handoff ?? "";
 }
-/**
- * Read spec sections from a spec file by §N identifiers.
- * Returns a map of section key to content. Gracefully returns empty map on error.
- */
-export function parseSpecSections(specPath) {
-    const sectionMap = new Map();
-    let content;
-    try {
-        content = readFileSync(specPath, "utf-8");
-    }
-    catch {
-        return sectionMap;
-    }
-    const lines = content.split("\n");
-    let currentKey = null;
-    let currentLines = [];
-    for (const line of lines) {
-        const match = line.match(/^## §(\d+)/);
-        if (match) {
-            if (currentKey !== null) {
-                sectionMap.set(currentKey, currentLines.join("\n").trim());
-            }
-            currentKey = "§" + match[1];
-            currentLines = [line];
-        }
-        else if (currentKey !== null) {
-            currentLines.push(line);
-        }
-    }
-    if (currentKey !== null) {
-        sectionMap.set(currentKey, currentLines.join("\n").trim());
-    }
-    return sectionMap;
-}
-export function buildPhaseContext(phase, state, handoff, tasksJson, specPath, checkCommand) {
+export function buildPhaseContext(phase, state, handoff, tasksJson, checkCommand) {
     const lines = [];
-    // Collect all spec sections referenced by this phase's tasks
-    const referencedSections = new Set();
-    for (const task of phase.tasks) {
-        for (const section of task.specSections) {
-            referencedSections.add(section);
-        }
-    }
-    // Pre-load spec content so the agent has it in context
-    const specSectionMap = referencedSections.size > 0
-        ? parseSpecSections(specPath)
-        : new Map();
     lines.push(`# Phase: ${phase.name} (${phase.id})`);
     lines.push("");
     lines.push("## Description");
@@ -108,28 +63,6 @@ export function buildPhaseContext(phase, state, handoff, tasksJson, specPath, ch
             lines.push(`- ${criterion}`);
         }
         lines.push(`Description: ${task.description}`);
-    }
-    // Embed pre-loaded spec sections so the agent doesn't need to find them
-    if (referencedSections.size > 0) {
-        lines.push("");
-        lines.push("## Spec Content");
-        lines.push("The following spec sections are referenced by tasks in this phase:");
-        const sortedSections = [...referencedSections].sort((a, b) => {
-            const numA = parseInt(a.replace("§", ""), 10);
-            const numB = parseInt(b.replace("§", ""), 10);
-            return numA - numB;
-        });
-        for (const section of sortedSections) {
-            const content = specSectionMap.get(section);
-            lines.push("");
-            if (content) {
-                lines.push(content);
-            }
-            else {
-                lines.push(`### ${section}`);
-                lines.push(`[Section ${section} not found in spec]`);
-            }
-        }
     }
     lines.push("");
     lines.push("## Prior Phase Handoff");
@@ -156,7 +89,6 @@ export function buildPhaseContext(phase, state, handoff, tasksJson, specPath, ch
     lines.push("- readFile(path) — read a file, returns string");
     lines.push("- listDir(path) — list directory contents");
     lines.push("- searchFiles(pattern) — search files by glob pattern");
-    lines.push("- readSpecSections(...sections) — read specific spec sections");
     lines.push("- await dispatchSubAgent({ type, taskId, instructions, filePaths, outputPaths }) — dispatch a sub-agent to create/modify files");
     lines.push("- await runCheck() — run the project check command");
     lines.push("- getState() — get current shared state");
@@ -375,10 +307,8 @@ async function executePhase(config, phase, state, tasksJson, projectRoot, logger
         ? createCheckRunner({ command: config.checkCommand, cwd: projectRoot })
         : null;
     let capturedReport = null;
-    const specPath = resolve(dirname(resolve(config.tasksJsonPath)), tasksJson.specRef);
     const baseHelpers = createReplHelpers({
         projectRoot,
-        specPath,
         statePath: config.statePath,
         agentLauncher: (c) => launcher.dispatchSubAgent(c),
     });
@@ -398,7 +328,7 @@ async function executePhase(config, phase, state, tasksJson, projectRoot, logger
         timeout: 30_000,
         helpers,
     });
-    const phaseContext = buildPhaseContext(phase, state, handoff, tasksJson, specPath, config.checkCommand);
+    const phaseContext = buildPhaseContext(phase, state, handoff, tasksJson, config.checkCommand);
     let orchestrator = null;
     try {
         const launchConfig = {
@@ -462,6 +392,14 @@ export async function runPhases(config) {
         }
     }
     const projectRoot = deriveProjectRoot(resolved, worktreeResult);
+    // Copy spec file into project root so the sandbox can read it directly.
+    // Skip if source and destination resolve to the same path (spec already in project root).
+    const specSrcPath = resolve(dirname(resolve(resolved.tasksJsonPath)), tasksJson.specRef);
+    const specDestPath = join(projectRoot, basename(specSrcPath));
+    const specCopied = specSrcPath !== specDestPath;
+    if (specCopied) {
+        copyFileSync(specSrcPath, specDestPath);
+    }
     // Handle dry run early
     if (resolved.dryRun) {
         const report = dryRunReport(tasksJson);
@@ -589,6 +527,15 @@ export async function runPhases(config) {
         }
     }
     finally {
+        // Remove the spec file copy from project root (only if we copied it)
+        if (specCopied) {
+            try {
+                unlinkSync(specDestPath);
+            }
+            catch {
+                // Ignore — file may already be gone
+            }
+        }
         if (worktreeResult) {
             cleanupWorktree(worktreeResult.worktreePath);
         }
@@ -632,6 +579,14 @@ export async function runSinglePhase(config, phaseId) {
         }
     }
     const projectRoot = deriveProjectRoot(resolved, worktreeResult);
+    // Copy spec file into project root so the sandbox can read it directly.
+    // Skip if source and destination resolve to the same path (spec already in project root).
+    const specSrcPath = resolve(dirname(resolve(resolved.tasksJsonPath)), tasksJson.specRef);
+    const specDestPath = join(projectRoot, basename(specSrcPath));
+    const specCopied = specSrcPath !== specDestPath;
+    if (specCopied) {
+        copyFileSync(specSrcPath, specDestPath);
+    }
     try {
         state = { ...state, currentPhase: phase.id };
         const phaseResult = await executePhase(resolved, phase, state, tasksJson, projectRoot, logger);
@@ -658,6 +613,15 @@ export async function runSinglePhase(config, phaseId) {
         saveState(resolved.statePath, state);
     }
     finally {
+        // Remove the spec file copy from project root (only if we copied it)
+        if (specCopied) {
+            try {
+                unlinkSync(specDestPath);
+            }
+            catch {
+                // Ignore — file may already be gone
+            }
+        }
         if (worktreeResult) {
             cleanupWorktree(worktreeResult.worktreePath);
         }

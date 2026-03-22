@@ -54,7 +54,7 @@ const tests = searchFiles("describe.*stateManager", "**/*.test.ts")
 const routes = searchFiles("router.use.*auth", "src/**/*.ts")
 
 // Use llmQuery for spec compliance check
-const specSection = readSpecSections(["§5"])
+const specSection = readFile("spec.md")
 const fileContent = readFile("src/verification/checkRunner.ts")
 const verdict = await llmQuery(
   `Does this implementation match the spec?\n\nSpec:\n${specSection}\n\nImplementation:\n${fileContent}`

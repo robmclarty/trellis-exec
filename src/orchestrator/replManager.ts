@@ -28,7 +28,6 @@ const HELPER_NAMES: ReadonlyArray<keyof ReplHelpers> = [
   "readFile",
   "listDir",
   "searchFiles",
-  "readSpecSections",
   "getState",
   "writePhaseReport",
   "dispatchSubAgent",

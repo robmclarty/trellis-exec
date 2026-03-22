@@ -1,6 +1,6 @@
 ---
 name: explore-codebase
-description: Use when exploring the codebase — documents readFile, listDir, searchFiles, and readSpecSections REPL helpers
+description: Use when exploring the codebase — documents readFile, listDir, and searchFiles REPL helpers
 ---
 
 # Explore Codebase
@@ -53,18 +53,6 @@ const matches = searchFiles("export function run", "src/**/*.ts")
 
 **Tip:** Use specific patterns. `searchFiles("runCheck")` is better than `searchFiles("run")`.
 
-### readSpecSections(...sections)
-
-Read specific sections from the spec by section number. Returns the markdown content of those sections only. Accepts both array and varargs forms.
-
-```js
-const specContent = readSpecSections(["§5", "§6"])
-// or equivalently:
-const specContent = readSpecSections("§5", "§6")
-```
-
-**When to use:** Before starting a task that references spec sections. Load only the sections you need — don't read the entire spec. Note: spec sections referenced by the current phase are pre-loaded in your phase context, so check there first.
-
 ## Exploration Pattern
 
 Follow this sequence for every task:
@@ -72,7 +60,7 @@ Follow this sequence for every task:
 1. **Broad scan** — `listDir()` on the directories mentioned in `targetPaths`
 2. **Targeted search** — `searchFiles()` for key identifiers (function names, type names, imports)
 3. **Focused read** — `readFile()` on the specific files you need to understand
-4. **Spec context** — `readSpecSections()` for any spec sections referenced in the task
+4. **Spec context** — The spec file is available in the project root. Use `readFile('spec.md')` to read spec sections referenced in the task.
 
 See `references/exploration-patterns.md` for worked examples.
 

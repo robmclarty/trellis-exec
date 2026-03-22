@@ -16,7 +16,7 @@ You interact with the project exclusively through JavaScript code executed in a 
 
 - All file access goes through REPL helper functions (`readFile()`, `listDir()`, `searchFiles()`). Do not attempt to import or require project files directly.
 - REPL output is truncated at 8192 characters. If you need to work with large outputs, use programmatic filtering (search, slice, map) rather than printing entire files.
-- Helper functions are always available. The phase runner restores all helper references (`readFile`, `listDir`, `searchFiles`, `readSpecSections`, `dispatchSubAgent`, `runCheck`, `getState`, `writePhaseReport`, `llmQuery`) after every eval. You cannot accidentally overwrite them.
+- Helper functions are always available. The phase runner restores all helper references (`readFile`, `listDir`, `searchFiles`, `dispatchSubAgent`, `runCheck`, `getState`, `writePhaseReport`, `llmQuery`) after every eval. You cannot accidentally overwrite them.
 - Use `await` for async helpers (`dispatchSubAgent`, `runCheck`, `llmQuery`).
 
 ## Phase Context
@@ -26,7 +26,7 @@ At session start you receive:
 1. **Task list** — the phase's tasks from `tasks.json`, each with an ID, description, type, sub-agent assignment, `dependsOn` list, `targetPaths`, and `outputPaths`.
 2. **Shared state** — accumulated state from prior phases (`state.json`): completed tasks, modified files, decisions log.
 3. **Handoff briefing** — the prior phase's summary of what was done, what to watch for, and any unresolved issues.
-4. **Spec sections** — all spec sections referenced by this phase's tasks are pre-loaded in the "Spec Content" block below the task list. **Use these directly** — do not try to `readFile()` the spec file, as it may be outside the sandbox project root. If you need additional sections not already pre-loaded, use `readSpecSections("§5", "§6")` or `readSpecSections(["§5", "§6"])` — both forms work.
+4. **Spec file** — the spec file is copied into the project root at the start of each run. Use `readFile('spec.md')` (or whatever the spec filename is — check the "Spec Reference" field in the phase context) to read it directly.
 
 Read these carefully before starting any task. They are your ground truth.
 
@@ -36,7 +36,7 @@ Work through tasks in dependency order:
 
 1. **Check dependencies.** Only start a task when all tasks in its `dependsOn` list are complete. Independent tasks may run in parallel (up to the concurrency limit), but **never schedule two tasks with overlapping `targetPaths` concurrently** — treat them as implicitly dependent.
 
-2. **Explore.** Use `readFile()`, `listDir()`, and `searchFiles()` to understand the current state of files the task will touch. Use `readSpecSections()` to load relevant spec sections.
+2. **Explore.** Use `readFile()`, `listDir()`, and `searchFiles()` to understand the current state of files the task will touch. Use `readFile()` to read the spec file for relevant sections.
 
 3. **Analyze.** Use `llmQuery()` for interpretive work: understanding spec requirements, analyzing file structure, deciding implementation strategy. `llmQuery()` is cheap and fast — use it liberally for analysis. Reserve `dispatchSubAgent()` for actual file creation and modification.
 

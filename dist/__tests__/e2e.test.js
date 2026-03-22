@@ -85,7 +85,6 @@ function createMockHelpers() {
         readFile: () => "",
         listDir: () => [],
         searchFiles: () => [],
-        readSpecSections: () => "",
         getState: () => ({
             currentPhase: "",
             completedPhases: [],
@@ -126,8 +125,8 @@ function setupTmpDir(tasksJson) {
     mkdirSync(join(tmpDir, "plugin", "agents"), { recursive: true });
     mkdirSync(join(tmpDir, "plugin", "skills"), { recursive: true });
     writeFileSync(join(tmpDir, "plugin", "agents", "phase-orchestrator.md"), "---\nname: phase-orchestrator\n---\n");
-    // Copy spec into project root so replHelpers can find it
-    cpSync(SAMPLE_SPEC_PATH, join(tmpDir, "spec.md"));
+    // Copy spec into project root matching the specRef in tasks.json
+    cpSync(SAMPLE_SPEC_PATH, join(tmpDir, "sample-spec.md"));
     return tmpDir;
 }
 /**

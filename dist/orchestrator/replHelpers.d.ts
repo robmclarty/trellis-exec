@@ -3,7 +3,6 @@ import type { SubAgentConfig, SubAgentResult } from "../types/agents.js";
 export type AgentLauncher = (config: SubAgentConfig) => Promise<SubAgentResult>;
 export type ReplHelpersConfig = {
     projectRoot: string;
-    specPath: string;
     statePath: string;
     agentLauncher: AgentLauncher | null;
 };
@@ -19,7 +18,6 @@ export type ReplHelpers = {
         line: number;
         content: string;
     }>;
-    readSpecSections(...args: unknown[]): string;
     getState(): SharedState;
     writePhaseReport(report: PhaseReport): void;
     dispatchSubAgent(config: SubAgentConfig): Promise<SubAgentResult>;

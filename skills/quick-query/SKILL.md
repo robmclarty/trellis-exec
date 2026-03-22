@@ -73,7 +73,7 @@ if (!check.passed) {
 When a task references spec sections, load and interpret them:
 
 ```js
-const spec = readSpecSections(["§6"])
+const spec = readFile("spec.md")
 const summary = await llmQuery(
   `Summarize the key requirements from this spec section that are relevant to implementing the phase runner loop:\n${spec}`
 )

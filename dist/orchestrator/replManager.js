@@ -3,7 +3,6 @@ const HELPER_NAMES = [
     "readFile",
     "listDir",
     "searchFiles",
-    "readSpecSections",
     "getState",
     "writePhaseReport",
     "dispatchSubAgent",

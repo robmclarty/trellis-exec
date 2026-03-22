@@ -7,7 +7,7 @@ How to assemble effective context bundles for sub-agents. The quality of a sub-a
 1. **Focused over comprehensive.** Send the 3–5 files the agent actually needs, not everything tangentially related.
 2. **Types are critical.** Always include type definitions for the interfaces the agent will implement or consume.
 3. **Instructions are the most important context.** Clear, specific instructions with acceptance criteria matter more than including extra files.
-4. **Spec sections ground the work.** Use `readSpecSections()` to load relevant sections and include key requirements in the instructions.
+4. **Spec sections ground the work.** Use `readFile('spec.md')` to load the spec and include key requirements in the instructions.
 
 ## What to Include
 

@@ -8,7 +8,6 @@ export type AgentLauncher = (config: SubAgentConfig) => Promise<SubAgentResult>;
 
 export type ReplHelpersConfig = {
   projectRoot: string;
-  specPath: string;
   statePath: string;
   agentLauncher: AgentLauncher | null;
 };
@@ -22,7 +21,6 @@ export type ReplHelpers = {
     pattern: string,
     glob?: string,
   ): Array<{ path: string; line: number; content: string }>;
-  readSpecSections(...args: unknown[]): string;
   getState(): SharedState;
   writePhaseReport(report: PhaseReport): void;
   dispatchSubAgent(config: SubAgentConfig): Promise<SubAgentResult>;
@@ -90,7 +88,7 @@ function safePath(projectRoot: string, userPath: string): string {
  * helpers are stubs that log and return mock responses.
  */
 export function createReplHelpers(config: ReplHelpersConfig): ReplHelpers {
-  const { projectRoot, specPath, statePath, agentLauncher } = config;
+  const { projectRoot, statePath, agentLauncher } = config;
 
   /**
    * Reads a file from the project directory and returns its contents as a string.
@@ -182,68 +180,6 @@ export function createReplHelpers(config: ReplHelpersConfig): ReplHelpers {
   }
 
   /**
-   * Extracts specific sections from the spec file by section identifier.
-   * Parses headings matching `## §N` and returns the content between them.
-   * Multiple sections are joined with `---` separators. Missing sections
-   * produce a `[Section §N not found]` marker.
-   * Accepts both array form readSpecSections(["§2", "§5"]) and varargs
-   * form readSpecSections("§2", "§5").
-   * @param args - Section identifiers as an array or individual arguments
-   * @returns Concatenated markdown content of the requested sections
-   */
-  function readSpecSections(...args: unknown[]): string {
-    // Normalize: accept readSpecSections(['§3', '§6']) or readSpecSections('§3', '§6')
-    const sections: string[] =
-      args.length === 1 && Array.isArray(args[0])
-        ? args[0].filter((a: unknown): a is string => typeof a === "string")
-        : args.filter((a): a is string => typeof a === "string");
-
-    if (sections.length === 0) return "";
-
-    let content: string;
-    try {
-      content = readFileSync(specPath, "utf-8");
-    } catch {
-      return sections
-        .map((s) => `[Section ${s} not found — spec file unavailable]`)
-        .join("\n\n---\n\n");
-    }
-    const lines = content.split("\n");
-
-    // Parse the spec into sections keyed by §N identifier
-    const sectionMap = new Map<string, string>();
-    let currentKey: string | null = null;
-    let currentLines: string[] = [];
-
-    for (const line of lines) {
-      const match = line.match(/^## §(\d+)/);
-      if (match) {
-        if (currentKey !== null) {
-          sectionMap.set(currentKey, currentLines.join("\n").trim());
-        }
-        currentKey = "§" + match[1];
-        currentLines = [line];
-      } else if (currentKey !== null) {
-        currentLines.push(line);
-      }
-    }
-    if (currentKey !== null) {
-      sectionMap.set(currentKey, currentLines.join("\n").trim());
-    }
-
-    const parts: string[] = [];
-    for (const section of sections) {
-      const found = sectionMap.get(section);
-      if (found !== undefined) {
-        parts.push(found);
-      } else {
-        parts.push(`[Section ${section} not found]`);
-      }
-    }
-    return parts.join("\n\n---\n\n");
-  }
-
-  /**
    * Reads and validates the shared state from the state.json file on disk.
    * @returns The current SharedState, validated against the Zod schema
    */
@@ -325,7 +261,6 @@ export function createReplHelpers(config: ReplHelpersConfig): ReplHelpers {
     readFile,
     listDir,
     searchFiles,
-    readSpecSections,
     getState,
     writePhaseReport,
     dispatchSubAgent,
