@@ -245,15 +245,32 @@ async function handleCompile(args: string[]): Promise<void> {
   const planContent = readFileSync(planPath, "utf-8");
   const result = parsePlan(planContent, specPath, planPath);
 
-  if (!result.success || !result.tasksJson) {
-    console.error("Compilation failed:");
-    for (const err of result.errors) {
-      console.error(`  - ${err}`);
-    }
-    process.exit(1);
-  }
+  // Deterministic parse failed — fall back to full LLM parse automatically
+  const needsLlmFallback = !result.success || !result.tasksJson;
+  // Deterministic parse succeeded but has fields that need LLM enrichment
+  const needsEnrichment = enrich && result.enrichmentNeeded.length > 0;
 
-  if (enrich && result.enrichmentNeeded.length > 0) {
+  if (needsLlmFallback || needsEnrichment) {
+    if (!checkClaudeAvailable()) {
+      if (needsLlmFallback) {
+        console.error(
+          "Error: Plan requires LLM parsing but Claude Code CLI is not available.\n" +
+            "The deterministic parser could not identify phase boundaries.\n" +
+            "Install Claude Code CLI from: https://docs.anthropic.com/en/docs/claude-code",
+        );
+      } else {
+        console.error(
+          "Error: --enrich requires the Claude Code CLI but it is not available.\n" +
+            "Install it from: https://docs.anthropic.com/en/docs/claude-code",
+        );
+      }
+      process.exit(1);
+    }
+
+    if (needsLlmFallback) {
+      console.log("Deterministic parser could not identify phase boundaries. Falling back to LLM parsing...");
+    }
+
     const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT ?? process.cwd();
     const launcher = createAgentLauncher({
       pluginRoot,
@@ -269,20 +286,24 @@ async function handleCompile(args: string[]): Promise<void> {
       (sum, phase) => sum + phase.tasks.length,
       0,
     );
+    const suffix = needsLlmFallback ? " (via LLM)" : " (enriched)";
     console.log(
-      `Compiled and enriched ${tasksJson.phases.length} phases, ${taskCount} tasks → ${outputPath}`,
+      `Compiled ${tasksJson.phases.length} phases, ${taskCount} tasks${suffix} → ${outputPath}`,
     );
     return;
   }
 
-  writeFileSync(outputPath, JSON.stringify(result.tasksJson, null, 2) + "\n");
+  // At this point, deterministic parse succeeded (needsLlmFallback is false)
+  const tasksJson = result.tasksJson!;
 
-  const taskCount = result.tasksJson.phases.reduce(
+  writeFileSync(outputPath, JSON.stringify(tasksJson, null, 2) + "\n");
+
+  const taskCount = tasksJson.phases.reduce(
     (sum, phase) => sum + phase.tasks.length,
     0,
   );
   console.log(
-    `Compiled ${result.tasksJson.phases.length} phases, ${taskCount} tasks → ${outputPath}`,
+    `Compiled ${tasksJson.phases.length} phases, ${taskCount} tasks → ${outputPath}`,
   );
 
   if (result.enrichmentNeeded.length > 0) {
