@@ -1,6 +1,7 @@
 {
-  "specRef": "/Users/robmclarty/Projects/trellis/code/trellis-exec/examples/spec.md",
-  "planRef": "/Users/robmclarty/Projects/trellis/code/trellis-exec/examples/plan.md",
+  "specRef": "spec.md",
+  "planRef": "plan.md",
+  "guidelinesRef": "guidelines.md",
   "createdAt": "2026-03-21T14:00:00Z",
   "phases": [
     {

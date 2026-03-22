@@ -1,4 +1,4 @@
-import { readFileSync, copyFileSync, unlinkSync } from "node:fs";
+import { readFileSync, copyFileSync, unlinkSync, mkdirSync } from "node:fs";
 import { resolve, dirname, basename, join } from "node:path";
 import { createInterface } from "node:readline";
 import { TasksJsonSchema } from "../types/tasks.js";
@@ -602,6 +602,9 @@ export async function runPhases(
 
   const projectRoot = deriveProjectRoot(resolved, worktreeResult);
 
+  // Ensure the project root directory exists (worktree may not have been created yet).
+  mkdirSync(projectRoot, { recursive: true });
+
   // Copy spec file into project root so the sandbox can read it directly.
   // Skip if source and destination resolve to the same path (spec already in project root).
   const specSrcPath = resolve(
@@ -853,6 +856,9 @@ export async function runSinglePhase(
   }
 
   const projectRoot = deriveProjectRoot(resolved, worktreeResult);
+
+  // Ensure the project root directory exists (worktree may not have been created yet).
+  mkdirSync(projectRoot, { recursive: true });
 
   // Copy spec file into project root so the sandbox can read it directly.
   // Skip if source and destination resolve to the same path (spec already in project root).
