@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.6
+
+- Pre-load spec sections into phase context prompt for --project-root compatibility
+- Add graceful error handling to readSpecSections when spec file is missing
+
 ## 0.3.5
 
 - Add `--project-root` CLI flag to decouple project root from tasks.json location
