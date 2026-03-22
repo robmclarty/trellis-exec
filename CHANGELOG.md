@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.9
+
+- Format-agnostic plan compiler: accepts any well-structured technical plan, not just phase/task formatted plans
+- New `buildDecomposePrompt` decomposes plans via LLM using full spec + plan + guidelines as context
+- Add `--guidelines` CLI flag for the compile command
+- Add optional `guidelinesRef` field to TasksJson schema
+- Copy guidelines file to project root during execution, mirroring spec pattern
+- Include guidelines reference in `buildPhaseContext` orchestrator context
+
 ## 0.3.8
 
 - Replace spec-section-injection with spec file copy into project root for simpler, more reliable spec access
