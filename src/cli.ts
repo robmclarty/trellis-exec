@@ -342,7 +342,13 @@ async function handleCompile(args: string[]): Promise<void> {
   const { planPath, specPath, guidelinesPath, projectRoot, outputPath, enrich } = parseCompileArgs(args);
 
   const planContent = readFileSync(planPath, "utf-8");
-  const result = parsePlan(planContent, specPath, planPath, projectRoot);
+
+  // Compute refs relative to the output directory so tasks.json is portable
+  const outputDir = dirname(resolve(outputPath));
+  const specRef = relative(outputDir, resolve(specPath)) || ".";
+  const planRef = relative(outputDir, resolve(planPath)) || ".";
+
+  const result = parsePlan(planContent, specRef, planRef, projectRoot);
 
   // Deterministic parse failed — decompose via LLM using spec + plan + guidelines
   const needsDecompose = !result.success || !result.tasksJson;

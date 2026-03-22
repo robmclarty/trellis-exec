@@ -1,5 +1,5 @@
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, relative, resolve } from "node:path";
 import { TasksJsonSchema } from "../types/tasks.js";
 import type { TasksJson } from "../types/tasks.js";
 import type { AgentLauncher } from "../orchestrator/agentLauncher.js";
@@ -34,9 +34,14 @@ function stripCodeFences(raw: string): string {
  */
 export async function compilePlan(config: CompileConfig): Promise<TasksJson> {
   const planContent = readFileSync(config.planPath, "utf-8");
-  const specRef = config.specPath;
-  const planRef = config.planPath;
-  const guidelinesRef = config.guidelinesPath;
+
+  // Store refs as paths relative to the output directory so tasks.json is portable
+  const outputDir = dirname(resolve(config.outputPath));
+  const specRef = relative(outputDir, resolve(config.specPath)) || ".";
+  const planRef = relative(outputDir, resolve(config.planPath)) || ".";
+  const guidelinesRef = config.guidelinesPath
+    ? relative(outputDir, resolve(config.guidelinesPath)) || "."
+    : undefined;
 
   const parseResult = parsePlan(planContent, specRef, planRef, config.projectRoot);
 

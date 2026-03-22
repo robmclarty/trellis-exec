@@ -1,5 +1,5 @@
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, relative, resolve } from "node:path";
 import { TasksJsonSchema } from "../types/tasks.js";
 import { parsePlan } from "./planParser.js";
 import { enrichPlan } from "./planEnricher.js";
@@ -21,9 +21,13 @@ function stripCodeFences(raw) {
  */
 export async function compilePlan(config) {
     const planContent = readFileSync(config.planPath, "utf-8");
-    const specRef = config.specPath;
-    const planRef = config.planPath;
-    const guidelinesRef = config.guidelinesPath;
+    // Store refs as paths relative to the output directory so tasks.json is portable
+    const outputDir = dirname(resolve(config.outputPath));
+    const specRef = relative(outputDir, resolve(config.specPath)) || ".";
+    const planRef = relative(outputDir, resolve(config.planPath)) || ".";
+    const guidelinesRef = config.guidelinesPath
+        ? relative(outputDir, resolve(config.guidelinesPath)) || "."
+        : undefined;
     const parseResult = parsePlan(planContent, specRef, planRef, config.projectRoot);
     let tasksJson;
     if (parseResult.success && parseResult.tasksJson) {
