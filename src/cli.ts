@@ -2,9 +2,10 @@
 
 import { readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { execSync } from "node:child_process";
-import { resolve, dirname } from "node:path";
+import { resolve, dirname, relative } from "node:path";
 import { parseArgs } from "node:util";
 import { TasksJsonSchema } from "./types/tasks.js";
+import type { TasksJson } from "./types/tasks.js";
 import { loadState } from "./runner/stateManager.js";
 import { parsePlan } from "./compile/planParser.js";
 import { compilePlan } from "./compile/compilePlan.js";
@@ -14,7 +15,33 @@ import {
   runSinglePhase,
   dryRunReport,
 } from "./runner/phaseRunner.js";
-import type { PhaseRunnerConfig } from "./runner/phaseRunner.js";
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+export type RunContext = {
+  // Resolved absolute paths
+  projectRoot: string;
+  specPath: string;
+  planPath: string;
+  guidelinesPath?: string;
+  statePath: string;
+  trajectoryPath: string;
+
+  // Execution settings
+  checkCommand?: string;
+  isolation: "worktree" | "none";
+  concurrency: number;
+  model?: string;
+  maxRetries: number;
+  headless: boolean;
+  verbose: boolean;
+  dryRun: boolean;
+  turnLimit: number;
+  maxConsecutiveErrors: number;
+  pluginRoot: string;
+};
 
 // ---------------------------------------------------------------------------
 // Help text
@@ -36,12 +63,17 @@ Run options:
   --concurrency <n>      Max parallel sub-agents (default: 3)
   --model <model>        Override orchestrator model
   --max-retries <n>      Max phase retries (default: 2)
+  --project-root <path>  Override project root from tasks.json
+  --spec <path>          Override spec path from tasks.json
+  --plan <path>          Override plan path from tasks.json
+  --guidelines <path>    Override guidelines path from tasks.json
   --headless             Disable interactive prompts
   --verbose              Print REPL interactions
 
 Compile options:
   --spec <spec.md>       Path to the spec (required)
   --guidelines <path>    Path to project guidelines (optional)
+  --project-root <path>  Project root relative to output (default: ".")
   --output <path>        Output path (default: ./tasks.json)
   --enrich               Run LLM enrichment to fill ambiguous fields
 
@@ -55,13 +87,28 @@ Environment variables:
 `;
 
 // ---------------------------------------------------------------------------
-// Arg parsing helpers (exported for testing)
+// Shared helpers
 // ---------------------------------------------------------------------------
 
-export function buildRunConfig(
+function loadAndValidateTasksJson(tasksJsonPath: string): TasksJson {
+  const raw = readFileSync(resolve(tasksJsonPath), "utf-8");
+  try {
+    return TasksJsonSchema.parse(JSON.parse(raw));
+  } catch (err) {
+    throw new Error(
+      `Invalid tasks.json at ${tasksJsonPath}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Run context builder
+// ---------------------------------------------------------------------------
+
+export function buildRunContext(
   args: string[],
   env: Record<string, string | undefined> = process.env,
-): PhaseRunnerConfig {
+): { context: RunContext; tasksJson: TasksJson; phaseId?: string } {
   const { values, positionals } = parseArgs({
     args,
     options: {
@@ -74,18 +121,51 @@ export function buildRunConfig(
       model: { type: "string" },
       "max-retries": { type: "string" },
       "project-root": { type: "string" },
+      spec: { type: "string" },
+      plan: { type: "string" },
+      guidelines: { type: "string" },
       headless: { type: "boolean", default: false },
       verbose: { type: "boolean", default: false },
     },
     allowPositionals: true,
   });
 
-  const tasksJsonPath = positionals[0];
-  if (!tasksJsonPath) {
+  const tasksJsonPathRaw = positionals[0];
+  if (!tasksJsonPathRaw) {
     console.error("Error: <tasks.json> path is required for 'run' command.");
     process.exit(1);
   }
 
+  const tasksJsonPath = resolve(tasksJsonPathRaw);
+  const tasksDir = dirname(tasksJsonPath);
+
+  // Load and validate tasks.json for both phase data and ref fields
+  const tasksJson = loadAndValidateTasksJson(tasksJsonPath);
+
+  // Merge: CLI flag > tasks.json field (all resolved to absolute paths)
+  const projectRoot = values["project-root"]
+    ? resolve(values["project-root"])
+    : resolve(tasksDir, tasksJson.projectRoot);
+
+  const specPath = values.spec
+    ? resolve(values.spec)
+    : resolve(tasksDir, tasksJson.specRef);
+
+  const planPath = values.plan
+    ? resolve(values.plan)
+    : resolve(tasksDir, tasksJson.planRef);
+
+  const guidelinesPath = values.guidelines
+    ? resolve(values.guidelines)
+    : tasksJson.guidelinesRef
+      ? resolve(tasksDir, tasksJson.guidelinesRef)
+      : undefined;
+
+  // State files always live alongside tasks.json
+  const statePath = resolve(tasksDir, "state.json");
+  const trajectoryPath = resolve(tasksDir, "trajectory.jsonl");
+
+  // Execution settings
   const concurrency =
     (values.concurrency !== undefined ? Number(values.concurrency) : undefined) ??
     (env.TRELLIS_EXEC_CONCURRENCY !== undefined ? Number(env.TRELLIS_EXEC_CONCURRENCY) : undefined) ??
@@ -112,9 +192,13 @@ export function buildRunConfig(
 
   const isolation = (values.isolation ?? "worktree") as "worktree" | "none";
 
-  return {
-    tasksJsonPath: resolve(tasksJsonPath),
-    ...(values["project-root"] !== undefined ? { projectRoot: resolve(values["project-root"]) } : {}),
+  const context: RunContext = {
+    projectRoot,
+    specPath,
+    planPath,
+    ...(guidelinesPath !== undefined ? { guidelinesPath } : {}),
+    statePath,
+    trajectoryPath,
     ...(values.check !== undefined ? { checkCommand: values.check } : {}),
     isolation,
     concurrency,
@@ -127,12 +211,23 @@ export function buildRunConfig(
     maxConsecutiveErrors,
     pluginRoot: env.CLAUDE_PLUGIN_ROOT ?? process.cwd(),
   };
+
+  return {
+    context,
+    tasksJson,
+    ...(values.phase !== undefined ? { phaseId: values.phase } : {}),
+  };
 }
+
+// ---------------------------------------------------------------------------
+// Compile arg parsing
+// ---------------------------------------------------------------------------
 
 export function parseCompileArgs(args: string[]): {
   planPath: string;
   specPath: string;
   guidelinesPath?: string;
+  projectRoot: string;
   outputPath: string;
   enrich: boolean;
 } {
@@ -141,6 +236,7 @@ export function parseCompileArgs(args: string[]): {
     options: {
       spec: { type: "string" },
       guidelines: { type: "string" },
+      "project-root": { type: "string" },
       output: { type: "string" },
       enrich: { type: "boolean", default: false },
     },
@@ -158,11 +254,19 @@ export function parseCompileArgs(args: string[]): {
     process.exit(1);
   }
 
+  const outputPath = resolve(values.output ?? "./tasks.json");
+
+  // projectRoot stored as relative path from output dir to project root
+  const projectRoot = values["project-root"]
+    ? relative(dirname(outputPath), resolve(values["project-root"])) || "."
+    : ".";
+
   return {
     planPath: resolve(planPath),
     specPath: resolve(values.spec),
     ...(values.guidelines ? { guidelinesPath: resolve(values.guidelines) } : {}),
-    outputPath: resolve(values.output ?? "./tasks.json"),
+    projectRoot,
+    outputPath,
     enrich: values.enrich ?? false,
   };
 }
@@ -203,9 +307,9 @@ export function checkClaudeAvailable(): boolean {
 // ---------------------------------------------------------------------------
 
 async function handleRun(args: string[]): Promise<void> {
-  const config = buildRunConfig(args);
+  const { context, tasksJson, phaseId } = buildRunContext(args);
 
-  if (!config.dryRun && !checkClaudeAvailable()) {
+  if (!context.dryRun && !checkClaudeAvailable()) {
     console.error(
       "Error: Claude Code CLI is required but not found on PATH.\n" +
         "Install it from: https://docs.anthropic.com/en/docs/claude-code",
@@ -213,25 +317,14 @@ async function handleRun(args: string[]): Promise<void> {
     process.exit(1);
   }
 
-  if (config.dryRun) {
-    const raw = readFileSync(config.tasksJsonPath, "utf-8");
-    const tasksJson = TasksJsonSchema.parse(JSON.parse(raw));
-    console.log(dryRunReport(tasksJson));
+  if (context.dryRun) {
+    console.log(dryRunReport(tasksJson, context));
     return;
   }
 
-  // Check if --phase was specified
-  const { values: phaseValues } = parseArgs({
-    args,
-    options: { phase: { type: "string" } },
-    allowPositionals: true,
-    strict: false,
-  });
-
-  const phaseId = phaseValues.phase;
   const result = typeof phaseId === "string"
-    ? await runSinglePhase(config, phaseId)
-    : await runPhases(config);
+    ? await runSinglePhase(context, tasksJson, phaseId)
+    : await runPhases(context, tasksJson);
 
   if (!result.success) {
     console.error(
@@ -246,10 +339,10 @@ async function handleRun(args: string[]): Promise<void> {
 }
 
 async function handleCompile(args: string[]): Promise<void> {
-  const { planPath, specPath, guidelinesPath, outputPath, enrich } = parseCompileArgs(args);
+  const { planPath, specPath, guidelinesPath, projectRoot, outputPath, enrich } = parseCompileArgs(args);
 
   const planContent = readFileSync(planPath, "utf-8");
-  const result = parsePlan(planContent, specPath, planPath);
+  const result = parsePlan(planContent, specPath, planPath, projectRoot);
 
   // Deterministic parse failed — decompose via LLM using spec + plan + guidelines
   const needsDecompose = !result.success || !result.tasksJson;
@@ -286,6 +379,7 @@ async function handleCompile(args: string[]): Promise<void> {
       planPath,
       specPath,
       ...(guidelinesPath ? { guidelinesPath } : {}),
+      projectRoot,
       outputPath,
       agentLauncher: launcher,
     });

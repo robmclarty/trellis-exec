@@ -21,26 +21,27 @@ root causes and outlines what needs to change.
 
 `buildOrchestratorArgs()` at `src/orchestrator/agentLauncher.ts:96-109` produces:
 
-```
+```bash
 claude --agent-file {path} --add-dir {skillsDir} --model {model}
 ```
 
 The Claude CLI (v2.1.80) has no `--agent-file` flag. The correct flag is
 `--agent`:
 
-```
+```text
 --agent <agent>   Agent for the current session. Overrides the 'agent' setting.
 ```
 
 Similarly, `buildSubAgentArgs()` at line 79-84 uses `--agent-file`:
 
-```
+```bash
 claude --agent-file {path} --print --model {model}
 ```
 
 Both need to be changed to `--agent`.
 
 **Affected functions:**
+
 - `buildOrchestratorArgs()` (line 96)
 - `buildSubAgentArgs()` (line 79)
 
@@ -58,6 +59,7 @@ const child = spawn("claude", args, {
 ```
 
 `createProcessHandle()` then:
+
 - Writes `phaseContext + "\n"` to stdin immediately (line 300)
 - On each `send()`, writes `input + "\n"` to stdin (line 333)
 - Collects stdout chunks with a 5-second idle timeout to detect response end
@@ -194,7 +196,7 @@ it's still wrong and will cause problems if the dry-run logic is ever refactored
 
 ## Claude CLI reference
 
-```
+```bash
 claude --print                         # one-shot mode (stdout = response text)
 claude --print --output-format json    # one-shot, structured JSON result
 claude --print --input-format stream-json --output-format stream-json

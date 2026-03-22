@@ -1,13 +1,13 @@
-import { readFileSync, copyFileSync, unlinkSync, mkdirSync } from "node:fs";
-import { resolve, dirname, basename, join } from "node:path";
+import { copyFileSync, unlinkSync, mkdirSync } from "node:fs";
+import { resolve, basename, join } from "node:path";
 import { createInterface } from "node:readline";
-import { TasksJsonSchema } from "../types/tasks.js";
 import type { TasksJson, Phase, Task } from "../types/tasks.js";
 import type { SharedState, PhaseReport } from "../types/state.js";
 import type { TrajectoryLogger } from "../logging/trajectoryLogger.js";
 import type { OrchestratorHandle } from "../orchestrator/agentLauncher.js";
 import type { ReplSession } from "../orchestrator/replManager.js";
 import type { ReplHelpers } from "../orchestrator/replHelpers.js";
+import type { RunContext } from "../cli.js";
 import {
   initState,
   loadState,
@@ -36,34 +36,11 @@ import { createReplSession } from "../orchestrator/replManager.js";
 // Types
 // ---------------------------------------------------------------------------
 
-export type PhaseRunnerConfig = {
-  tasksJsonPath: string;
-  projectRoot?: string;
-  statePath?: string;
-  trajectoryPath?: string;
-  checkCommand?: string;
-  isolation: "worktree" | "none";
-  concurrency: number;
-  model?: string;
-  maxRetries: number;
-  headless: boolean;
-  verbose: boolean;
-  dryRun: boolean;
-  turnLimit: number;
-  maxConsecutiveErrors: number;
-  pluginRoot: string;
-};
-
 export type PhaseRunnerResult = {
   success: boolean;
   phasesCompleted: string[];
   phasesFailed: string[];
   finalState: SharedState;
-};
-
-type ResolvedConfig = PhaseRunnerConfig & {
-  statePath: string;
-  trajectoryPath: string;
 };
 
 type PhaseExecResult = {
@@ -79,38 +56,19 @@ type TurnLoopResult = {
 // Pure helpers
 // ---------------------------------------------------------------------------
 
-function resolveDefaults(config: PhaseRunnerConfig): ResolvedConfig {
-  const dir = dirname(resolve(config.tasksJsonPath));
-  return {
-    ...config,
-    statePath: config.statePath ?? resolve(dir, "state.json"),
-    trajectoryPath: config.trajectoryPath ?? resolve(dir, "trajectory.jsonl"),
-  };
-}
-
-function loadAndValidateTasksJson(tasksJsonPath: string): TasksJson {
-  const raw = readFileSync(resolve(tasksJsonPath), "utf-8");
-  try {
-    return TasksJsonSchema.parse(JSON.parse(raw));
-  } catch (err) {
-    throw new Error(
-      `Invalid tasks.json at ${tasksJsonPath}: ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
-}
-
 function deriveProjectRoot(
-  config: ResolvedConfig,
+  baseProjectRoot: string,
   worktreeResult: WorktreeResult | null,
+  isolation: "worktree" | "none",
 ): string {
   if (
-    config.isolation === "worktree" &&
+    isolation === "worktree" &&
     worktreeResult &&
     worktreeResult.success
   ) {
     return worktreeResult.worktreePath;
   }
-  return config.projectRoot ?? dirname(resolve(config.tasksJsonPath));
+  return baseProjectRoot;
 }
 
 function getHandoffFromState(state: SharedState): string {
@@ -122,8 +80,7 @@ export function buildPhaseContext(
   phase: Phase,
   state: SharedState,
   handoff: string,
-  tasksJson: TasksJson,
-  checkCommand?: string,
+  ctx: RunContext,
 ): string {
   const lines: string[] = [];
 
@@ -163,13 +120,13 @@ export function buildPhaseContext(
   lines.push(`Schema changes: ${state.schemaChanges.length}`);
   lines.push("");
   lines.push("## Spec Reference");
-  lines.push(tasksJson.specRef);
+  lines.push(basename(ctx.specPath));
   lines.push("");
   lines.push("## Guidelines Reference");
-  lines.push(tasksJson.guidelinesRef ?? "none configured");
+  lines.push(ctx.guidelinesPath ? basename(ctx.guidelinesPath) : "none configured");
   lines.push("");
   lines.push("## Check Command");
-  lines.push(checkCommand ?? "none configured");
+  lines.push(ctx.checkCommand ?? "none configured");
   lines.push("");
   lines.push("## REPL Protocol");
   lines.push(
@@ -246,10 +203,11 @@ function makeCorrectiveTask(
 // Dry run report
 // ---------------------------------------------------------------------------
 
-export function dryRunReport(tasksJson: TasksJson): string {
+export function dryRunReport(tasksJson: TasksJson, ctx: RunContext): string {
   const lines: string[] = [];
-  lines.push(`Spec: ${tasksJson.specRef}`);
-  lines.push(`Plan: ${tasksJson.planRef}`);
+  lines.push(`Spec: ${basename(ctx.specPath)}`);
+  lines.push(`Plan: ${basename(ctx.planPath)}`);
+  lines.push(`Project root: ${ctx.projectRoot}`);
   lines.push(`Phases: ${tasksJson.phases.length}`);
   lines.push("");
 
@@ -454,34 +412,76 @@ async function replTurnLoop(
 }
 
 // ---------------------------------------------------------------------------
+// Spec/guidelines file copy helpers
+// ---------------------------------------------------------------------------
+
+type CopiedFile = {
+  destPath: string;
+  copied: boolean;
+};
+
+function copySpecToProjectRoot(specPath: string, projectRoot: string): CopiedFile {
+  const destPath = join(projectRoot, basename(specPath));
+  const copied = resolve(specPath) !== resolve(destPath);
+  if (copied) {
+    copyFileSync(specPath, destPath);
+  }
+  return { destPath, copied };
+}
+
+function copyGuidelinesToProjectRoot(
+  guidelinesPath: string | undefined,
+  projectRoot: string,
+): CopiedFile {
+  if (!guidelinesPath) {
+    return { destPath: "", copied: false };
+  }
+  const destPath = join(projectRoot, basename(guidelinesPath));
+  const copied = resolve(guidelinesPath) !== resolve(destPath);
+  if (copied) {
+    copyFileSync(guidelinesPath, destPath);
+  }
+  return { destPath, copied };
+}
+
+function cleanupCopiedFile(file: CopiedFile): void {
+  if (file.copied) {
+    try {
+      unlinkSync(file.destPath);
+    } catch {
+      // Ignore — file may already be gone
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Single phase execution
 // ---------------------------------------------------------------------------
 
 async function executePhase(
-  config: ResolvedConfig,
+  ctx: RunContext,
   phase: Phase,
   state: SharedState,
-  tasksJson: TasksJson,
   projectRoot: string,
   logger: TrajectoryLogger,
 ): Promise<PhaseExecResult> {
   const handoff = getHandoffFromState(state);
 
   const launcher = createAgentLauncher({
-    pluginRoot: config.pluginRoot,
+    pluginRoot: ctx.pluginRoot,
     projectRoot,
-    dryRun: config.dryRun,
+    dryRun: ctx.dryRun,
   });
 
-  const checkRunner = config.checkCommand
-    ? createCheckRunner({ command: config.checkCommand, cwd: projectRoot })
+  const checkRunner = ctx.checkCommand
+    ? createCheckRunner({ command: ctx.checkCommand, cwd: projectRoot })
     : null;
 
   let capturedReport: PhaseReport | null = null;
 
   const baseHelpers = createReplHelpers({
     projectRoot,
-    statePath: config.statePath,
+    statePath: ctx.statePath,
     agentLauncher: (c) => launcher.dispatchSubAgent(c),
   });
 
@@ -508,18 +508,17 @@ async function executePhase(
     phase,
     state,
     handoff,
-    tasksJson,
-    config.checkCommand,
+    ctx,
   );
 
   let orchestrator: OrchestratorHandle | null = null;
 
   try {
     const launchConfig = {
-      agentFile: resolve(config.pluginRoot, "agents/phase-orchestrator.md"),
-      skillsDir: resolve(config.pluginRoot, "skills"),
+      agentFile: resolve(ctx.pluginRoot, "agents/phase-orchestrator.md"),
+      skillsDir: resolve(ctx.pluginRoot, "skills"),
       phaseContext,
-      ...(config.model !== undefined ? { model: config.model } : {}),
+      ...(ctx.model !== undefined ? { model: ctx.model } : {}),
     };
     orchestrator = await launcher.launchOrchestrator(launchConfig);
 
@@ -528,9 +527,9 @@ async function executePhase(
       repl,
       logger,
       phase.id,
-      config.turnLimit,
-      config.maxConsecutiveErrors,
-      config.verbose,
+      ctx.turnLimit,
+      ctx.maxConsecutiveErrors,
+      ctx.verbose,
       () => capturedReport !== null,
     );
 
@@ -545,7 +544,7 @@ async function executePhase(
   } catch (err) {
     const reason =
       err instanceof Error ? err.message : "unexpected error";
-    if (config.verbose) {
+    if (ctx.verbose) {
       console.error(`[executePhase] error:`, err);
     }
     const report =
@@ -564,11 +563,9 @@ async function executePhase(
 // ---------------------------------------------------------------------------
 
 export async function runPhases(
-  config: PhaseRunnerConfig,
+  ctx: RunContext,
+  tasksJson: TasksJson,
 ): Promise<PhaseRunnerResult> {
-  const resolved = resolveDefaults(config);
-  const tasksJson = loadAndValidateTasksJson(resolved.tasksJsonPath);
-
   // Validate dependencies for all phases upfront
   for (const phase of tasksJson.phases) {
     const validation = validateDependencies(phase.tasks);
@@ -579,18 +576,17 @@ export async function runPhases(
     }
   }
 
-  let state = loadState(resolved.statePath) ?? initState(tasksJson);
-  const logger = createTrajectoryLogger(resolved.trajectoryPath);
+  let state = loadState(ctx.statePath) ?? initState(tasksJson);
+  const logger = createTrajectoryLogger(ctx.trajectoryPath);
   const phasesCompleted: string[] = [];
   const phasesFailed: string[] = [];
 
   // Worktree setup
-  const baseProjectRoot = resolved.projectRoot ?? dirname(resolve(resolved.tasksJsonPath));
   let worktreeResult: WorktreeResult | null = null;
-  if (resolved.isolation === "worktree") {
+  if (ctx.isolation === "worktree") {
     worktreeResult = createWorktree({
-      projectRoot: baseProjectRoot,
-      specName: tasksJson.specRef,
+      projectRoot: ctx.projectRoot,
+      specName: basename(ctx.specPath),
     });
     if (!worktreeResult.success) {
       logger.close();
@@ -600,41 +596,18 @@ export async function runPhases(
     }
   }
 
-  const projectRoot = deriveProjectRoot(resolved, worktreeResult);
+  const projectRoot = deriveProjectRoot(ctx.projectRoot, worktreeResult, ctx.isolation);
 
   // Ensure the project root directory exists (worktree may not have been created yet).
   mkdirSync(projectRoot, { recursive: true });
 
-  // Copy spec file into project root so the sandbox can read it directly.
-  // Skip if source and destination resolve to the same path (spec already in project root).
-  const specSrcPath = resolve(
-    dirname(resolve(resolved.tasksJsonPath)),
-    tasksJson.specRef,
-  );
-  const specDestPath = join(projectRoot, basename(specSrcPath));
-  const specCopied = specSrcPath !== specDestPath;
-  if (specCopied) {
-    copyFileSync(specSrcPath, specDestPath);
-  }
-
-  // Copy guidelines file into project root (same pattern as spec).
-  let guidelinesCopied = false;
-  let guidelinesDestPath = "";
-  if (tasksJson.guidelinesRef) {
-    const guidelinesSrcPath = resolve(
-      dirname(resolve(resolved.tasksJsonPath)),
-      tasksJson.guidelinesRef,
-    );
-    guidelinesDestPath = join(projectRoot, basename(guidelinesSrcPath));
-    guidelinesCopied = guidelinesSrcPath !== guidelinesDestPath;
-    if (guidelinesCopied) {
-      copyFileSync(guidelinesSrcPath, guidelinesDestPath);
-    }
-  }
+  // Copy spec and guidelines into project root so the sandbox can read them.
+  const specFile = copySpecToProjectRoot(ctx.specPath, projectRoot);
+  const guidelinesFile = copyGuidelinesToProjectRoot(ctx.guidelinesPath, projectRoot);
 
   // Handle dry run early
-  if (resolved.dryRun) {
-    const report = dryRunReport(tasksJson);
+  if (ctx.dryRun) {
+    const report = dryRunReport(tasksJson, ctx);
     console.log(report);
     logger.close();
     return {
@@ -660,10 +633,9 @@ export async function runPhases(
       state = { ...state, currentPhase: phase.id };
 
       const phaseResult = await executePhase(
-        resolved,
+        ctx,
         phase,
         state,
-        tasksJson,
         projectRoot,
         logger,
       );
@@ -674,7 +646,7 @@ export async function runPhases(
       let action: "advance" | "retry" | "skip" | "halt" =
         report.recommendedAction === "advance" ? "advance" : "halt";
 
-      if (!resolved.headless) {
+      if (!ctx.headless) {
         const userChoice = await promptForContinuation();
         if (userChoice === "quit") {
           // Save report to state before exiting
@@ -683,7 +655,7 @@ export async function runPhases(
             phaseReports: [...state.phaseReports, report],
           };
           phasesFailed.push(phase.id);
-          saveState(resolved.statePath, state);
+          saveState(ctx.statePath, state);
           break;
         }
         if (userChoice === "retry") {
@@ -695,13 +667,13 @@ export async function runPhases(
       }
 
       // In headless mode, follow the report's recommendation
-      if (resolved.headless && report.recommendedAction === "retry") {
+      if (ctx.headless && report.recommendedAction === "retry") {
         action = "retry";
       }
 
       if (action === "retry") {
         const retryCount = state.phaseRetries[phase.id] ?? 0;
-        if (retryCount < resolved.maxRetries) {
+        if (retryCount < ctx.maxRetries) {
           state = {
             ...state,
             phaseReports: [...state.phaseReports, report],
@@ -720,7 +692,7 @@ export async function runPhases(
               tasks: [...phase.tasks, ...newTasks],
             };
           }
-          saveState(resolved.statePath, state);
+          saveState(ctx.statePath, state);
           // Don't increment phaseIndex — re-enter same phase
           continue;
         }
@@ -730,7 +702,7 @@ export async function runPhases(
           ...state,
           phaseReports: [...state.phaseReports, report],
         };
-        saveState(resolved.statePath, state);
+        saveState(ctx.statePath, state);
         break;
       }
 
@@ -741,7 +713,7 @@ export async function runPhases(
           completedPhases: [...state.completedPhases, phase.id],
           phaseReports: [...state.phaseReports, report],
         };
-        saveState(resolved.statePath, state);
+        saveState(ctx.statePath, state);
         phaseIndex++;
         continue;
       }
@@ -752,7 +724,7 @@ export async function runPhases(
           ...state,
           phaseReports: [...state.phaseReports, report],
         };
-        saveState(resolved.statePath, state);
+        saveState(ctx.statePath, state);
         break;
       }
 
@@ -762,7 +734,7 @@ export async function runPhases(
       if (worktreeResult) {
         commitPhase(worktreeResult.worktreePath, phase.id);
       }
-      saveState(resolved.statePath, state);
+      saveState(ctx.statePath, state);
       phaseIndex++;
     }
 
@@ -773,7 +745,7 @@ export async function runPhases(
       phasesCompleted.length > 0
     ) {
       const mergeResult = mergeWorktree({
-        projectRoot: baseProjectRoot,
+        projectRoot: ctx.projectRoot,
         worktreePath: worktreeResult.worktreePath,
         branchName: worktreeResult.branchName,
       });
@@ -782,22 +754,8 @@ export async function runPhases(
       }
     }
   } finally {
-    // Remove the spec file copy from project root (only if we copied it)
-    if (specCopied) {
-      try {
-        unlinkSync(specDestPath);
-      } catch {
-        // Ignore — file may already be gone
-      }
-    }
-    // Remove the guidelines file copy from project root (only if we copied it)
-    if (guidelinesCopied) {
-      try {
-        unlinkSync(guidelinesDestPath);
-      } catch {
-        // Ignore — file may already be gone
-      }
-    }
+    cleanupCopiedFile(specFile);
+    cleanupCopiedFile(guidelinesFile);
     if (worktreeResult) {
       cleanupWorktree(worktreeResult.worktreePath);
     }
@@ -817,12 +775,10 @@ export async function runPhases(
 // ---------------------------------------------------------------------------
 
 export async function runSinglePhase(
-  config: PhaseRunnerConfig,
+  ctx: RunContext,
+  tasksJson: TasksJson,
   phaseId: string,
 ): Promise<PhaseRunnerResult> {
-  const resolved = resolveDefaults(config);
-  const tasksJson = loadAndValidateTasksJson(resolved.tasksJsonPath);
-
   const phase = tasksJson.phases.find((p) => p.id === phaseId);
   if (!phase) {
     throw new Error(`Phase not found: ${phaseId}`);
@@ -835,17 +791,16 @@ export async function runSinglePhase(
     );
   }
 
-  let state = loadState(resolved.statePath) ?? initState(tasksJson);
-  const logger = createTrajectoryLogger(resolved.trajectoryPath);
+  let state = loadState(ctx.statePath) ?? initState(tasksJson);
+  const logger = createTrajectoryLogger(ctx.trajectoryPath);
   const phasesCompleted: string[] = [];
   const phasesFailed: string[] = [];
 
-  const baseProjectRoot = resolved.projectRoot ?? dirname(resolve(resolved.tasksJsonPath));
   let worktreeResult: WorktreeResult | null = null;
-  if (resolved.isolation === "worktree") {
+  if (ctx.isolation === "worktree") {
     worktreeResult = createWorktree({
-      projectRoot: baseProjectRoot,
-      specName: tasksJson.specRef,
+      projectRoot: ctx.projectRoot,
+      specName: basename(ctx.specPath),
     });
     if (!worktreeResult.success) {
       logger.close();
@@ -855,46 +810,22 @@ export async function runSinglePhase(
     }
   }
 
-  const projectRoot = deriveProjectRoot(resolved, worktreeResult);
+  const projectRoot = deriveProjectRoot(ctx.projectRoot, worktreeResult, ctx.isolation);
 
   // Ensure the project root directory exists (worktree may not have been created yet).
   mkdirSync(projectRoot, { recursive: true });
 
-  // Copy spec file into project root so the sandbox can read it directly.
-  // Skip if source and destination resolve to the same path (spec already in project root).
-  const specSrcPath = resolve(
-    dirname(resolve(resolved.tasksJsonPath)),
-    tasksJson.specRef,
-  );
-  const specDestPath = join(projectRoot, basename(specSrcPath));
-  const specCopied = specSrcPath !== specDestPath;
-  if (specCopied) {
-    copyFileSync(specSrcPath, specDestPath);
-  }
-
-  // Copy guidelines file into project root (same pattern as spec).
-  let guidelinesCopied = false;
-  let guidelinesDestPath = "";
-  if (tasksJson.guidelinesRef) {
-    const guidelinesSrcPath = resolve(
-      dirname(resolve(resolved.tasksJsonPath)),
-      tasksJson.guidelinesRef,
-    );
-    guidelinesDestPath = join(projectRoot, basename(guidelinesSrcPath));
-    guidelinesCopied = guidelinesSrcPath !== guidelinesDestPath;
-    if (guidelinesCopied) {
-      copyFileSync(guidelinesSrcPath, guidelinesDestPath);
-    }
-  }
+  // Copy spec and guidelines into project root so the sandbox can read them.
+  const specFile = copySpecToProjectRoot(ctx.specPath, projectRoot);
+  const guidelinesFile = copyGuidelinesToProjectRoot(ctx.guidelinesPath, projectRoot);
 
   try {
     state = { ...state, currentPhase: phase.id };
 
     const phaseResult = await executePhase(
-      resolved,
+      ctx,
       phase,
       state,
-      tasksJson,
       projectRoot,
       logger,
     );
@@ -907,7 +838,7 @@ export async function runSinglePhase(
       if (worktreeResult) {
         commitPhase(worktreeResult.worktreePath, phase.id);
         mergeWorktree({
-          projectRoot: baseProjectRoot,
+          projectRoot: ctx.projectRoot,
           worktreePath: worktreeResult.worktreePath,
           branchName: worktreeResult.branchName,
         });
@@ -920,24 +851,10 @@ export async function runSinglePhase(
       };
     }
 
-    saveState(resolved.statePath, state);
+    saveState(ctx.statePath, state);
   } finally {
-    // Remove the spec file copy from project root (only if we copied it)
-    if (specCopied) {
-      try {
-        unlinkSync(specDestPath);
-      } catch {
-        // Ignore — file may already be gone
-      }
-    }
-    // Remove the guidelines file copy from project root (only if we copied it)
-    if (guidelinesCopied) {
-      try {
-        unlinkSync(guidelinesDestPath);
-      } catch {
-        // Ignore — file may already be gone
-      }
-    }
+    cleanupCopiedFile(specFile);
+    cleanupCopiedFile(guidelinesFile);
     if (worktreeResult) {
       cleanupWorktree(worktreeResult.worktreePath);
     }

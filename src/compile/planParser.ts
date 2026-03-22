@@ -343,6 +343,7 @@ function buildTasksJson(
   rawPhases: RawPhase[],
   specRef: string,
   planRef: string,
+  projectRoot?: string,
 ): { tasksJson: TasksJson; enrichmentNeeded: EnrichmentFlag[] } {
   const enrichmentNeeded: EnrichmentFlag[] = [];
   const allTaskMeta: Array<{ id: string; targetPaths: string[] }> = [];
@@ -410,6 +411,7 @@ function buildTasksJson(
   }
 
   const tasksJson: TasksJson = {
+    projectRoot: projectRoot ?? ".",
     specRef,
     planRef,
     createdAt: new Date().toISOString(),
@@ -432,6 +434,7 @@ export function parsePlan(
   planContent: string,
   specRef: string,
   planRef: string,
+  projectRoot?: string,
 ): ParseResult {
   if (!planContent.trim()) {
     return {
@@ -460,6 +463,7 @@ export function parsePlan(
     rawPhases,
     specRef,
     planRef,
+    projectRoot,
   );
 
   return {

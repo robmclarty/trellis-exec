@@ -20,6 +20,7 @@ import {
 
 function makeTasksJson(): TasksJson {
   return {
+    projectRoot: ".",
     specRef: "./spec.md",
     planRef: "./plan.md",
     createdAt: "2026-03-17T00:00:00Z",
@@ -105,6 +106,7 @@ describe("stateManager", () => {
 
     it("throws if TasksJson has no phases", () => {
       const tasks: TasksJson = {
+        projectRoot: ".",
         specRef: "./spec.md",
         planRef: "./plan.md",
         createdAt: "2026-03-17T00:00:00Z",

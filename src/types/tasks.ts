@@ -28,6 +28,7 @@ export const PhaseSchema = z.object({
 });
 
 export const TasksJsonSchema = z.object({
+  projectRoot: z.string(),
   specRef: z.string(),
   planRef: z.string(),
   guidelinesRef: z.string().optional(),

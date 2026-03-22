@@ -61,6 +61,7 @@ export function buildDecomposePrompt(
   specContent: string,
   specRef: string,
   planRef: string,
+  projectRoot: string,
   guidelinesContent?: string,
   guidelinesRef?: string,
 ): string {
@@ -105,6 +106,7 @@ ${guidelinesSection}
 Produce a JSON object matching this exact schema:
 
 {
+  "projectRoot": "${projectRoot}",
   "specRef": "${specRef}",
   "planRef": "${planRef}",${guidelinesRefField}
   "createdAt": "<ISO 8601 timestamp>",

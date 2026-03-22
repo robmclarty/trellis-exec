@@ -1,6 +1,6 @@
 # trellis-exec
 
-```
+```text
 ╔═════════════════════════════════════════════════════════════╗
 ║                                                             ║
 ║    █  ░  ~     ~       ║═╬═║═╬═║═╬═║       ┌──┐ ┌──┐ ┌──┐   ║
@@ -79,7 +79,7 @@ Show execution status for all phases and tasks.
 
 ## Architecture
 
-```
+```text
                           plan.md + spec.md
                                 │
                     ┌───────────▼───────────┐

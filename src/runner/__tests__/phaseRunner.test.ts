@@ -53,7 +53,7 @@ import {
   promptForContinuation,
   buildPhaseContext,
 } from "../phaseRunner.js";
-import type { PhaseRunnerConfig } from "../phaseRunner.js";
+import type { RunContext } from "../../cli.js";
 import { createAgentLauncher } from "../../orchestrator/agentLauncher.js";
 import { createReplSession } from "../../orchestrator/replManager.js";
 import { createReplHelpers } from "../../orchestrator/replHelpers.js";
@@ -64,6 +64,7 @@ import { createReplHelpers } from "../../orchestrator/replHelpers.js";
 
 function makeTasksJson(): TasksJson {
   return {
+    projectRoot: ".",
     specRef: "./spec.md",
     planRef: "./plan.md",
     createdAt: "2026-03-17T00:00:00Z",
@@ -194,9 +195,11 @@ function createMockHelpers(): ReplHelpers {
   };
 }
 
-function makeDefaultConfig(tmpDir: string): PhaseRunnerConfig {
+function makeDefaultConfig(tmpDir: string): RunContext {
   return {
-    tasksJsonPath: join(tmpDir, "tasks.json"),
+    projectRoot: tmpDir,
+    specPath: join(tmpDir, "spec.md"),
+    planPath: join(tmpDir, "plan.md"),
     statePath: join(tmpDir, "state.json"),
     trajectoryPath: join(tmpDir, "trajectory.jsonl"),
     isolation: "none",
@@ -458,7 +461,7 @@ describe("phaseRunner", () => {
       ]);
       setupMocksForSuccess(reports);
 
-      const result = await runPhases(config);
+      const result = await runPhases(config, tasksJson);
 
       expect(result.success).toBe(true);
       expect(result.phasesCompleted).toContain("phase-1");
@@ -574,7 +577,7 @@ describe("phaseRunner", () => {
         },
       );
 
-      const result = await runPhases(config);
+      const result = await runPhases(config, tasksJson);
 
       expect(result.success).toBe(true);
       expect(result.phasesCompleted).toContain("phase-1");
@@ -659,7 +662,7 @@ describe("phaseRunner", () => {
         },
       );
 
-      const result = await runPhases(config);
+      const result = await runPhases(config, tasksJson);
 
       expect(result.success).toBe(false);
       expect(result.phasesFailed).toContain("phase-1");
@@ -758,7 +761,9 @@ describe("phaseRunner", () => {
         },
       );
 
-      const result = await runPhases(config);
+      // Pass a deep clone so we can verify the original is not mutated
+      const tasksJsonClone: TasksJson = JSON.parse(JSON.stringify(tasksJson));
+      const result = await runPhases(config, tasksJsonClone);
 
       // After 2 retries, each adding "Fix the build", the corrective task IDs
       // should be unique: phase-1-corrective-0 (retry 0) and phase-1-corrective-100
@@ -782,7 +787,7 @@ describe("phaseRunner", () => {
 
       setupMocksForErrors(3);
 
-      const result = await runPhases(config);
+      const result = await runPhases(config, tasksJson);
 
       expect(result.success).toBe(false);
       expect(result.phasesFailed).toContain("phase-1");
@@ -795,10 +800,26 @@ describe("phaseRunner", () => {
   describe("dryRunReport", () => {
     it("produces readable output with execution groups", () => {
       const tasksJson = makeTasksJson();
-      const report = dryRunReport(tasksJson);
+      const ctx: RunContext = {
+        projectRoot: ".",
+        specPath: "spec.md",
+        planPath: "plan.md",
+        statePath: "state.json",
+        trajectoryPath: "trajectory.jsonl",
+        isolation: "none",
+        concurrency: 3,
+        maxRetries: 2,
+        headless: true,
+        verbose: false,
+        dryRun: false,
+        turnLimit: 100,
+        maxConsecutiveErrors: 5,
+        pluginRoot: ".",
+      };
+      const report = dryRunReport(tasksJson, ctx);
 
-      expect(report).toContain("Spec: ./spec.md");
-      expect(report).toContain("Plan: ./plan.md");
+      expect(report).toContain("Spec: spec.md");
+      expect(report).toContain("Plan: plan.md");
       expect(report).toContain("phase-1");
       expect(report).toContain("phase-2");
       expect(report).toContain("task-1-1");
@@ -822,7 +843,7 @@ describe("phaseRunner", () => {
 
       setupMocksForTurnLimit(5);
 
-      const result = await runPhases(config);
+      const result = await runPhases(config, tasksJson);
 
       expect(result.success).toBe(false);
       expect(result.phasesFailed).toContain("phase-1");
@@ -868,7 +889,7 @@ describe("phaseRunner", () => {
       ]);
       setupMocksForSuccess(reports);
 
-      const result = await runPhases(config);
+      const result = await runPhases(config, tasksJson);
 
       expect(result.success).toBe(true);
       // phase-1 was already completed (from state), phase-2 ran now
@@ -899,7 +920,7 @@ describe("phaseRunner", () => {
       ]);
       setupMocksForSuccess(reports);
 
-      const result = await runSinglePhase(config, "phase-2");
+      const result = await runSinglePhase(config, tasksJson, "phase-2");
 
       expect(result.success).toBe(true);
       expect(result.phasesCompleted).toEqual(["phase-2"]);
@@ -912,7 +933,7 @@ describe("phaseRunner", () => {
       const config = makeDefaultConfig(tmpDir);
 
       await expect(
-        runSinglePhase(config, "phase-nonexistent"),
+        runSinglePhase(config, tasksJson, "phase-nonexistent"),
       ).rejects.toThrow(/Phase not found/);
     });
   });
@@ -976,19 +997,47 @@ describe("phaseRunner", () => {
       phaseRetries: {},
     };
 
-    it("includes guidelines reference when guidelinesRef is present", () => {
-      const tasksJson = {
-        ...makeTasksJson(),
-        guidelinesRef: "guidelines.md",
+    it("includes guidelines reference when guidelinesPath is present", () => {
+      const ctx: RunContext = {
+        projectRoot: ".",
+        specPath: "spec.md",
+        planPath: "plan.md",
+        guidelinesPath: "guidelines.md",
+        statePath: "state.json",
+        trajectoryPath: "trajectory.jsonl",
+        isolation: "none",
+        concurrency: 3,
+        maxRetries: 2,
+        headless: true,
+        verbose: false,
+        dryRun: false,
+        turnLimit: 100,
+        maxConsecutiveErrors: 5,
+        pluginRoot: ".",
       };
-      const context = buildPhaseContext(phase, state, "", tasksJson);
+      const context = buildPhaseContext(phase, state, "", ctx);
       expect(context).toContain("## Guidelines Reference");
       expect(context).toContain("guidelines.md");
     });
 
-    it("shows 'none configured' when guidelinesRef is absent", () => {
-      const tasksJson = makeTasksJson();
-      const context = buildPhaseContext(phase, state, "", tasksJson);
+    it("shows 'none configured' when guidelinesPath is absent", () => {
+      const ctx: RunContext = {
+        projectRoot: ".",
+        specPath: "spec.md",
+        planPath: "plan.md",
+        statePath: "state.json",
+        trajectoryPath: "trajectory.jsonl",
+        isolation: "none",
+        concurrency: 3,
+        maxRetries: 2,
+        headless: true,
+        verbose: false,
+        dryRun: false,
+        turnLimit: 100,
+        maxConsecutiveErrors: 5,
+        pluginRoot: ".",
+      };
+      const context = buildPhaseContext(phase, state, "", ctx);
       expect(context).toContain("## Guidelines Reference");
       expect(context).toContain("none configured");
     });

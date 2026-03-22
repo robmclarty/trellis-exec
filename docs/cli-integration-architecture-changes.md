@@ -21,7 +21,7 @@ architectural tradeoffs introduced.
 
 ### Before (original design)
 
-```
+```text
 ┌─────────────────────────────────────────────────────┐
 │  Phase Runner                                       │
 │                                                     │
@@ -51,7 +51,7 @@ architectural tradeoffs introduced.
 
 ### After (current design)
 
-```
+```text
 ┌──────────────────────────────────────────────────────────────────┐
 │  Phase Runner                                                    │
 │                                                                  │
@@ -199,7 +199,7 @@ often at transition points (after a sub-agent succeeds, before calling
 
 **Heuristics used:**
 
-```
+```text
 JS patterns:   const  let  var  await  function  //  /*  (
                 identifier followed by ( or =
 NL patterns:   Starts with [A-Z][a-z], contains spaces, no [=;{}[\]]
@@ -260,7 +260,7 @@ This is the part that needs the most scrutiny.
 
 ### Permission boundaries diagram
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────┐
 │                        Phase Runner                             │
 │                     (Node.js process)                           │
@@ -351,7 +351,7 @@ instruction to the LLM, not an enforced limit.
 
 ## Data flow diagram
 
-```
+```text
 User runs: trellis-exec run tasks.json --headless
 
   │

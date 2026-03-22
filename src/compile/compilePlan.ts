@@ -11,6 +11,7 @@ export type CompileConfig = {
   planPath: string;
   specPath: string;
   guidelinesPath?: string;
+  projectRoot: string;
   outputPath: string;
   agentLauncher: AgentLauncher;
 };
@@ -37,7 +38,7 @@ export async function compilePlan(config: CompileConfig): Promise<TasksJson> {
   const planRef = config.planPath;
   const guidelinesRef = config.guidelinesPath;
 
-  const parseResult = parsePlan(planContent, specRef, planRef);
+  const parseResult = parsePlan(planContent, specRef, planRef, config.projectRoot);
 
   let tasksJson: TasksJson;
 
@@ -57,6 +58,7 @@ export async function compilePlan(config: CompileConfig): Promise<TasksJson> {
       specContent,
       specRef,
       planRef,
+      config.projectRoot,
       guidelinesContent,
       guidelinesRef,
     );

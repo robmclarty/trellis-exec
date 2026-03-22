@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildDecomposePrompt, buildEnrichmentPrompt } from "../prompts.js";
+import { buildDecomposePrompt } from "../prompts.js";
 
 describe("buildDecomposePrompt", () => {
   const planContent = "## S1 — Architecture\nSome architecture details.";
@@ -8,13 +8,13 @@ describe("buildDecomposePrompt", () => {
   const planRef = "plan.md";
 
   it("includes spec content in the prompt", () => {
-    const prompt = buildDecomposePrompt(planContent, specContent, specRef, planRef);
+    const prompt = buildDecomposePrompt(planContent, specContent, specRef, planRef, ".");
     expect(prompt).toContain(specContent);
     expect(prompt).toContain("<spec>");
   });
 
   it("includes plan content in the prompt", () => {
-    const prompt = buildDecomposePrompt(planContent, specContent, specRef, planRef);
+    const prompt = buildDecomposePrompt(planContent, specContent, specRef, planRef, ".");
     expect(prompt).toContain(planContent);
     expect(prompt).toContain("<plan>");
   });
@@ -26,6 +26,7 @@ describe("buildDecomposePrompt", () => {
       specContent,
       specRef,
       planRef,
+      ".",
       guidelinesContent,
       "guidelines.md",
     );
@@ -35,7 +36,7 @@ describe("buildDecomposePrompt", () => {
   });
 
   it("omits guidelines section when not provided", () => {
-    const prompt = buildDecomposePrompt(planContent, specContent, specRef, planRef);
+    const prompt = buildDecomposePrompt(planContent, specContent, specRef, planRef, ".");
     expect(prompt).not.toContain("<guidelines>");
     expect(prompt).not.toContain("Guidelines Reference");
   });
@@ -46,6 +47,7 @@ describe("buildDecomposePrompt", () => {
       specContent,
       specRef,
       planRef,
+      ".",
       "some guidelines",
       "guidelines.md",
     );
@@ -53,18 +55,18 @@ describe("buildDecomposePrompt", () => {
   });
 
   it("omits guidelinesRef from schema when not provided", () => {
-    const prompt = buildDecomposePrompt(planContent, specContent, specRef, planRef);
+    const prompt = buildDecomposePrompt(planContent, specContent, specRef, planRef, ".");
     expect(prompt).not.toContain("guidelinesRef");
   });
 
   it("includes specRef and planRef in the schema", () => {
-    const prompt = buildDecomposePrompt(planContent, specContent, specRef, planRef);
+    const prompt = buildDecomposePrompt(planContent, specContent, specRef, planRef, ".");
     expect(prompt).toContain(`"specRef": "${specRef}"`);
     expect(prompt).toContain(`"planRef": "${planRef}"`);
   });
 
   it("includes decomposition rules for task sizing and phasing", () => {
-    const prompt = buildDecomposePrompt(planContent, specContent, specRef, planRef);
+    const prompt = buildDecomposePrompt(planContent, specContent, specRef, planRef, ".");
     expect(prompt).toContain("subAgentType");
     expect(prompt).toContain("dependsOn");
     expect(prompt).toContain("targetPaths");

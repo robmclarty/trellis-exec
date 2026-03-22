@@ -6,7 +6,7 @@ trellis-exec orchestrates LLM-generated code execution inside a REPL sandbox, di
 
 ## Architecture Overview
 
-```
+```text
 User input (plan.md, spec.md)
   → Deterministic compiler (parsePlan)
   → Optional LLM enrichment (compilePlan --enrich)
@@ -50,12 +50,14 @@ The key trust boundary is between the orchestrator LLM's generated JavaScript an
 ## 3. Regular Expression Denial of Service (ReDoS)
 
 **Risk:** The `searchFiles` REPL helper accepted LLM-generated regex patterns and passed them directly to `new RegExp()`. Two risks:
+
 1. **SyntaxError** from malformed patterns (e.g., unclosed `[`) would throw and increment the consecutive error counter.
 2. **Catastrophic backtracking** from pathological patterns (e.g., `(a+)+$`) would block the Node.js event loop synchronously, bypassing the VM's async timeout mechanism.
 
 **Attack vector:** The orchestrator LLM generates the search pattern. A confused or adversarial prompt could produce a ReDoS pattern that hangs the process indefinitely.
 
 **Mitigation:** `searchFiles` now:
+
 - Rejects patterns longer than 200 characters (returns empty array).
 - Wraps `new RegExp()` in a try/catch, returning an empty array on `SyntaxError`.
 
@@ -80,6 +82,7 @@ Note: This does not fully prevent ReDoS from short pathological patterns. A more
 ## 5. In-Place Mutation During Phase Retry
 
 **Risk:** When a phase retry included corrective tasks, the code pushed new tasks directly onto the phase's `tasks` array with `phase.tasks.push()`. This mutated the original `tasksJson` object in-place, causing:
+
 - **Task duplication:** On subsequent retries, previously appended corrective tasks were still present.
 - **ID collisions:** Corrective task IDs were generated with a zero-based counter that reset on each retry, producing duplicate IDs (e.g., `phase-1-corrective-0` on both retry 1 and retry 2).
 
@@ -106,6 +109,7 @@ Note: This does not fully prevent ReDoS from short pathological patterns. A more
 **Risk:** REPL helpers (`readFile`, `listDir`, `searchFiles`) accept paths from LLM-generated code. Without bounds checking, the orchestrator could read arbitrary files outside the project (e.g., `../../etc/passwd`).
 
 **Mitigation:** All path-accepting helpers route through `safePath()`, which:
+
 1. Resolves the path relative to `projectRoot`.
 2. Resolves symlinks via `realpathSync`.
 3. Rejects any resolved path that doesn't start with the project root prefix.
