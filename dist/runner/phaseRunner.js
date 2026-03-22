@@ -42,8 +42,53 @@ function getHandoffFromState(state) {
     const last = state.phaseReports.at(-1);
     return last?.handoff ?? "";
 }
-function buildPhaseContext(phase, state, handoff, tasksJson, checkCommand) {
+/**
+ * Read spec sections from a spec file by §N identifiers.
+ * Returns a map of section key to content. Gracefully returns empty map on error.
+ */
+function parseSpecSections(specPath) {
+    const sectionMap = new Map();
+    let content;
+    try {
+        content = readFileSync(specPath, "utf-8");
+    }
+    catch {
+        return sectionMap;
+    }
+    const lines = content.split("\n");
+    let currentKey = null;
+    let currentLines = [];
+    for (const line of lines) {
+        const match = line.match(/^## §(\d+)/);
+        if (match) {
+            if (currentKey !== null) {
+                sectionMap.set(currentKey, currentLines.join("\n").trim());
+            }
+            currentKey = "§" + match[1];
+            currentLines = [line];
+        }
+        else if (currentKey !== null) {
+            currentLines.push(line);
+        }
+    }
+    if (currentKey !== null) {
+        sectionMap.set(currentKey, currentLines.join("\n").trim());
+    }
+    return sectionMap;
+}
+function buildPhaseContext(phase, state, handoff, tasksJson, specPath, checkCommand) {
     const lines = [];
+    // Collect all spec sections referenced by this phase's tasks
+    const referencedSections = new Set();
+    for (const task of phase.tasks) {
+        for (const section of task.specSections) {
+            referencedSections.add(section);
+        }
+    }
+    // Pre-load spec content so the agent has it in context
+    const specSectionMap = referencedSections.size > 0
+        ? parseSpecSections(specPath)
+        : new Map();
     lines.push(`# Phase: ${phase.name} (${phase.id})`);
     lines.push("");
     lines.push("## Description");
@@ -63,6 +108,28 @@ function buildPhaseContext(phase, state, handoff, tasksJson, checkCommand) {
             lines.push(`- ${criterion}`);
         }
         lines.push(`Description: ${task.description}`);
+    }
+    // Embed pre-loaded spec sections so the agent doesn't need to find them
+    if (referencedSections.size > 0) {
+        lines.push("");
+        lines.push("## Spec Content");
+        lines.push("The following spec sections are referenced by tasks in this phase:");
+        const sortedSections = [...referencedSections].sort((a, b) => {
+            const numA = parseInt(a.replace("§", ""), 10);
+            const numB = parseInt(b.replace("§", ""), 10);
+            return numA - numB;
+        });
+        for (const section of sortedSections) {
+            const content = specSectionMap.get(section);
+            lines.push("");
+            if (content) {
+                lines.push(content);
+            }
+            else {
+                lines.push(`### ${section}`);
+                lines.push(`[Section ${section} not found in spec]`);
+            }
+        }
     }
     lines.push("");
     lines.push("## Prior Phase Handoff");
@@ -308,9 +375,10 @@ async function executePhase(config, phase, state, tasksJson, projectRoot, logger
         ? createCheckRunner({ command: config.checkCommand, cwd: projectRoot })
         : null;
     let capturedReport = null;
+    const specPath = resolve(dirname(resolve(config.tasksJsonPath)), tasksJson.specRef);
     const baseHelpers = createReplHelpers({
         projectRoot,
-        specPath: resolve(dirname(resolve(config.tasksJsonPath)), tasksJson.specRef),
+        specPath,
         statePath: config.statePath,
         agentLauncher: (c) => launcher.dispatchSubAgent(c),
     });
@@ -330,7 +398,7 @@ async function executePhase(config, phase, state, tasksJson, projectRoot, logger
         timeout: 30_000,
         helpers,
     });
-    const phaseContext = buildPhaseContext(phase, state, handoff, tasksJson, config.checkCommand);
+    const phaseContext = buildPhaseContext(phase, state, handoff, tasksJson, specPath, config.checkCommand);
     let orchestrator = null;
     try {
         const launchConfig = {

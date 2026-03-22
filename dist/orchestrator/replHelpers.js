@@ -156,7 +156,15 @@ export function createReplHelpers(config) {
     function readSpecSections(sections) {
         if (sections.length === 0)
             return "";
-        const content = readFileSync(specPath, "utf-8");
+        let content;
+        try {
+            content = readFileSync(specPath, "utf-8");
+        }
+        catch {
+            return sections
+                .map((s) => `[Section ${s} not found — spec file unavailable]`)
+                .join("\n\n---\n\n");
+        }
         const lines = content.split("\n");
         // Parse the spec into sections keyed by §N identifier
         const sectionMap = new Map();

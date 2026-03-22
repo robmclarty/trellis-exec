@@ -118,14 +118,63 @@ function getHandoffFromState(state: SharedState): string {
   return last?.handoff ?? "";
 }
 
+/**
+ * Read spec sections from a spec file by §N identifiers.
+ * Returns a map of section key to content. Gracefully returns empty map on error.
+ */
+function parseSpecSections(specPath: string): Map<string, string> {
+  const sectionMap = new Map<string, string>();
+  let content: string;
+  try {
+    content = readFileSync(specPath, "utf-8");
+  } catch {
+    return sectionMap;
+  }
+
+  const lines = content.split("\n");
+  let currentKey: string | null = null;
+  let currentLines: string[] = [];
+
+  for (const line of lines) {
+    const match = line.match(/^## §(\d+)/);
+    if (match) {
+      if (currentKey !== null) {
+        sectionMap.set(currentKey, currentLines.join("\n").trim());
+      }
+      currentKey = "§" + match[1];
+      currentLines = [line];
+    } else if (currentKey !== null) {
+      currentLines.push(line);
+    }
+  }
+  if (currentKey !== null) {
+    sectionMap.set(currentKey, currentLines.join("\n").trim());
+  }
+  return sectionMap;
+}
+
 function buildPhaseContext(
   phase: Phase,
   state: SharedState,
   handoff: string,
   tasksJson: TasksJson,
+  specPath: string,
   checkCommand?: string,
 ): string {
   const lines: string[] = [];
+
+  // Collect all spec sections referenced by this phase's tasks
+  const referencedSections = new Set<string>();
+  for (const task of phase.tasks) {
+    for (const section of task.specSections) {
+      referencedSections.add(section);
+    }
+  }
+
+  // Pre-load spec content so the agent has it in context
+  const specSectionMap = referencedSections.size > 0
+    ? parseSpecSections(specPath)
+    : new Map<string, string>();
 
   lines.push(`# Phase: ${phase.name} (${phase.id})`);
   lines.push("");
@@ -149,6 +198,30 @@ function buildPhaseContext(
       lines.push(`- ${criterion}`);
     }
     lines.push(`Description: ${task.description}`);
+  }
+
+  // Embed pre-loaded spec sections so the agent doesn't need to find them
+  if (referencedSections.size > 0) {
+    lines.push("");
+    lines.push("## Spec Content");
+    lines.push(
+      "The following spec sections are referenced by tasks in this phase:",
+    );
+    const sortedSections = [...referencedSections].sort((a, b) => {
+      const numA = parseInt(a.replace("§", ""), 10);
+      const numB = parseInt(b.replace("§", ""), 10);
+      return numA - numB;
+    });
+    for (const section of sortedSections) {
+      const content = specSectionMap.get(section);
+      lines.push("");
+      if (content) {
+        lines.push(content);
+      } else {
+        lines.push(`### ${section}`);
+        lines.push(`[Section ${section} not found in spec]`);
+      }
+    }
   }
 
   lines.push("");
@@ -479,9 +552,14 @@ async function executePhase(
 
   let capturedReport: PhaseReport | null = null;
 
+  const specPath = resolve(
+    dirname(resolve(config.tasksJsonPath)),
+    tasksJson.specRef,
+  );
+
   const baseHelpers = createReplHelpers({
     projectRoot,
-    specPath: resolve(dirname(resolve(config.tasksJsonPath)), tasksJson.specRef),
+    specPath,
     statePath: config.statePath,
     agentLauncher: (c) => launcher.dispatchSubAgent(c),
   });
@@ -510,6 +588,7 @@ async function executePhase(
     state,
     handoff,
     tasksJson,
+    specPath,
     config.checkCommand,
   );
 
