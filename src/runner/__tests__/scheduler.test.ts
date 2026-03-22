@@ -215,5 +215,84 @@ describe("scheduler", () => {
       expect(result.valid).toBe(false);
       expect(result.errors.some((e) => /[Cc]ircular/.test(e))).toBe(true);
     });
+
+    it("accepts cross-phase dependencies when knownExternalIds is provided", () => {
+      const phase2Tasks = [
+        makeTask({ id: "phase-2-task-1", dependsOn: ["phase-1-task-2"] }),
+        makeTask({
+          id: "phase-2-task-2",
+          dependsOn: ["phase-2-task-1", "phase-1-task-3"],
+        }),
+      ];
+      const priorIds = new Set(["phase-1-task-1", "phase-1-task-2", "phase-1-task-3"]);
+
+      const result = validateDependencies(phase2Tasks, priorIds);
+      expect(result.valid).toBe(true);
+      expect(result.errors).toEqual([]);
+    });
+
+    it("rejects cross-phase deps not present in knownExternalIds", () => {
+      const phase2Tasks = [
+        makeTask({ id: "phase-2-task-1", dependsOn: ["phase-1-task-99"] }),
+      ];
+      const priorIds = new Set(["phase-1-task-1", "phase-1-task-2"]);
+
+      const result = validateDependencies(phase2Tasks, priorIds);
+      expect(result.valid).toBe(false);
+      expect(result.errors[0]).toMatch(/non-existent task "phase-1-task-99"/);
+    });
+
+    it("still detects self-references even with knownExternalIds", () => {
+      const tasks = [makeTask({ id: "A", dependsOn: ["A"] })];
+      const priorIds = new Set(["X", "Y"]);
+
+      const result = validateDependencies(tasks, priorIds);
+      expect(result.valid).toBe(false);
+      expect(result.errors[0]).toMatch(/depends on itself/);
+    });
+  });
+
+  describe("resolveExecutionOrder with cross-phase dependencies", () => {
+    it("ignores cross-phase deps in scheduling and treats those tasks as ready", () => {
+      const tasks = [
+        makeTask({
+          id: "phase-2-task-1",
+          dependsOn: ["phase-1-task-2"],
+          targetPaths: ["src/adapter.js"],
+        }),
+        makeTask({
+          id: "phase-2-task-2",
+          dependsOn: ["phase-2-task-1", "phase-1-task-3"],
+          targetPaths: ["src/adapter.test.js"],
+        }),
+        makeTask({
+          id: "phase-2-task-3",
+          dependsOn: ["phase-2-task-1"],
+          targetPaths: ["src/context.js"],
+        }),
+      ];
+      const priorIds = new Set(["phase-1-task-1", "phase-1-task-2", "phase-1-task-3"]);
+
+      const groups = resolveExecutionOrder(tasks, priorIds);
+
+      // task-1 has no local deps (phase-1-task-2 is external) → group 0
+      expect(groups[0]!.taskIds).toEqual(["phase-2-task-1"]);
+      // task-2 and task-3 both depend on task-1 → group 1
+      expect(groups[1]!.taskIds).toEqual(
+        expect.arrayContaining(["phase-2-task-2", "phase-2-task-3"]),
+      );
+      expect(groups[1]!.taskIds).toHaveLength(2);
+      expect(groups[1]!.parallelizable).toBe(true);
+    });
+
+    it("throws when cross-phase dep is not in knownExternalIds", () => {
+      const tasks = [
+        makeTask({ id: "A", dependsOn: ["unknown-phase-task"] }),
+      ];
+
+      expect(() => resolveExecutionOrder(tasks, new Set())).toThrow(
+        /non-existent/,
+      );
+    });
   });
 });

@@ -14,8 +14,14 @@ export type ValidationResult = {
 /**
  * Checks for missing dependency references, self-references,
  * and circular dependencies.
+ *
+ * @param knownExternalIds - Task IDs from prior phases that are valid
+ *   dependency targets but not part of the current task set (e.g. cross-phase deps).
  */
-export function validateDependencies(tasks: Task[]): ValidationResult {
+export function validateDependencies(
+  tasks: Task[],
+  knownExternalIds: Set<string> = new Set(),
+): ValidationResult {
   const errors: string[] = [];
   const taskIds = new Set(tasks.map((t) => t.id));
 
@@ -23,7 +29,7 @@ export function validateDependencies(tasks: Task[]): ValidationResult {
     for (const dep of task.dependsOn) {
       if (dep === task.id) {
         errors.push(`Task "${task.id}" depends on itself`);
-      } else if (!taskIds.has(dep)) {
+      } else if (!taskIds.has(dep) && !knownExternalIds.has(dep)) {
         errors.push(
           `Task "${task.id}" depends on non-existent task "${dep}"`,
         );
@@ -147,10 +153,13 @@ function pathsOverlap(pathsA: string[], pathsB: string[]): boolean {
  * Uses Kahn's algorithm with both explicit (dependsOn) and implicit
  * (targetPaths overlap) dependencies.
  */
-export function resolveExecutionOrder(tasks: Task[]): ExecutionGroup[] {
+export function resolveExecutionOrder(
+  tasks: Task[],
+  knownExternalIds: Set<string> = new Set(),
+): ExecutionGroup[] {
   if (tasks.length === 0) return [];
 
-  const validation = validateDependencies(tasks);
+  const validation = validateDependencies(tasks, knownExternalIds);
   if (!validation.valid) {
     throw new Error(
       `Invalid dependencies: ${validation.errors.join("; ")}`,
@@ -177,10 +186,13 @@ export function resolveExecutionOrder(tasks: Task[]): ExecutionGroup[] {
     inDegree.set(to, inDegree.get(to)! + 1);
   }
 
-  // Explicit dependencies
+  // Explicit dependencies (skip cross-phase deps — those are already complete)
+  const localIds = new Set(tasks.map((t) => t.id));
   for (const task of tasks) {
     for (const dep of task.dependsOn) {
-      addEdge(dep, task.id);
+      if (localIds.has(dep)) {
+        addEdge(dep, task.id);
+      }
     }
   }
 

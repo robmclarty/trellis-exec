@@ -211,12 +211,13 @@ export function dryRunReport(tasksJson: TasksJson, ctx: RunContext): string {
   lines.push(`Phases: ${tasksJson.phases.length}`);
   lines.push("");
 
+  const priorIds = new Set<string>();
   for (const phase of tasksJson.phases) {
     lines.push(`## ${phase.id}: ${phase.name}`);
     lines.push(phase.description);
     lines.push("");
 
-    const groups = resolveExecutionOrder(phase.tasks);
+    const groups = resolveExecutionOrder(phase.tasks, priorIds);
     for (const group of groups) {
       const label = group.parallelizable ? "[parallel]" : "[sequential]";
       lines.push(`  Group ${group.groupIndex} ${label}:`);
@@ -239,6 +240,10 @@ export function dryRunReport(tasksJson: TasksJson, ctx: RunContext): string {
       }
     }
     lines.push("");
+
+    for (const task of phase.tasks) {
+      priorIds.add(task.id);
+    }
   }
 
   return lines.join("\n");
@@ -566,13 +571,17 @@ export async function runPhases(
   ctx: RunContext,
   tasksJson: TasksJson,
 ): Promise<PhaseRunnerResult> {
-  // Validate dependencies for all phases upfront
+  // Validate dependencies for all phases upfront, allowing cross-phase refs
+  const priorPhaseTaskIds = new Set<string>();
   for (const phase of tasksJson.phases) {
-    const validation = validateDependencies(phase.tasks);
+    const validation = validateDependencies(phase.tasks, priorPhaseTaskIds);
     if (!validation.valid) {
       throw new Error(
         `Phase ${phase.id} has invalid dependencies: ${validation.errors.join("; ")}`,
       );
+    }
+    for (const task of phase.tasks) {
+      priorPhaseTaskIds.add(task.id);
     }
   }
 
@@ -784,7 +793,16 @@ export async function runSinglePhase(
     throw new Error(`Phase not found: ${phaseId}`);
   }
 
-  const validation = validateDependencies(phase.tasks);
+  // Collect task IDs from all phases prior to the target phase
+  const priorPhaseTaskIds = new Set<string>();
+  for (const p of tasksJson.phases) {
+    if (p.id === phaseId) break;
+    for (const t of p.tasks) {
+      priorPhaseTaskIds.add(t.id);
+    }
+  }
+
+  const validation = validateDependencies(phase.tasks, priorPhaseTaskIds);
   if (!validation.valid) {
     throw new Error(
       `Phase ${phase.id} has invalid dependencies: ${validation.errors.join("; ")}`,
