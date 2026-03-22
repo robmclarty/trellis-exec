@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.4
+
+- Fix invalid git branch names when specRef is an absolute file path in worktree creation
+
 ## 0.3.3
 
 - Add habit-tracker example specs (plan, spec, tasks, guidelines, pitch)
