@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.1
+
+- Fix CLI entrypoint detection for `npx` and `npm link` by resolving symlinks with `realpathSync`
+- Fix vitest config `resolve` option incorrectly nested inside `test` (ts2769)
+
 ## 0.3.0
 
 - Rewrite orchestrator to use sequential `--print --continue` calls instead of persistent process
