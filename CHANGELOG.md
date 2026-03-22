@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.10
+
+- Add `projectRoot` as required field in tasks.json, enabling tasks.json to live outside the project directory
+- Introduce `RunContext` type that normalizes CLI flags + tasks.json refs into a single resolved config before execution
+- Add `--spec`, `--plan`, `--guidelines` CLI override flags for the run command
+- Refactor phaseRunner to accept pre-resolved `RunContext` instead of resolving paths internally
+- Fix markdown lint errors in docs and README
+
 ## 0.3.9
 
 - Format-agnostic plan compiler: accepts any well-structured technical plan, not just phase/task formatted plans
