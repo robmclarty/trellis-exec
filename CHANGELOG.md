@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.5
+
+- Add `--project-root` CLI flag to decouple project root from tasks.json location
+
 ## 0.3.4
 
 - Fix invalid git branch names when specRef is an absolute file path in worktree creation
