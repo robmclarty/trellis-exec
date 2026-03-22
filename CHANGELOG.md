@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.3
+
+- Add habit-tracker example specs (plan, spec, tasks, guidelines, pitch)
+
 ## 0.3.2
 
 - Auto-fallback to LLM parsing when deterministic plan parser cannot identify phase boundaries
