@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.12
+
+- Fix cross-phase task dependency validation — tasks can now reference IDs from prior phases without being rejected as non-existent
+
 ## 0.3.11
 
 - Store specRef, planRef, and guidelinesRef as relative paths in tasks.json, making it portable across machines
