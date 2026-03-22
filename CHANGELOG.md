@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.11
+
+- Store specRef, planRef, and guidelinesRef as relative paths in tasks.json, making it portable across machines
+
 ## 0.3.10
 
 - Add `projectRoot` as required field in tasks.json, enabling tasks.json to live outside the project directory
