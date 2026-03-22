@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { execSync } from "node:child_process";
+import { resolve } from "node:path";
 import { buildRunConfig, parseCompileArgs, parseStatusArgs, checkClaudeAvailable } from "../cli.js";
 
 describe("buildRunConfig", () => {
@@ -222,5 +224,66 @@ describe("CLI dispatch", () => {
   it("parseStatusArgs exits when no positional arg given", () => {
     expect(() => parseStatusArgs([])).toThrow("process.exit called");
     expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+});
+
+describe("CLI entrypoint (subprocess)", () => {
+  const cliPath = resolve(import.meta.dirname, "../../dist/cli.js");
+
+  it("compile without --spec prints an error and exits non-zero", () => {
+    let stderr = "";
+    let exitCode = 0;
+    try {
+      execSync(`node ${cliPath} compile examples/plan.md`, {
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+    } catch (err: unknown) {
+      const e = err as { status: number; stderr: string };
+      exitCode = e.status;
+      stderr = e.stderr;
+    }
+    expect(exitCode).not.toBe(0);
+    expect(stderr).toContain("--spec");
+  });
+
+  it("npx entrypoint runs main (compile without --spec errors)", () => {
+    // Reproduces the bug where `npx .` silently exits 0 because the
+    // isEntryPoint guard fails when npx wraps the binary via a shim.
+    let stderr = "";
+    let exitCode = 0;
+    try {
+      execSync("npx . compile examples/plan.md", {
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+        cwd: resolve(import.meta.dirname, "../.."),
+      });
+    } catch (err: unknown) {
+      const e = err as { status: number; stderr: string };
+      exitCode = e.status;
+      stderr = e.stderr;
+    }
+    expect(exitCode).not.toBe(0);
+    expect(stderr).toContain("--spec");
+  });
+
+  it("running with no arguments prints help and exits non-zero", () => {
+    let stderr = "";
+    let stdout = "";
+    let exitCode = 0;
+    try {
+      const output = execSync(`node ${cliPath}`, {
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      stdout = output;
+    } catch (err: unknown) {
+      const e = err as { status: number; stderr: string; stdout: string };
+      exitCode = e.status;
+      stderr = e.stderr;
+      stdout = e.stdout;
+    }
+    expect(exitCode).not.toBe(0);
+    expect(stdout + stderr).toContain("Usage:");
   });
 });

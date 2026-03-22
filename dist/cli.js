@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { resolve, dirname } from "node:path";
 import { parseArgs } from "node:util";
@@ -277,8 +277,23 @@ async function main() {
             process.exit(1);
     }
 }
-const isEntryPoint = import.meta.url === `file://${process.argv[1]}` ||
-    process.argv[1]?.endsWith("/cli.js");
+// Detect whether this module is the entrypoint.  `npx`, `npm link`, and
+// similar runners invoke the bin through symlinks or wrapper shims, so a
+// simple path comparison against process.argv[1] is not reliable.  We
+// resolve the real path of argv[1] to handle symlinks.
+function detectEntryPoint() {
+    if (import.meta.url === `file://${process.argv[1]}`)
+        return true;
+    try {
+        const realArgv = realpathSync(process.argv[1] ?? "");
+        const selfPath = new URL(import.meta.url).pathname;
+        return realArgv === selfPath;
+    }
+    catch {
+        return false;
+    }
+}
+const isEntryPoint = detectEntryPoint();
 if (isEntryPoint) {
     main().catch((err) => {
         console.error(err instanceof Error ? err.message : String(err));
