@@ -19,7 +19,7 @@ export type ReplHelpers = {
         line: number;
         content: string;
     }>;
-    readSpecSections(sections: string[]): string;
+    readSpecSections(...args: unknown[]): string;
     getState(): SharedState;
     writePhaseReport(report: PhaseReport): void;
     dispatchSubAgent(config: SubAgentConfig): Promise<SubAgentResult>;

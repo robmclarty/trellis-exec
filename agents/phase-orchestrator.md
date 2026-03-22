@@ -26,6 +26,7 @@ At session start you receive:
 1. **Task list** — the phase's tasks from `tasks.json`, each with an ID, description, type, sub-agent assignment, `dependsOn` list, `targetPaths`, and `outputPaths`.
 2. **Shared state** — accumulated state from prior phases (`state.json`): completed tasks, modified files, decisions log.
 3. **Handoff briefing** — the prior phase's summary of what was done, what to watch for, and any unresolved issues.
+4. **Spec sections** — all spec sections referenced by this phase's tasks are pre-loaded in the "Spec Content" block below the task list. **Use these directly** — do not try to `readFile()` the spec file, as it may be outside the sandbox project root. If you need additional sections not already pre-loaded, use `readSpecSections("§5", "§6")` or `readSpecSections(["§5", "§6"])` — both forms work.
 
 Read these carefully before starting any task. They are your ground truth.
 

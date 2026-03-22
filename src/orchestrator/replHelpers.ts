@@ -22,7 +22,7 @@ export type ReplHelpers = {
     pattern: string,
     glob?: string,
   ): Array<{ path: string; line: number; content: string }>;
-  readSpecSections(sections: string[]): string;
+  readSpecSections(...args: unknown[]): string;
   getState(): SharedState;
   writePhaseReport(report: PhaseReport): void;
   dispatchSubAgent(config: SubAgentConfig): Promise<SubAgentResult>;
@@ -186,10 +186,18 @@ export function createReplHelpers(config: ReplHelpersConfig): ReplHelpers {
    * Parses headings matching `## §N` and returns the content between them.
    * Multiple sections are joined with `---` separators. Missing sections
    * produce a `[Section §N not found]` marker.
-   * @param sections - Array of section identifiers (e.g. ["§2", "§5"])
+   * Accepts both array form readSpecSections(["§2", "§5"]) and varargs
+   * form readSpecSections("§2", "§5").
+   * @param args - Section identifiers as an array or individual arguments
    * @returns Concatenated markdown content of the requested sections
    */
-  function readSpecSections(sections: string[]): string {
+  function readSpecSections(...args: unknown[]): string {
+    // Normalize: accept readSpecSections(['§3', '§6']) or readSpecSections('§3', '§6')
+    const sections: string[] =
+      args.length === 1 && Array.isArray(args[0])
+        ? args[0].filter((a: unknown): a is string => typeof a === "string")
+        : args.filter((a): a is string => typeof a === "string");
+
     if (sections.length === 0) return "";
 
     let content: string;

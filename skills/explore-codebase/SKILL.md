@@ -53,15 +53,17 @@ const matches = searchFiles("export function run", "src/**/*.ts")
 
 **Tip:** Use specific patterns. `searchFiles("runCheck")` is better than `searchFiles("run")`.
 
-### readSpecSections(sections)
+### readSpecSections(...sections)
 
-Read specific sections from the spec by section number. Returns the markdown content of those sections only.
+Read specific sections from the spec by section number. Returns the markdown content of those sections only. Accepts both array and varargs forms.
 
 ```js
 const specContent = readSpecSections(["§5", "§6"])
+// or equivalently:
+const specContent = readSpecSections("§5", "§6")
 ```
 
-**When to use:** Before starting a task that references spec sections. Load only the sections you need — don't read the entire spec.
+**When to use:** Before starting a task that references spec sections. Load only the sections you need — don't read the entire spec. Note: spec sections referenced by the current phase are pre-loaded in your phase context, so check there first.
 
 ## Exploration Pattern
 

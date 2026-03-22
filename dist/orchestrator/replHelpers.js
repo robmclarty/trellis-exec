@@ -150,10 +150,16 @@ export function createReplHelpers(config) {
      * Parses headings matching `## §N` and returns the content between them.
      * Multiple sections are joined with `---` separators. Missing sections
      * produce a `[Section §N not found]` marker.
-     * @param sections - Array of section identifiers (e.g. ["§2", "§5"])
+     * Accepts both array form readSpecSections(["§2", "§5"]) and varargs
+     * form readSpecSections("§2", "§5").
+     * @param args - Section identifiers as an array or individual arguments
      * @returns Concatenated markdown content of the requested sections
      */
-    function readSpecSections(sections) {
+    function readSpecSections(...args) {
+        // Normalize: accept readSpecSections(['§3', '§6']) or readSpecSections('§3', '§6')
+        const sections = args.length === 1 && Array.isArray(args[0])
+            ? args[0].filter((a) => typeof a === "string")
+            : args.filter((a) => typeof a === "string");
         if (sections.length === 0)
             return "";
         let content;
