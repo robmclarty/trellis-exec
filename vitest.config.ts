@@ -16,8 +16,8 @@ export default defineConfig({
       include: ["src/**/*.ts"],
       exclude: ["src/**/*.test.ts", "src/__tests__/**", "src/types/**"],
     },
-    resolve: {
-      conditions: ["node"],
-    },
+  },
+  resolve: {
+    conditions: ["node"],
   },
 });
