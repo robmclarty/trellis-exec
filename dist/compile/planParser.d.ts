@@ -6,5 +6,5 @@ import type { ParseResult } from "../types/compile.js";
  * deterministically are flagged in enrichmentNeeded for Stage 2 (Haiku enrichment).
  * Returns success: false if no phase boundaries can be identified.
  */
-export declare function parsePlan(planContent: string, specRef: string, planRef: string): ParseResult;
+export declare function parsePlan(planContent: string, specRef: string, planRef: string, projectRoot?: string): ParseResult;
 //# sourceMappingURL=planParser.d.ts.map

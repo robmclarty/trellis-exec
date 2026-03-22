@@ -46,8 +46,10 @@ export declare const PhaseSchema: z.ZodObject<{
     }, z.core.$strip>>;
 }, z.core.$strip>;
 export declare const TasksJsonSchema: z.ZodObject<{
+    projectRoot: z.ZodString;
     specRef: z.ZodString;
     planRef: z.ZodString;
+    guidelinesRef: z.ZodOptional<z.ZodString>;
     createdAt: z.ZodString;
     phases: z.ZodArray<z.ZodObject<{
         id: z.ZodString;

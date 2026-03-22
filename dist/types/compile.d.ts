@@ -8,8 +8,10 @@ export declare const EnrichmentFlagSchema: z.ZodObject<{
 export declare const ParseResultSchema: z.ZodObject<{
     success: z.ZodBoolean;
     tasksJson: z.ZodNullable<z.ZodObject<{
+        projectRoot: z.ZodString;
         specRef: z.ZodString;
         planRef: z.ZodString;
+        guidelinesRef: z.ZodOptional<z.ZodString>;
         createdAt: z.ZodString;
         phases: z.ZodArray<z.ZodObject<{
             id: z.ZodString;

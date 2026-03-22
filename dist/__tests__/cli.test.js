@@ -1,12 +1,66 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { execSync } from "node:child_process";
-import { resolve } from "node:path";
-import { buildRunConfig, parseCompileArgs, parseStatusArgs, checkClaudeAvailable } from "../cli.js";
-describe("buildRunConfig", () => {
+import { resolve, join } from "node:path";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { buildRunContext, parseCompileArgs, parseStatusArgs, checkClaudeAvailable } from "../cli.js";
+// ---------------------------------------------------------------------------
+// Helper: create a temp dir with a minimal valid tasks.json
+// ---------------------------------------------------------------------------
+function createTempTasksJson(overrides) {
+    const tmpDir = mkdtempSync(join(tmpdir(), "cli-test-"));
+    const tasksJson = {
+        projectRoot: ".",
+        specRef: "spec.md",
+        planRef: "plan.md",
+        createdAt: "2026-03-17T00:00:00Z",
+        phases: [
+            {
+                id: "phase-1",
+                name: "Setup",
+                description: "Set up project",
+                tasks: [
+                    {
+                        id: "phase-1-task-1",
+                        title: "Init",
+                        description: "Initialize",
+                        dependsOn: [],
+                        specSections: ["§1"],
+                        targetPaths: ["src/index.ts"],
+                        acceptanceCriteria: ["works"],
+                        subAgentType: "implement",
+                        status: "pending",
+                    },
+                ],
+            },
+        ],
+        ...overrides,
+    };
+    const tasksJsonPath = join(tmpDir, "tasks.json");
+    writeFileSync(tasksJsonPath, JSON.stringify(tasksJson));
+    // Create spec and plan files referenced by tasks.json
+    writeFileSync(join(tmpDir, "spec.md"), "# Spec");
+    writeFileSync(join(tmpDir, "plan.md"), "# Plan");
+    return { tmpDir, tasksJsonPath };
+}
+let tmpDirs = [];
+afterEach(() => {
+    for (const d of tmpDirs) {
+        rmSync(d, { recursive: true, force: true });
+    }
+    tmpDirs = [];
+});
+function trackTmpDir(tmpDir) {
+    tmpDirs.push(tmpDir);
+    return tmpDir;
+}
+describe("buildRunContext", () => {
     const emptyEnv = {};
-    it("creates correct config from valid args", () => {
-        const config = buildRunConfig([
-            "tasks.json",
+    it("creates correct context from valid args", () => {
+        const { tmpDir, tasksJsonPath } = createTempTasksJson();
+        trackTmpDir(tmpDir);
+        const result = buildRunContext([
+            tasksJsonPath,
             "--phase",
             "phase-1",
             "--dry-run",
@@ -23,30 +77,35 @@ describe("buildRunConfig", () => {
             "--headless",
             "--verbose",
         ], emptyEnv);
-        expect(config.tasksJsonPath).toContain("tasks.json");
-        expect(config.dryRun).toBe(true);
-        expect(config.checkCommand).toBe("npm test");
-        expect(config.isolation).toBe("none");
-        expect(config.concurrency).toBe(5);
-        expect(config.model).toBe("opus");
-        expect(config.maxRetries).toBe(4);
-        expect(config.headless).toBe(true);
-        expect(config.verbose).toBe(true);
+        expect(result.context.dryRun).toBe(true);
+        expect(result.context.checkCommand).toBe("npm test");
+        expect(result.context.isolation).toBe("none");
+        expect(result.context.concurrency).toBe(5);
+        expect(result.context.model).toBe("opus");
+        expect(result.context.maxRetries).toBe(4);
+        expect(result.context.headless).toBe(true);
+        expect(result.context.verbose).toBe(true);
+        expect(result.phaseId).toBe("phase-1");
+        expect(result.tasksJson).toBeDefined();
     });
     it("applies default values when no flags provided", () => {
-        const config = buildRunConfig(["tasks.json"], emptyEnv);
-        expect(config.isolation).toBe("worktree");
-        expect(config.concurrency).toBe(3);
-        expect(config.maxRetries).toBe(2);
-        expect(config.turnLimit).toBe(200);
-        expect(config.maxConsecutiveErrors).toBe(5);
-        expect(config.headless).toBe(false);
-        expect(config.verbose).toBe(false);
-        expect(config.dryRun).toBe(false);
-        expect(config.model).toBeUndefined();
-        expect(config.checkCommand).toBeUndefined();
+        const { tmpDir, tasksJsonPath } = createTempTasksJson();
+        trackTmpDir(tmpDir);
+        const result = buildRunContext([tasksJsonPath], emptyEnv);
+        expect(result.context.isolation).toBe("worktree");
+        expect(result.context.concurrency).toBe(3);
+        expect(result.context.maxRetries).toBe(2);
+        expect(result.context.turnLimit).toBe(200);
+        expect(result.context.maxConsecutiveErrors).toBe(5);
+        expect(result.context.headless).toBe(false);
+        expect(result.context.verbose).toBe(false);
+        expect(result.context.dryRun).toBe(false);
+        expect(result.context.model).toBeUndefined();
+        expect(result.context.checkCommand).toBeUndefined();
     });
     it("uses environment variable fallbacks", () => {
+        const { tmpDir, tasksJsonPath } = createTempTasksJson();
+        trackTmpDir(tmpDir);
         const env = {
             TRELLIS_EXEC_MODEL: "haiku",
             TRELLIS_EXEC_CONCURRENCY: "8",
@@ -55,22 +114,24 @@ describe("buildRunConfig", () => {
             TRELLIS_EXEC_MAX_CONSECUTIVE_ERRORS: "10",
             CLAUDE_PLUGIN_ROOT: "/custom/plugin",
         };
-        const config = buildRunConfig(["tasks.json"], env);
-        expect(config.model).toBe("haiku");
-        expect(config.concurrency).toBe(8);
-        expect(config.maxRetries).toBe(5);
-        expect(config.turnLimit).toBe(150);
-        expect(config.maxConsecutiveErrors).toBe(10);
-        expect(config.pluginRoot).toBe("/custom/plugin");
+        const result = buildRunContext([tasksJsonPath], env);
+        expect(result.context.model).toBe("haiku");
+        expect(result.context.concurrency).toBe(8);
+        expect(result.context.maxRetries).toBe(5);
+        expect(result.context.turnLimit).toBe(150);
+        expect(result.context.maxConsecutiveErrors).toBe(10);
+        expect(result.context.pluginRoot).toBe("/custom/plugin");
     });
     it("CLI flags override environment variables", () => {
+        const { tmpDir, tasksJsonPath } = createTempTasksJson();
+        trackTmpDir(tmpDir);
         const env = {
             TRELLIS_EXEC_MODEL: "haiku",
             TRELLIS_EXEC_CONCURRENCY: "8",
             TRELLIS_EXEC_MAX_RETRIES: "5",
         };
-        const config = buildRunConfig([
-            "tasks.json",
+        const result = buildRunContext([
+            tasksJsonPath,
             "--model",
             "opus",
             "--concurrency",
@@ -78,14 +139,19 @@ describe("buildRunConfig", () => {
             "--max-retries",
             "1",
         ], env);
-        expect(config.model).toBe("opus");
-        expect(config.concurrency).toBe(2);
-        expect(config.maxRetries).toBe(1);
+        expect(result.context.model).toBe("opus");
+        expect(result.context.concurrency).toBe(2);
+        expect(result.context.maxRetries).toBe(1);
     });
-    it("resolves tasksJsonPath to absolute path", () => {
-        const config = buildRunConfig(["relative/tasks.json"], emptyEnv);
-        expect(config.tasksJsonPath).toMatch(/^\//);
-        expect(config.tasksJsonPath).toContain("relative/tasks.json");
+    it("resolves paths to absolute", () => {
+        const { tmpDir, tasksJsonPath } = createTempTasksJson();
+        trackTmpDir(tmpDir);
+        const result = buildRunContext([tasksJsonPath], emptyEnv);
+        expect(result.context.projectRoot).toMatch(/^\//);
+        expect(result.context.specPath).toMatch(/^\//);
+        expect(result.context.planPath).toMatch(/^\//);
+        expect(result.context.statePath).toMatch(/^\//);
+        expect(result.context.trajectoryPath).toMatch(/^\//);
     });
 });
 describe("parseCompileArgs", () => {
@@ -147,6 +213,26 @@ describe("parseCompileArgs", () => {
         ]);
         expect(result.enrich).toBe(true);
     });
+    it("parses --guidelines flag as resolved absolute path", () => {
+        const result = parseCompileArgs([
+            "plan.md",
+            "--spec",
+            "spec.md",
+            "--guidelines",
+            "guidelines.md",
+        ]);
+        expect(result.guidelinesPath).toBeDefined();
+        expect(result.guidelinesPath).toContain("guidelines.md");
+        expect(result.guidelinesPath).toMatch(/^\//);
+    });
+    it("omits guidelinesPath when --guidelines is not provided", () => {
+        const result = parseCompileArgs([
+            "plan.md",
+            "--spec",
+            "spec.md",
+        ]);
+        expect(result.guidelinesPath).toBeUndefined();
+    });
 });
 describe("parseStatusArgs", () => {
     it("parses tasks.json path", () => {
@@ -176,8 +262,8 @@ describe("CLI dispatch", () => {
         exitSpy.mockRestore();
         errorSpy.mockRestore();
     });
-    it("buildRunConfig exits when no positional arg given", () => {
-        expect(() => buildRunConfig([], {})).toThrow("process.exit called");
+    it("buildRunContext exits when no positional arg given", () => {
+        expect(() => buildRunContext([], {})).toThrow("process.exit called");
         expect(exitSpy).toHaveBeenCalledWith(1);
     });
     it("parseCompileArgs exits when --spec is missing", () => {

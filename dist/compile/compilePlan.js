@@ -3,7 +3,7 @@ import { dirname } from "node:path";
 import { TasksJsonSchema } from "../types/tasks.js";
 import { parsePlan } from "./planParser.js";
 import { enrichPlan } from "./planEnricher.js";
-import { buildFullParseFallbackPrompt } from "./prompts.js";
+import { buildDecomposePrompt } from "./prompts.js";
 /**
  * Strips markdown code fences from a JSON response if present.
  */
@@ -15,7 +15,7 @@ function stripCodeFences(raw) {
  * 1. Read plan.md from disk.
  * 2. Run deterministic parser (Stage 1).
  * 3. If successful, run enricher (Stage 2) to fill gaps.
- * 4. If parser failed, fall back to full LLM parse.
+ * 4. If parser failed, decompose via LLM using spec + plan + guidelines.
  * 5. Validate final output against Zod schema.
  * 6. Write to outputPath.
  */
@@ -23,19 +23,27 @@ export async function compilePlan(config) {
     const planContent = readFileSync(config.planPath, "utf-8");
     const specRef = config.specPath;
     const planRef = config.planPath;
-    const parseResult = parsePlan(planContent, specRef, planRef);
+    const guidelinesRef = config.guidelinesPath;
+    const parseResult = parsePlan(planContent, specRef, planRef, config.projectRoot);
     let tasksJson;
     if (parseResult.success && parseResult.tasksJson) {
         const enricher = (prompt) => config.agentLauncher.llmQuery(prompt);
         tasksJson = await enrichPlan(parseResult, enricher);
+        if (guidelinesRef) {
+            tasksJson = { ...tasksJson, guidelinesRef };
+        }
     }
     else {
-        const fallbackPrompt = buildFullParseFallbackPrompt(planContent, specRef);
-        const raw = await config.agentLauncher.llmQuery(fallbackPrompt);
+        const specContent = readFileSync(config.specPath, "utf-8");
+        const guidelinesContent = config.guidelinesPath
+            ? readFileSync(config.guidelinesPath, "utf-8")
+            : undefined;
+        const decomposePrompt = buildDecomposePrompt(planContent, specContent, specRef, planRef, config.projectRoot, guidelinesContent, guidelinesRef);
+        const raw = await config.agentLauncher.llmQuery(decomposePrompt);
         const parsed = JSON.parse(stripCodeFences(raw));
         const validation = TasksJsonSchema.safeParse(parsed);
         if (!validation.success) {
-            throw new Error(`Fallback LLM parse produced invalid TasksJson: ${validation.error.message}`);
+            throw new Error(`LLM decomposition produced invalid TasksJson: ${validation.error.message}`);
         }
         tasksJson = validation.data;
     }

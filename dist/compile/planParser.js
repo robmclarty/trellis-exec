@@ -267,7 +267,7 @@ function parseLines(lines) {
  * Runs all extractors (spec sections, paths, criteria, agent type) on each task,
  * infers cross-task dependencies, and collects enrichment flags for ambiguous fields.
  */
-function buildTasksJson(rawPhases, specRef, planRef) {
+function buildTasksJson(rawPhases, specRef, planRef, projectRoot) {
     const enrichmentNeeded = [];
     const allTaskMeta = [];
     const phases = [];
@@ -325,6 +325,7 @@ function buildTasksJson(rawPhases, specRef, planRef) {
         }
     }
     const tasksJson = {
+        projectRoot: projectRoot ?? ".",
         specRef,
         planRef,
         createdAt: new Date().toISOString(),
@@ -340,7 +341,7 @@ function buildTasksJson(rawPhases, specRef, planRef) {
  * deterministically are flagged in enrichmentNeeded for Stage 2 (Haiku enrichment).
  * Returns success: false if no phase boundaries can be identified.
  */
-export function parsePlan(planContent, specRef, planRef) {
+export function parsePlan(planContent, specRef, planRef, projectRoot) {
     if (!planContent.trim()) {
         return {
             success: false,
@@ -361,7 +362,7 @@ export function parsePlan(planContent, specRef, planRef) {
             ],
         };
     }
-    const { tasksJson, enrichmentNeeded } = buildTasksJson(rawPhases, specRef, planRef);
+    const { tasksJson, enrichmentNeeded } = buildTasksJson(rawPhases, specRef, planRef, projectRoot);
     return {
         success: true,
         tasksJson,

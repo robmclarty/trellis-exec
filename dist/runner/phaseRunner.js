@@ -1,7 +1,6 @@
-import { readFileSync, copyFileSync, unlinkSync } from "node:fs";
-import { resolve, dirname, basename, join } from "node:path";
+import { copyFileSync, unlinkSync, mkdirSync } from "node:fs";
+import { resolve, basename, join } from "node:path";
 import { createInterface } from "node:readline";
-import { TasksJsonSchema } from "../types/tasks.js";
 import { initState, loadState, saveState, updateStateAfterPhase, } from "./stateManager.js";
 import { validateDependencies, resolveExecutionOrder, detectTargetPathOverlaps, } from "./scheduler.js";
 import { createTrajectoryLogger } from "../logging/trajectoryLogger.js";
@@ -13,36 +12,19 @@ import { createReplSession } from "../orchestrator/replManager.js";
 // ---------------------------------------------------------------------------
 // Pure helpers
 // ---------------------------------------------------------------------------
-function resolveDefaults(config) {
-    const dir = dirname(resolve(config.tasksJsonPath));
-    return {
-        ...config,
-        statePath: config.statePath ?? resolve(dir, "state.json"),
-        trajectoryPath: config.trajectoryPath ?? resolve(dir, "trajectory.jsonl"),
-    };
-}
-function loadAndValidateTasksJson(tasksJsonPath) {
-    const raw = readFileSync(resolve(tasksJsonPath), "utf-8");
-    try {
-        return TasksJsonSchema.parse(JSON.parse(raw));
-    }
-    catch (err) {
-        throw new Error(`Invalid tasks.json at ${tasksJsonPath}: ${err instanceof Error ? err.message : String(err)}`);
-    }
-}
-function deriveProjectRoot(config, worktreeResult) {
-    if (config.isolation === "worktree" &&
+function deriveProjectRoot(baseProjectRoot, worktreeResult, isolation) {
+    if (isolation === "worktree" &&
         worktreeResult &&
         worktreeResult.success) {
         return worktreeResult.worktreePath;
     }
-    return config.projectRoot ?? dirname(resolve(config.tasksJsonPath));
+    return baseProjectRoot;
 }
 function getHandoffFromState(state) {
     const last = state.phaseReports.at(-1);
     return last?.handoff ?? "";
 }
-export function buildPhaseContext(phase, state, handoff, tasksJson, checkCommand) {
+export function buildPhaseContext(phase, state, handoff, ctx) {
     const lines = [];
     lines.push(`# Phase: ${phase.name} (${phase.id})`);
     lines.push("");
@@ -74,10 +56,13 @@ export function buildPhaseContext(phase, state, handoff, tasksJson, checkCommand
     lines.push(`Schema changes: ${state.schemaChanges.length}`);
     lines.push("");
     lines.push("## Spec Reference");
-    lines.push(tasksJson.specRef);
+    lines.push(basename(ctx.specPath));
+    lines.push("");
+    lines.push("## Guidelines Reference");
+    lines.push(ctx.guidelinesPath ? basename(ctx.guidelinesPath) : "none configured");
     lines.push("");
     lines.push("## Check Command");
-    lines.push(checkCommand ?? "none configured");
+    lines.push(ctx.checkCommand ?? "none configured");
     lines.push("");
     lines.push("## REPL Protocol");
     lines.push("IMPORTANT: You are communicating through a JavaScript REPL. " +
@@ -132,10 +117,11 @@ function makeCorrectiveTask(phaseId, description, index) {
 // ---------------------------------------------------------------------------
 // Dry run report
 // ---------------------------------------------------------------------------
-export function dryRunReport(tasksJson) {
+export function dryRunReport(tasksJson, ctx) {
     const lines = [];
-    lines.push(`Spec: ${tasksJson.specRef}`);
-    lines.push(`Plan: ${tasksJson.planRef}`);
+    lines.push(`Spec: ${basename(ctx.specPath)}`);
+    lines.push(`Plan: ${basename(ctx.planPath)}`);
+    lines.push(`Project root: ${ctx.projectRoot}`);
     lines.push(`Phases: ${tasksJson.phases.length}`);
     lines.push("");
     for (const phase of tasksJson.phases) {
@@ -293,23 +279,52 @@ async function replTurnLoop(orchestrator, repl, logger, phaseId, turnLimit, maxC
     }
     return { reason: "turn_limit" };
 }
+function copySpecToProjectRoot(specPath, projectRoot) {
+    const destPath = join(projectRoot, basename(specPath));
+    const copied = resolve(specPath) !== resolve(destPath);
+    if (copied) {
+        copyFileSync(specPath, destPath);
+    }
+    return { destPath, copied };
+}
+function copyGuidelinesToProjectRoot(guidelinesPath, projectRoot) {
+    if (!guidelinesPath) {
+        return { destPath: "", copied: false };
+    }
+    const destPath = join(projectRoot, basename(guidelinesPath));
+    const copied = resolve(guidelinesPath) !== resolve(destPath);
+    if (copied) {
+        copyFileSync(guidelinesPath, destPath);
+    }
+    return { destPath, copied };
+}
+function cleanupCopiedFile(file) {
+    if (file.copied) {
+        try {
+            unlinkSync(file.destPath);
+        }
+        catch {
+            // Ignore — file may already be gone
+        }
+    }
+}
 // ---------------------------------------------------------------------------
 // Single phase execution
 // ---------------------------------------------------------------------------
-async function executePhase(config, phase, state, tasksJson, projectRoot, logger) {
+async function executePhase(ctx, phase, state, projectRoot, logger) {
     const handoff = getHandoffFromState(state);
     const launcher = createAgentLauncher({
-        pluginRoot: config.pluginRoot,
+        pluginRoot: ctx.pluginRoot,
         projectRoot,
-        dryRun: config.dryRun,
+        dryRun: ctx.dryRun,
     });
-    const checkRunner = config.checkCommand
-        ? createCheckRunner({ command: config.checkCommand, cwd: projectRoot })
+    const checkRunner = ctx.checkCommand
+        ? createCheckRunner({ command: ctx.checkCommand, cwd: projectRoot })
         : null;
     let capturedReport = null;
     const baseHelpers = createReplHelpers({
         projectRoot,
-        statePath: config.statePath,
+        statePath: ctx.statePath,
         agentLauncher: (c) => launcher.dispatchSubAgent(c),
     });
     const helpers = {
@@ -328,17 +343,17 @@ async function executePhase(config, phase, state, tasksJson, projectRoot, logger
         timeout: 30_000,
         helpers,
     });
-    const phaseContext = buildPhaseContext(phase, state, handoff, tasksJson, config.checkCommand);
+    const phaseContext = buildPhaseContext(phase, state, handoff, ctx);
     let orchestrator = null;
     try {
         const launchConfig = {
-            agentFile: resolve(config.pluginRoot, "agents/phase-orchestrator.md"),
-            skillsDir: resolve(config.pluginRoot, "skills"),
+            agentFile: resolve(ctx.pluginRoot, "agents/phase-orchestrator.md"),
+            skillsDir: resolve(ctx.pluginRoot, "skills"),
             phaseContext,
-            ...(config.model !== undefined ? { model: config.model } : {}),
+            ...(ctx.model !== undefined ? { model: ctx.model } : {}),
         };
         orchestrator = await launcher.launchOrchestrator(launchConfig);
-        const loopResult = await replTurnLoop(orchestrator, repl, logger, phase.id, config.turnLimit, config.maxConsecutiveErrors, config.verbose, () => capturedReport !== null);
+        const loopResult = await replTurnLoop(orchestrator, repl, logger, phase.id, ctx.turnLimit, ctx.maxConsecutiveErrors, ctx.verbose, () => capturedReport !== null);
         const report = capturedReport ??
             buildPartialReport(phase.id, phase, loopResult.reason);
         return {
@@ -348,7 +363,7 @@ async function executePhase(config, phase, state, tasksJson, projectRoot, logger
     }
     catch (err) {
         const reason = err instanceof Error ? err.message : "unexpected error";
-        if (config.verbose) {
+        if (ctx.verbose) {
             console.error(`[executePhase] error:`, err);
         }
         const report = capturedReport ?? buildPartialReport(phase.id, phase, reason);
@@ -364,9 +379,7 @@ async function executePhase(config, phase, state, tasksJson, projectRoot, logger
 // ---------------------------------------------------------------------------
 // Main loop
 // ---------------------------------------------------------------------------
-export async function runPhases(config) {
-    const resolved = resolveDefaults(config);
-    const tasksJson = loadAndValidateTasksJson(resolved.tasksJsonPath);
+export async function runPhases(ctx, tasksJson) {
     // Validate dependencies for all phases upfront
     for (const phase of tasksJson.phases) {
         const validation = validateDependencies(phase.tasks);
@@ -374,35 +387,31 @@ export async function runPhases(config) {
             throw new Error(`Phase ${phase.id} has invalid dependencies: ${validation.errors.join("; ")}`);
         }
     }
-    let state = loadState(resolved.statePath) ?? initState(tasksJson);
-    const logger = createTrajectoryLogger(resolved.trajectoryPath);
+    let state = loadState(ctx.statePath) ?? initState(tasksJson);
+    const logger = createTrajectoryLogger(ctx.trajectoryPath);
     const phasesCompleted = [];
     const phasesFailed = [];
     // Worktree setup
-    const baseProjectRoot = resolved.projectRoot ?? dirname(resolve(resolved.tasksJsonPath));
     let worktreeResult = null;
-    if (resolved.isolation === "worktree") {
+    if (ctx.isolation === "worktree") {
         worktreeResult = createWorktree({
-            projectRoot: baseProjectRoot,
-            specName: tasksJson.specRef,
+            projectRoot: ctx.projectRoot,
+            specName: basename(ctx.specPath),
         });
         if (!worktreeResult.success) {
             logger.close();
             throw new Error(`Failed to create worktree: ${worktreeResult.error ?? "unknown"}`);
         }
     }
-    const projectRoot = deriveProjectRoot(resolved, worktreeResult);
-    // Copy spec file into project root so the sandbox can read it directly.
-    // Skip if source and destination resolve to the same path (spec already in project root).
-    const specSrcPath = resolve(dirname(resolve(resolved.tasksJsonPath)), tasksJson.specRef);
-    const specDestPath = join(projectRoot, basename(specSrcPath));
-    const specCopied = specSrcPath !== specDestPath;
-    if (specCopied) {
-        copyFileSync(specSrcPath, specDestPath);
-    }
+    const projectRoot = deriveProjectRoot(ctx.projectRoot, worktreeResult, ctx.isolation);
+    // Ensure the project root directory exists (worktree may not have been created yet).
+    mkdirSync(projectRoot, { recursive: true });
+    // Copy spec and guidelines into project root so the sandbox can read them.
+    const specFile = copySpecToProjectRoot(ctx.specPath, projectRoot);
+    const guidelinesFile = copyGuidelinesToProjectRoot(ctx.guidelinesPath, projectRoot);
     // Handle dry run early
-    if (resolved.dryRun) {
-        const report = dryRunReport(tasksJson);
+    if (ctx.dryRun) {
+        const report = dryRunReport(tasksJson, ctx);
         console.log(report);
         logger.close();
         return {
@@ -423,11 +432,11 @@ export async function runPhases(config) {
                 continue;
             }
             state = { ...state, currentPhase: phase.id };
-            const phaseResult = await executePhase(resolved, phase, state, tasksJson, projectRoot, logger);
+            const phaseResult = await executePhase(ctx, phase, state, projectRoot, logger);
             const report = phaseResult.report;
             // Determine action: combine report recommendation with user input
             let action = report.recommendedAction === "advance" ? "advance" : "halt";
-            if (!resolved.headless) {
+            if (!ctx.headless) {
                 const userChoice = await promptForContinuation();
                 if (userChoice === "quit") {
                     // Save report to state before exiting
@@ -436,7 +445,7 @@ export async function runPhases(config) {
                         phaseReports: [...state.phaseReports, report],
                     };
                     phasesFailed.push(phase.id);
-                    saveState(resolved.statePath, state);
+                    saveState(ctx.statePath, state);
                     break;
                 }
                 if (userChoice === "retry") {
@@ -448,12 +457,12 @@ export async function runPhases(config) {
                 // "continue" defers to report's recommendation
             }
             // In headless mode, follow the report's recommendation
-            if (resolved.headless && report.recommendedAction === "retry") {
+            if (ctx.headless && report.recommendedAction === "retry") {
                 action = "retry";
             }
             if (action === "retry") {
                 const retryCount = state.phaseRetries[phase.id] ?? 0;
-                if (retryCount < resolved.maxRetries) {
+                if (retryCount < ctx.maxRetries) {
                     state = {
                         ...state,
                         phaseReports: [...state.phaseReports, report],
@@ -470,7 +479,7 @@ export async function runPhases(config) {
                             tasks: [...phase.tasks, ...newTasks],
                         };
                     }
-                    saveState(resolved.statePath, state);
+                    saveState(ctx.statePath, state);
                     // Don't increment phaseIndex — re-enter same phase
                     continue;
                 }
@@ -480,7 +489,7 @@ export async function runPhases(config) {
                     ...state,
                     phaseReports: [...state.phaseReports, report],
                 };
-                saveState(resolved.statePath, state);
+                saveState(ctx.statePath, state);
                 break;
             }
             if (action === "skip") {
@@ -490,7 +499,7 @@ export async function runPhases(config) {
                     completedPhases: [...state.completedPhases, phase.id],
                     phaseReports: [...state.phaseReports, report],
                 };
-                saveState(resolved.statePath, state);
+                saveState(ctx.statePath, state);
                 phaseIndex++;
                 continue;
             }
@@ -500,7 +509,7 @@ export async function runPhases(config) {
                     ...state,
                     phaseReports: [...state.phaseReports, report],
                 };
-                saveState(resolved.statePath, state);
+                saveState(ctx.statePath, state);
                 break;
             }
             // action === "advance"
@@ -509,7 +518,7 @@ export async function runPhases(config) {
             if (worktreeResult) {
                 commitPhase(worktreeResult.worktreePath, phase.id);
             }
-            saveState(resolved.statePath, state);
+            saveState(ctx.statePath, state);
             phaseIndex++;
         }
         // Merge worktree on success
@@ -517,7 +526,7 @@ export async function runPhases(config) {
             phasesFailed.length === 0 &&
             phasesCompleted.length > 0) {
             const mergeResult = mergeWorktree({
-                projectRoot: baseProjectRoot,
+                projectRoot: ctx.projectRoot,
                 worktreePath: worktreeResult.worktreePath,
                 branchName: worktreeResult.branchName,
             });
@@ -527,15 +536,8 @@ export async function runPhases(config) {
         }
     }
     finally {
-        // Remove the spec file copy from project root (only if we copied it)
-        if (specCopied) {
-            try {
-                unlinkSync(specDestPath);
-            }
-            catch {
-                // Ignore — file may already be gone
-            }
-        }
+        cleanupCopiedFile(specFile);
+        cleanupCopiedFile(guidelinesFile);
         if (worktreeResult) {
             cleanupWorktree(worktreeResult.worktreePath);
         }
@@ -551,9 +553,7 @@ export async function runPhases(config) {
 // ---------------------------------------------------------------------------
 // Single phase runner
 // ---------------------------------------------------------------------------
-export async function runSinglePhase(config, phaseId) {
-    const resolved = resolveDefaults(config);
-    const tasksJson = loadAndValidateTasksJson(resolved.tasksJsonPath);
+export async function runSinglePhase(ctx, tasksJson, phaseId) {
     const phase = tasksJson.phases.find((p) => p.id === phaseId);
     if (!phase) {
         throw new Error(`Phase not found: ${phaseId}`);
@@ -562,34 +562,30 @@ export async function runSinglePhase(config, phaseId) {
     if (!validation.valid) {
         throw new Error(`Phase ${phase.id} has invalid dependencies: ${validation.errors.join("; ")}`);
     }
-    let state = loadState(resolved.statePath) ?? initState(tasksJson);
-    const logger = createTrajectoryLogger(resolved.trajectoryPath);
+    let state = loadState(ctx.statePath) ?? initState(tasksJson);
+    const logger = createTrajectoryLogger(ctx.trajectoryPath);
     const phasesCompleted = [];
     const phasesFailed = [];
-    const baseProjectRoot = resolved.projectRoot ?? dirname(resolve(resolved.tasksJsonPath));
     let worktreeResult = null;
-    if (resolved.isolation === "worktree") {
+    if (ctx.isolation === "worktree") {
         worktreeResult = createWorktree({
-            projectRoot: baseProjectRoot,
-            specName: tasksJson.specRef,
+            projectRoot: ctx.projectRoot,
+            specName: basename(ctx.specPath),
         });
         if (!worktreeResult.success) {
             logger.close();
             throw new Error(`Failed to create worktree: ${worktreeResult.error ?? "unknown"}`);
         }
     }
-    const projectRoot = deriveProjectRoot(resolved, worktreeResult);
-    // Copy spec file into project root so the sandbox can read it directly.
-    // Skip if source and destination resolve to the same path (spec already in project root).
-    const specSrcPath = resolve(dirname(resolve(resolved.tasksJsonPath)), tasksJson.specRef);
-    const specDestPath = join(projectRoot, basename(specSrcPath));
-    const specCopied = specSrcPath !== specDestPath;
-    if (specCopied) {
-        copyFileSync(specSrcPath, specDestPath);
-    }
+    const projectRoot = deriveProjectRoot(ctx.projectRoot, worktreeResult, ctx.isolation);
+    // Ensure the project root directory exists (worktree may not have been created yet).
+    mkdirSync(projectRoot, { recursive: true });
+    // Copy spec and guidelines into project root so the sandbox can read them.
+    const specFile = copySpecToProjectRoot(ctx.specPath, projectRoot);
+    const guidelinesFile = copyGuidelinesToProjectRoot(ctx.guidelinesPath, projectRoot);
     try {
         state = { ...state, currentPhase: phase.id };
-        const phaseResult = await executePhase(resolved, phase, state, tasksJson, projectRoot, logger);
+        const phaseResult = await executePhase(ctx, phase, state, projectRoot, logger);
         const report = phaseResult.report;
         if (phaseResult.status === "complete") {
             phasesCompleted.push(phase.id);
@@ -597,7 +593,7 @@ export async function runSinglePhase(config, phaseId) {
             if (worktreeResult) {
                 commitPhase(worktreeResult.worktreePath, phase.id);
                 mergeWorktree({
-                    projectRoot: baseProjectRoot,
+                    projectRoot: ctx.projectRoot,
                     worktreePath: worktreeResult.worktreePath,
                     branchName: worktreeResult.branchName,
                 });
@@ -610,18 +606,11 @@ export async function runSinglePhase(config, phaseId) {
                 phaseReports: [...state.phaseReports, report],
             };
         }
-        saveState(resolved.statePath, state);
+        saveState(ctx.statePath, state);
     }
     finally {
-        // Remove the spec file copy from project root (only if we copied it)
-        if (specCopied) {
-            try {
-                unlinkSync(specDestPath);
-            }
-            catch {
-                // Ignore — file may already be gone
-            }
-        }
+        cleanupCopiedFile(specFile);
+        cleanupCopiedFile(guidelinesFile);
         if (worktreeResult) {
             cleanupWorktree(worktreeResult.worktreePath);
         }

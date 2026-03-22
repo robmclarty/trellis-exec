@@ -3,6 +3,8 @@ import type { AgentLauncher } from "../orchestrator/agentLauncher.js";
 export type CompileConfig = {
     planPath: string;
     specPath: string;
+    guidelinesPath?: string;
+    projectRoot: string;
     outputPath: string;
     agentLauncher: AgentLauncher;
 };
@@ -11,7 +13,7 @@ export type CompileConfig = {
  * 1. Read plan.md from disk.
  * 2. Run deterministic parser (Stage 1).
  * 3. If successful, run enricher (Stage 2) to fill gaps.
- * 4. If parser failed, fall back to full LLM parse.
+ * 4. If parser failed, decompose via LLM using spec + plan + guidelines.
  * 5. Validate final output against Zod schema.
  * 6. Write to outputPath.
  */

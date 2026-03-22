@@ -7,9 +7,13 @@ import type { Task } from "../types/tasks.js";
  */
 export declare function buildEnrichmentPrompt(flags: EnrichmentFlag[], tasks: Task[]): string;
 /**
- * Fallback prompt for when the deterministic parser fails entirely (no phase
- * boundaries found). Sends the full plan to Haiku and asks for a complete
- * TasksJson structure.
+ * Decomposes a technical plan into implementable phases and tasks using the
+ * spec for requirements and acceptance criteria, the plan for architecture and
+ * design decisions, and (optionally) project guidelines for coding conventions
+ * and file structure.
+ *
+ * This is the primary compilation path for plans that are not already formatted
+ * as phase/task lists.
  */
-export declare function buildFullParseFallbackPrompt(planContent: string, specRef: string): string;
+export declare function buildDecomposePrompt(planContent: string, specContent: string, specRef: string, planRef: string, projectRoot: string, guidelinesContent?: string, guidelinesRef?: string): string;
 //# sourceMappingURL=prompts.d.ts.map

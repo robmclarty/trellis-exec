@@ -105,7 +105,9 @@ function createMockHelpers() {
 }
 function makeDefaultConfig(tmpDir) {
     return {
-        tasksJsonPath: join(tmpDir, "tasks.json"),
+        projectRoot: tmpDir,
+        specPath: join(tmpDir, "sample-spec.md"),
+        planPath: join(tmpDir, "sample-plan.md"),
         statePath: join(tmpDir, "state.json"),
         trajectoryPath: join(tmpDir, "trajectory.jsonl"),
         isolation: "none",
@@ -135,7 +137,7 @@ function setupTmpDir(tasksJson) {
  */
 async function compileSamplePlan() {
     const planContent = readFileSync(SAMPLE_PLAN_PATH, "utf-8");
-    const parseResult = parsePlan(planContent, "./sample-spec.md", "./sample-plan.md");
+    const parseResult = parsePlan(planContent, "./sample-spec.md", "./sample-plan.md", ".");
     expect(parseResult.success).toBe(true);
     expect(parseResult.tasksJson).not.toBeNull();
     // Mock enricher that returns no resolved fields (deterministic parse sufficient)
@@ -273,15 +275,31 @@ describe("e2e integration tests", () => {
     describe("dry run: dryRunReport", () => {
         it("prints execution plan with phases, tasks, and grouping", async () => {
             const tasksJson = await compileSamplePlan();
-            const report = dryRunReport(tasksJson);
+            const ctx = {
+                projectRoot: ".",
+                specPath: "./sample-spec.md",
+                planPath: "./sample-plan.md",
+                statePath: "state.json",
+                trajectoryPath: "trajectory.jsonl",
+                isolation: "none",
+                concurrency: 3,
+                maxRetries: 2,
+                headless: true,
+                verbose: false,
+                dryRun: true,
+                turnLimit: 100,
+                maxConsecutiveErrors: 5,
+                pluginRoot: ".",
+            };
+            const report = dryRunReport(tasksJson, ctx);
             // Contains phase and task info
             expect(report).toContain("phase-1");
             expect(report).toContain("phase-2");
             expect(report).toContain("src/greet.ts");
             expect(report).toContain("src/greet.test.ts");
-            // Contains spec and plan refs
-            expect(report).toContain("Spec: ./sample-spec.md");
-            expect(report).toContain("Plan: ./sample-plan.md");
+            // Contains spec and plan refs (basename)
+            expect(report).toContain("Spec: sample-spec.md");
+            expect(report).toContain("Plan: sample-plan.md");
             // Contains agent types
             expect(report).toContain("implement");
             expect(report).toContain("test-writer");
@@ -359,7 +377,7 @@ describe("e2e integration tests", () => {
                 };
             });
             const config = makeDefaultConfig(tmpDir);
-            const result1 = await runPhases(config);
+            const result1 = await runPhases(config, tasksJson);
             // Phase 1 completed, phase 2 halted
             expect(result1.phasesCompleted).toContain("phase-1");
             expect(result1.phasesFailed).toContain("phase-2");
@@ -390,7 +408,7 @@ describe("e2e integration tests", () => {
                 ["phase-2", phase2Report],
             ]);
             setupMocksForSuccess(reports);
-            const result2 = await runPhases(config);
+            const result2 = await runPhases(config, tasksJson);
             expect(result2.success).toBe(true);
             expect(result2.phasesCompleted).toContain("phase-1");
             expect(result2.phasesCompleted).toContain("phase-2");
@@ -523,7 +541,7 @@ describe("e2e integration tests", () => {
                     destroy() { },
                 };
             });
-            const result = await runPhases(config);
+            const result = await runPhases(config, tasksJson);
             expect(result.success).toBe(true);
             expect(result.phasesCompleted).toContain("phase-1");
             expect(result.phasesCompleted).toContain("phase-2");
@@ -556,7 +574,7 @@ describe("e2e integration tests", () => {
             ]);
             setupMocksForSuccess(reports);
             const config = makeDefaultConfig(tmpDir);
-            const result = await runPhases(config);
+            const result = await runPhases(config, tasksJson);
             expect(result.success).toBe(true);
             // Verify handoff is in state.json
             const stateRaw = readFileSync(join(tmpDir, "state.json"), "utf-8");
@@ -634,7 +652,7 @@ describe("e2e integration tests", () => {
             ]);
             setupMocksForSuccess(reports);
             const config = makeDefaultConfig(tmpDir);
-            await runPhases(config);
+            await runPhases(config, tasksJson);
             // Trajectory log should exist and contain valid JSONL
             const trajectoryPath = join(tmpDir, "trajectory.jsonl");
             expect(existsSync(trajectoryPath)).toBe(true);
@@ -673,7 +691,7 @@ describe("e2e integration tests", () => {
             });
             // Compile plan → tasks.json using real parsePlan + mock enricher
             const planContent = readFileSync(join(projectDir, "sample-plan.md"), "utf-8");
-            const parseResult = parsePlan(planContent, "./sample-spec.md", "./sample-plan.md");
+            const parseResult = parsePlan(planContent, "./sample-spec.md", "./sample-plan.md", ".");
             expect(parseResult.success).toBe(true);
             const mockEnricher = async () => JSON.stringify({ resolved: [] });
             const compiledTasks = await enrichPlan(parseResult, mockEnricher);

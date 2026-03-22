@@ -24,8 +24,10 @@ export const PhaseSchema = z.object({
     tasks: z.array(TaskSchema),
 });
 export const TasksJsonSchema = z.object({
+    projectRoot: z.string(),
     specRef: z.string(),
     planRef: z.string(),
+    guidelinesRef: z.string().optional(),
     createdAt: z.string(),
     phases: z.array(PhaseSchema),
 });

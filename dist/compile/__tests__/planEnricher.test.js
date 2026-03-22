@@ -7,6 +7,7 @@ import { TasksJsonSchema } from "../../types/tasks.js";
 const FIXTURE_PATH = resolve(import.meta.dirname, "../../../test/fixtures/sample-plan.md");
 function makeTasksJson(overrides) {
     return {
+        projectRoot: ".",
         specRef: "spec.md",
         planRef: "plan.md",
         createdAt: "2026-03-17T00:00:00Z",
@@ -165,7 +166,7 @@ describe("enrichPlan", () => {
     });
     it("full pipeline: parsePlan → enrichPlan produces valid TasksJson", async () => {
         const content = readFileSync(FIXTURE_PATH, "utf-8");
-        const parseResult = parsePlan(content, "spec.md", "plan.md");
+        const parseResult = parsePlan(content, "spec.md", "plan.md", ".");
         expect(parseResult.success).toBe(true);
         const enricher = vi.fn().mockResolvedValue(JSON.stringify({ resolved: [] }));
         const result = await enrichPlan(parseResult, enricher);
