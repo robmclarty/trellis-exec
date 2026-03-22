@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import path, { resolve } from "node:path";
+import path, { basename, resolve } from "node:path";
 /**
  * Generates a compact ISO timestamp suitable for branch names.
  * @returns Timestamp string like "20260319T1423"
@@ -22,6 +22,14 @@ function branchToSlug(branchName) {
     return branchName.replace(/\//g, "-");
 }
 /**
+ * Sanitizes a specName (which may be a file path) into a valid git branch segment.
+ * Extracts the basename without extension and replaces invalid characters.
+ */
+function sanitizeSpecName(specName) {
+    const name = basename(specName, path.extname(specName));
+    return name.replace(/[^a-zA-Z0-9._-]/g, "-");
+}
+/**
  * Creates a git worktree branched off the current HEAD.
  *
  * Verifies the project root is a git repository, generates a deterministic
@@ -37,7 +45,7 @@ function branchToSlug(branchName) {
 export function createWorktree(config) {
     const { projectRoot } = config;
     const branch = config.branchName ??
-        `trellis-exec/${config.specName ?? "run"}/${compactTimestamp()}`;
+        `trellis-exec/${config.specName ? sanitizeSpecName(config.specName) : "run"}/${compactTimestamp()}`;
     const slug = branchToSlug(branch);
     const worktreePath = path.join(projectRoot, ".trellis-worktrees", slug);
     try {

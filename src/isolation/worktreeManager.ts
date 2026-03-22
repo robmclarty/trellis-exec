@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import path, { resolve } from "node:path";
+import path, { basename, resolve } from "node:path";
 
 export type WorktreeConfig = {
   projectRoot: string;
@@ -49,6 +49,15 @@ function branchToSlug(branchName: string): string {
 }
 
 /**
+ * Sanitizes a specName (which may be a file path) into a valid git branch segment.
+ * Extracts the basename without extension and replaces invalid characters.
+ */
+function sanitizeSpecName(specName: string): string {
+  const name = basename(specName, path.extname(specName));
+  return name.replace(/[^a-zA-Z0-9._-]/g, "-");
+}
+
+/**
  * Creates a git worktree branched off the current HEAD.
  *
  * Verifies the project root is a git repository, generates a deterministic
@@ -65,7 +74,7 @@ export function createWorktree(config: WorktreeConfig): WorktreeResult {
   const { projectRoot } = config;
   const branch =
     config.branchName ??
-    `trellis-exec/${config.specName ?? "run"}/${compactTimestamp()}`;
+    `trellis-exec/${config.specName ? sanitizeSpecName(config.specName) : "run"}/${compactTimestamp()}`;
   const slug = branchToSlug(branch);
   const worktreePath = path.join(projectRoot, ".trellis-worktrees", slug);
 
