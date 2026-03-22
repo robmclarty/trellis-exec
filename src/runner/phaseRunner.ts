@@ -122,7 +122,7 @@ function getHandoffFromState(state: SharedState): string {
  * Read spec sections from a spec file by §N identifiers.
  * Returns a map of section key to content. Gracefully returns empty map on error.
  */
-function parseSpecSections(specPath: string): Map<string, string> {
+export function parseSpecSections(specPath: string): Map<string, string> {
   const sectionMap = new Map<string, string>();
   let content: string;
   try {
@@ -153,7 +153,7 @@ function parseSpecSections(specPath: string): Map<string, string> {
   return sectionMap;
 }
 
-function buildPhaseContext(
+export function buildPhaseContext(
   phase: Phase,
   state: SharedState,
   handoff: string,

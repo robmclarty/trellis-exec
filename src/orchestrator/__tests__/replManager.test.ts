@@ -301,4 +301,22 @@ describe("replHelpers", () => {
     expect(section).not.toContain("Introduction");
     expect(section).not.toContain("API section");
   });
+
+  it("readSpecSections accepts varargs in addition to array form", () => {
+    const helpers = createReplHelpers({
+      projectRoot: FIXTURES_DIR,
+      specPath: SPEC_PATH,
+      statePath: "",
+      agentLauncher: null,
+    });
+    // Simulate how LLM-generated code calls it: individual string arguments
+    const varargs = (helpers.readSpecSections as (...args: unknown[]) => string)(
+      "§2",
+      "§3",
+    );
+    const arrayForm = helpers.readSpecSections(["§2", "§3"]);
+    expect(varargs).toBe(arrayForm);
+    expect(varargs).toContain("Architecture");
+    expect(varargs).toContain("API section");
+  });
 });

@@ -46,7 +46,7 @@ function getHandoffFromState(state) {
  * Read spec sections from a spec file by §N identifiers.
  * Returns a map of section key to content. Gracefully returns empty map on error.
  */
-function parseSpecSections(specPath) {
+export function parseSpecSections(specPath) {
     const sectionMap = new Map();
     let content;
     try {
@@ -76,7 +76,7 @@ function parseSpecSections(specPath) {
     }
     return sectionMap;
 }
-function buildPhaseContext(phase, state, handoff, tasksJson, specPath, checkCommand) {
+export function buildPhaseContext(phase, state, handoff, tasksJson, specPath, checkCommand) {
     const lines = [];
     // Collect all spec sections referenced by this phase's tasks
     const referencedSections = new Set();

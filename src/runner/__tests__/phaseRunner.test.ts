@@ -50,6 +50,8 @@ import {
   runSinglePhase,
   dryRunReport,
   promptForContinuation,
+  parseSpecSections,
+  buildPhaseContext,
 } from "../phaseRunner.js";
 import type { PhaseRunnerConfig } from "../phaseRunner.js";
 import { createAgentLauncher } from "../../orchestrator/agentLauncher.js";
@@ -951,6 +953,187 @@ describe("phaseRunner", () => {
           configurable: true,
         });
       }
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // parseSpecSections
+  // -------------------------------------------------------------------------
+
+  describe("parseSpecSections", () => {
+    let specDir: string;
+
+    beforeEach(() => {
+      specDir = mkdtempSync(join(tmpdir(), "spec-parse-"));
+    });
+
+    afterEach(() => {
+      rmSync(specDir, { recursive: true, force: true });
+    });
+
+    it("parses sections keyed by §N identifiers", () => {
+      const specContent = [
+        "# My Spec",
+        "",
+        "## §1 — Intro",
+        "Intro content here.",
+        "",
+        "## §2 — Architecture",
+        "Architecture content.",
+        "Second paragraph.",
+        "",
+        "## §3 — API",
+        "API content.",
+      ].join("\n");
+      const specPath = join(specDir, "spec.md");
+      writeFileSync(specPath, specContent);
+
+      const result = parseSpecSections(specPath);
+
+      expect(result.size).toBe(3);
+      expect(result.get("§1")).toContain("Intro content here");
+      expect(result.get("§2")).toContain("Architecture content");
+      expect(result.get("§2")).toContain("Second paragraph");
+      expect(result.get("§3")).toContain("API content");
+    });
+
+    it("returns empty map when spec file does not exist", () => {
+      const result = parseSpecSections(join(specDir, "nonexistent.md"));
+      expect(result.size).toBe(0);
+    });
+
+    it("returns empty map when spec has no §N sections", () => {
+      const specPath = join(specDir, "empty-spec.md");
+      writeFileSync(specPath, "# Spec\n\nJust prose, no sections.\n");
+
+      const result = parseSpecSections(specPath);
+      expect(result.size).toBe(0);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // buildPhaseContext — spec embedding
+  // -------------------------------------------------------------------------
+
+  describe("buildPhaseContext — spec embedding", () => {
+    let specDir: string;
+
+    beforeEach(() => {
+      specDir = mkdtempSync(join(tmpdir(), "ctx-build-"));
+    });
+
+    afterEach(() => {
+      rmSync(specDir, { recursive: true, force: true });
+    });
+
+    it("embeds referenced spec sections in the phase context", () => {
+      const specContent = [
+        "## §1 — Intro",
+        "Intro body.",
+        "",
+        "## §2 — Design",
+        "Design body.",
+      ].join("\n");
+      const specPath = join(specDir, "spec.md");
+      writeFileSync(specPath, specContent);
+
+      const tasksJson = makeTasksJson();
+      const phase = tasksJson.phases[0]!; // tasks reference §1
+      const state: SharedState = {
+        currentPhase: "",
+        completedPhases: [],
+        modifiedFiles: [],
+        schemaChanges: [],
+        phaseReports: [],
+        phaseRetries: {},
+      };
+
+      const context = buildPhaseContext(phase, state, "", tasksJson, specPath);
+
+      expect(context).toContain("## Spec Content");
+      expect(context).toContain("Intro body");
+    });
+
+    it("omits Spec Content block when no tasks reference sections", () => {
+      const specPath = join(specDir, "spec.md");
+      writeFileSync(specPath, "## §1 — Intro\nBody.\n");
+
+      const tasksJson = makeTasksJson();
+      // Clear specSections from all tasks in phase-1
+      for (const task of tasksJson.phases[0]!.tasks) {
+        task.specSections = [];
+      }
+      const state: SharedState = {
+        currentPhase: "",
+        completedPhases: [],
+        modifiedFiles: [],
+        schemaChanges: [],
+        phaseReports: [],
+        phaseRetries: {},
+      };
+
+      const context = buildPhaseContext(
+        tasksJson.phases[0]!,
+        state,
+        "",
+        tasksJson,
+        specPath,
+      );
+
+      expect(context).not.toContain("## Spec Content");
+    });
+
+    it("shows not-found marker for missing spec sections", () => {
+      const specContent = "## §1 — Intro\nBody.\n";
+      const specPath = join(specDir, "spec.md");
+      writeFileSync(specPath, specContent);
+
+      const tasksJson = makeTasksJson();
+      // Make phase-1 tasks reference §99 which doesn't exist
+      tasksJson.phases[0]!.tasks[0]!.specSections = ["§99"];
+      tasksJson.phases[0]!.tasks[1]!.specSections = [];
+      const state: SharedState = {
+        currentPhase: "",
+        completedPhases: [],
+        modifiedFiles: [],
+        schemaChanges: [],
+        phaseReports: [],
+        phaseRetries: {},
+      };
+
+      const context = buildPhaseContext(
+        tasksJson.phases[0]!,
+        state,
+        "",
+        tasksJson,
+        specPath,
+      );
+
+      expect(context).toContain("[Section §99 not found in spec]");
+    });
+
+    it("handles missing spec file gracefully", () => {
+      const tasksJson = makeTasksJson();
+      const state: SharedState = {
+        currentPhase: "",
+        completedPhases: [],
+        modifiedFiles: [],
+        schemaChanges: [],
+        phaseReports: [],
+        phaseRetries: {},
+      };
+
+      const context = buildPhaseContext(
+        tasksJson.phases[0]!,
+        state,
+        "",
+        tasksJson,
+        join(specDir, "nonexistent.md"),
+      );
+
+      // Should still produce context, just with not-found markers
+      expect(context).toContain("## Spec Content");
+      expect(context).toContain("[Section §1 not found in spec]");
     });
   });
 });
