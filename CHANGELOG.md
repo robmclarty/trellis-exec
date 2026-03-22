@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.7
+
+- Fix readSpecSections to accept both array and varargs calling conventions
+- Update phase-orchestrator prompt to direct agent to use pre-loaded spec sections
+- Add test coverage for parseSpecSections, buildPhaseContext spec embedding, and varargs readSpecSections
+
 ## 0.3.6
 
 - Pre-load spec sections into phase context prompt for --project-root compatibility
