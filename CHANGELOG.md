@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.6
+
+- Add bouncing-bar spinner animation on stderr during LLM wait states (orchestrator launch, REPL turns, judge dispatch, plan compilation)
+
 ## 0.4.5
 
 - Add `normalizeReport()` to validate and map orchestrator phase reports to the canonical schema, fixing Zod validation errors from LLM-style field names
