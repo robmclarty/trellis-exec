@@ -348,6 +348,10 @@ async function replTurnLoop(
       return { reason: "dead" };
     }
 
+    if (turnNumber === 1) {
+      console.log("Waiting for orchestrator first response (this may take a moment)…");
+    }
+
     const rawResponse = await orchestrator.send(previousOutput);
     const code = extractCode(rawResponse);
 
@@ -525,8 +529,10 @@ async function executePhase(
       phaseContext,
       ...(ctx.model !== undefined ? { model: ctx.model } : {}),
     };
+    console.log("Launching orchestrator…");
     orchestrator = await launcher.launchOrchestrator(launchConfig);
 
+    console.log("Orchestrator ready. Starting REPL turn loop…");
     const loopResult = await replTurnLoop(
       orchestrator,
       repl,
@@ -571,6 +577,8 @@ export async function runPhases(
   ctx: RunContext,
   tasksJson: TasksJson,
 ): Promise<PhaseRunnerResult> {
+  console.log(`Starting phase runner with ${tasksJson.phases.length} phase(s)…`);
+
   // Validate dependencies for all phases upfront, allowing cross-phase refs
   const priorPhaseTaskIds = new Set<string>();
   for (const phase of tasksJson.phases) {
@@ -593,6 +601,7 @@ export async function runPhases(
   // Worktree setup
   let worktreeResult: WorktreeResult | null = null;
   if (ctx.isolation === "worktree") {
+    console.log("Creating isolated worktree…");
     worktreeResult = createWorktree({
       projectRoot: ctx.projectRoot,
       specName: basename(ctx.specPath),
@@ -611,6 +620,7 @@ export async function runPhases(
   mkdirSync(projectRoot, { recursive: true });
 
   // Copy spec and guidelines into project root so the sandbox can read them.
+  console.log("Copying spec and guidelines into project root…");
   const specFile = copySpecToProjectRoot(ctx.specPath, projectRoot);
   const guidelinesFile = copyGuidelinesToProjectRoot(ctx.guidelinesPath, projectRoot);
 
@@ -640,6 +650,11 @@ export async function runPhases(
       }
 
       state = { ...state, currentPhase: phase.id };
+
+      const taskCount = phase.tasks.length;
+      console.log(
+        `\nStarting phase "${phase.id}" (${taskCount} task${taskCount === 1 ? "" : "s"})…`,
+      );
 
       const phaseResult = await executePhase(
         ctx,
@@ -793,6 +808,11 @@ export async function runSinglePhase(
     throw new Error(`Phase not found: ${phaseId}`);
   }
 
+  const taskCount = phase.tasks.length;
+  console.log(
+    `Starting single phase "${phaseId}" (${taskCount} task${taskCount === 1 ? "" : "s"})…`,
+  );
+
   // Collect task IDs from all phases prior to the target phase
   const priorPhaseTaskIds = new Set<string>();
   for (const p of tasksJson.phases) {
@@ -816,6 +836,7 @@ export async function runSinglePhase(
 
   let worktreeResult: WorktreeResult | null = null;
   if (ctx.isolation === "worktree") {
+    console.log("Creating isolated worktree…");
     worktreeResult = createWorktree({
       projectRoot: ctx.projectRoot,
       specName: basename(ctx.specPath),
@@ -834,6 +855,7 @@ export async function runSinglePhase(
   mkdirSync(projectRoot, { recursive: true });
 
   // Copy spec and guidelines into project root so the sandbox can read them.
+  console.log("Copying spec and guidelines into project root…");
   const specFile = copySpecToProjectRoot(ctx.specPath, projectRoot);
   const guidelinesFile = copyGuidelinesToProjectRoot(ctx.guidelinesPath, projectRoot);
 
