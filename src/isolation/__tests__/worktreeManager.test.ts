@@ -6,6 +6,7 @@ import os from "node:os";
 import {
   createWorktree,
   commitPhase,
+  mergeWorktree,
   cleanupWorktree,
 } from "../worktreeManager.js";
 
@@ -141,6 +142,117 @@ describe("worktreeManager", () => {
       // This should not throw — the cwd is now the project root, not the worktree
       expect(() => cleanupWorktree(wt.worktreePath)).not.toThrow();
       expect(existsSync(wt.worktreePath)).toBe(false);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // mergeWorktree
+  // -------------------------------------------------------------------------
+
+  describe("mergeWorktree", () => {
+    it("merges a branch with changes successfully", () => {
+      const wt = createWorktree({
+        projectRoot: repoDir,
+        branchName: "trellis-exec/merge/clean",
+      });
+      expect(wt.success).toBe(true);
+
+      writeFileSync(path.join(wt.worktreePath, "feature.ts"), "export const x = 1;");
+      commitPhase(wt.worktreePath, "phase-1");
+      cleanupWorktree(wt.worktreePath);
+
+      const result = mergeWorktree({
+        projectRoot: repoDir,
+        worktreePath: wt.worktreePath,
+        branchName: wt.branchName,
+      });
+
+      expect(result.success).toBe(true);
+      // Verify the file exists on the main branch after merge
+      expect(existsSync(path.join(repoDir, "feature.ts"))).toBe(true);
+    });
+
+    it("returns {success: true} on clean merge", () => {
+      const wt = createWorktree({
+        projectRoot: repoDir,
+        branchName: "trellis-exec/merge/result",
+      });
+      expect(wt.success).toBe(true);
+
+      writeFileSync(path.join(wt.worktreePath, "new.ts"), "export {}");
+      commitPhase(wt.worktreePath, "phase-1");
+      cleanupWorktree(wt.worktreePath);
+
+      const result = mergeWorktree({
+        projectRoot: repoDir,
+        worktreePath: wt.worktreePath,
+        branchName: wt.branchName,
+      });
+
+      expect(result).toEqual({ success: true });
+    });
+
+    it("returns {success: false, error} on merge conflict", () => {
+      const wt = createWorktree({
+        projectRoot: repoDir,
+        branchName: "trellis-exec/merge/conflict",
+      });
+      expect(wt.success).toBe(true);
+
+      // Create conflicting changes on both sides
+      writeFileSync(path.join(wt.worktreePath, "README.md"), "worktree version");
+      commitPhase(wt.worktreePath, "phase-1");
+      cleanupWorktree(wt.worktreePath);
+
+      // Make a conflicting change on main
+      writeFileSync(path.join(repoDir, "README.md"), "main version");
+      execSync("git add -A && git commit -m 'conflict on main'", {
+        cwd: repoDir,
+        stdio: "pipe",
+      });
+
+      const result = mergeWorktree({
+        projectRoot: repoDir,
+        worktreePath: wt.worktreePath,
+        branchName: wt.branchName,
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBeDefined();
+
+      // Clean up the merge conflict state
+      execSync("git merge --abort", { cwd: repoDir, stdio: "pipe" });
+    });
+
+    it("returns {success: false} when branch does not exist", () => {
+      const result = mergeWorktree({
+        projectRoot: repoDir,
+        worktreePath: "/tmp/nonexistent",
+        branchName: "no-such-branch",
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBeDefined();
+    });
+
+    it("handles branch names with special characters safely", () => {
+      const wt = createWorktree({
+        projectRoot: repoDir,
+        branchName: "trellis-exec/merge/special-chars_v2.0",
+      });
+      expect(wt.success).toBe(true);
+
+      writeFileSync(path.join(wt.worktreePath, "safe.ts"), "export {}");
+      commitPhase(wt.worktreePath, "phase-1");
+      cleanupWorktree(wt.worktreePath);
+
+      const result = mergeWorktree({
+        projectRoot: repoDir,
+        worktreePath: wt.worktreePath,
+        branchName: wt.branchName,
+      });
+
+      expect(result.success).toBe(true);
     });
   });
 

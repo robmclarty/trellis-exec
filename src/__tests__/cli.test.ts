@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { execSync } from "node:child_process";
 import { resolve, join } from "node:path";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { buildRunContext, parseCompileArgs, parseStatusArgs, checkClaudeAvailable } from "../cli.js";
 
@@ -324,6 +324,131 @@ describe("CLI dispatch", () => {
   it("parseStatusArgs exits when no positional arg given", () => {
     expect(() => parseStatusArgs([])).toThrow("process.exit called");
     expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+});
+
+describe("handleStatus (subprocess)", () => {
+  const cliPath = resolve(import.meta.dirname, "../../dist/cli.js");
+
+  it("prints 'No execution state found' when state.json is missing", () => {
+    const { tmpDir, tasksJsonPath } = createTempTasksJson();
+    trackTmpDir(tmpDir);
+
+    const stdout = execSync(`node ${cliPath} status ${tasksJsonPath}`, {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    expect(stdout).toContain("No execution state found");
+  });
+
+  it("prints phase completion info from valid state", () => {
+    const { tmpDir, tasksJsonPath } = createTempTasksJson();
+    trackTmpDir(tmpDir);
+
+    // Write a state.json next to tasks.json
+    const state = {
+      currentPhase: "phase-1",
+      completedPhases: ["phase-1"],
+      phaseReports: [
+        {
+          phaseId: "phase-1",
+          status: "complete",
+          summary: "All good",
+          tasksCompleted: ["phase-1-task-1"],
+          tasksFailed: [],
+          orchestratorAnalysis: "",
+          recommendedAction: "advance",
+          correctiveTasks: [],
+          decisionsLog: [],
+          handoff: "",
+        },
+      ],
+      phaseRetries: {},
+      modifiedFiles: [],
+      schemaChanges: [],
+    };
+    writeFileSync(join(tmpDir, "state.json"), JSON.stringify(state));
+
+    const stdout = execSync(`node ${cliPath} status ${tasksJsonPath}`, {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    expect(stdout).toContain("Current phase: phase-1");
+    expect(stdout).toContain("phase-1");
+  });
+});
+
+describe("handleCompile (subprocess)", () => {
+  const cliPath = resolve(import.meta.dirname, "../../dist/cli.js");
+
+  it("succeeds with deterministic parse and writes tasks.json", () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "cli-compile-test-"));
+    trackTmpDir(tmpDir);
+
+    const plan = [
+      "# Plan",
+      "## Phase 1: Setup",
+      "- Init project: initialize with npm init",
+      "  - Acceptance: `npm install` exits 0",
+      "  - Files: `package.json`",
+      "  - Spec: §1",
+    ].join("\n");
+    const spec = "# Spec\n## §1 Intro\nSet up.";
+    writeFileSync(join(tmpDir, "plan.md"), plan);
+    writeFileSync(join(tmpDir, "spec.md"), spec);
+
+    const outputPath = join(tmpDir, "tasks.json");
+    const stdout = execSync(
+      `node ${cliPath} compile ${join(tmpDir, "plan.md")} --spec ${join(tmpDir, "spec.md")} --output ${outputPath}`,
+      { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] },
+    );
+
+    expect(stdout).toContain("Compiled");
+    const written = JSON.parse(readFileSync(outputPath, "utf-8"));
+    expect(written.phases).toBeDefined();
+    expect(written.phases.length).toBeGreaterThan(0);
+  });
+
+  it("exits with error when plan file does not exist", () => {
+    let exitCode = 0;
+    try {
+      execSync(
+        `node ${cliPath} compile /nonexistent/plan.md --spec /nonexistent/spec.md`,
+        { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] },
+      );
+    } catch (err: unknown) {
+      exitCode = (err as { status: number }).status;
+    }
+    expect(exitCode).not.toBe(0);
+  });
+});
+
+describe("handleRun (subprocess)", () => {
+  const cliPath = resolve(import.meta.dirname, "../../dist/cli.js");
+
+  it("--dry-run prints report and exits 0", () => {
+    const { tmpDir, tasksJsonPath } = createTempTasksJson();
+    trackTmpDir(tmpDir);
+
+    const stdout = execSync(
+      `node ${cliPath} run ${tasksJsonPath} --dry-run`,
+      { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] },
+    );
+    expect(stdout).toContain("phase-1");
+    expect(stdout).toContain("Spec:");
+  });
+
+  it("exits with error when tasks.json does not exist", () => {
+    let exitCode = 0;
+    try {
+      execSync(
+        `node ${cliPath} run /nonexistent/tasks.json --dry-run`,
+        { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] },
+      );
+    } catch (err: unknown) {
+      exitCode = (err as { status: number }).status;
+    }
+    expect(exitCode).not.toBe(0);
   });
 });
 

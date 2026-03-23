@@ -19,7 +19,7 @@ export type CompileConfig = {
 /**
  * Strips markdown code fences from a JSON response if present.
  */
-function stripCodeFences(raw: string): string {
+export function stripCodeFences(raw: string): string {
   return raw.replace(/^```(?:json)?\s*\n?/m, "").replace(/\n?```\s*$/m, "");
 }
 
