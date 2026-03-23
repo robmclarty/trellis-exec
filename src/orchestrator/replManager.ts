@@ -176,7 +176,11 @@ export function createReplSession(config: ReplSessionConfig): ReplSession {
       // Race the promise against a timeout for async operations
       const timeoutPromise = new Promise<never>((_, reject) => {
         const id = setTimeout(() => {
-          reject(new Error("Script execution timed out"));
+          reject(new Error(
+            `TIMEOUT: Code execution exceeded ${timeout}ms. ` +
+            `If a sub-agent timed out, the task was NOT completed. ` +
+            `Do NOT write the phase report as "complete" — retry with simpler instructions or mark the task as failed.`,
+          ));
         }, timeout);
         // If the promise resolves first, clear the timeout
         (promise as Promise<unknown>).then(

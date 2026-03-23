@@ -242,7 +242,20 @@ export function createAgentLauncher(config: AgentLauncherConfig): AgentLauncher 
       };
     }
 
-    const result = await execClaude(args, projectRoot, prompt);
+    let result: ExecClaudeResult;
+    try {
+      result = await execClaude(args, projectRoot, prompt);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        success: false,
+        output:
+          `${message} Task "${subAgentConfig.taskId}" was NOT completed. ` +
+          `Retry with simpler/smaller instructions, or mark this task as failed.`,
+        filesModified: [],
+        error: message,
+      };
+    }
 
     if (result.exitCode !== 0) {
       return {
