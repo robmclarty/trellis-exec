@@ -420,6 +420,57 @@ export function extractCode(response: string): string {
   return trimmed;
 }
 
+/**
+ * Returns true if every non-empty line in the string is a comment
+ * (single-line `//` or block `/* ... *​/`). An empty string returns true.
+ */
+export function isCommentOnly(code: string): boolean {
+  const lines = code.split("\n").filter((l) => l.trim().length > 0);
+  if (lines.length === 0) return true;
+
+  let inBlock = false;
+  for (const raw of lines) {
+    const line = raw.trim();
+
+    if (inBlock) {
+      const closeIdx = line.indexOf("*/");
+      if (closeIdx === -1) {
+        // still inside block comment
+        continue;
+      }
+      // Check if there's code after the closing */
+      const afterClose = line.slice(closeIdx + 2).trim();
+      inBlock = false;
+      if (afterClose.length > 0) {
+        return false;
+      }
+      continue;
+    }
+
+    if (line.startsWith("//")) {
+      continue;
+    }
+
+    if (line.startsWith("/*")) {
+      const closeIdx = line.indexOf("*/", 2);
+      if (closeIdx === -1) {
+        inBlock = true;
+      } else {
+        // Check if there's code after the closing */ on the same line
+        const afterClose = line.slice(closeIdx + 2).trim();
+        if (afterClose.length > 0) {
+          return false;
+        }
+      }
+      continue;
+    }
+
+    return false;
+  }
+
+  return true;
+}
+
 // ---------------------------------------------------------------------------
 // REPL turn loop
 // ---------------------------------------------------------------------------
@@ -453,14 +504,19 @@ async function replTurnLoop(
       return { reason: "complete" };
     }
 
-    // If extractCode returned empty (natural language response), skip eval
-    // and send a corrective nudge
-    if (!code) {
+    // If extractCode returned empty (natural language response) or the
+    // extracted code is nothing but comments, skip eval and send a
+    // corrective nudge.
+    if (!code || isCommentOnly(code)) {
       if (verbose) {
+        const preview = rawResponse.length > 500
+          ? rawResponse.slice(0, 500) + `… [${rawResponse.length} chars total]`
+          : rawResponse;
         console.log(`[turn ${turnNumber}] skipped: response was natural language`);
+        console.log(`[turn ${turnNumber}] raw response: ${preview}`);
       }
       previousOutput =
-        "REPL: Your response was natural language and was skipped. " +
+        "REPL: Your response was natural language (or comments only) and was skipped. " +
         "You MUST output ONLY JavaScript code. The functions runCheck() and " +
         "writePhaseReport() are real JavaScript functions available in this REPL. " +
         "Example of what you should output next:\n\n" +

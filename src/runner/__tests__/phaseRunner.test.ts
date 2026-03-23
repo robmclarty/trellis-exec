@@ -58,6 +58,7 @@ import {
   parseJudgeResult,
   buildFixPrompt,
   normalizeReport,
+  isCommentOnly,
 } from "../phaseRunner.js";
 import type { RunContext } from "../../cli.js";
 import { createAgentLauncher } from "../../orchestrator/agentLauncher.js";
@@ -1630,6 +1631,40 @@ describe("phaseRunner", () => {
       const result = normalizeReport(raw, "p1");
       expect(result.tasksCompleted).toEqual(["explicit-task"]);
       expect(result.tasksFailed).toEqual([]);
+    });
+  });
+
+  describe("isCommentOnly", () => {
+    it("returns true for single-line comments only", () => {
+      expect(isCommentOnly("// just a comment\n// another comment")).toBe(true);
+    });
+
+    it("returns true for block comments only", () => {
+      expect(isCommentOnly("/* block comment */\n/* more */")).toBe(true);
+    });
+
+    it("returns false when real code follows a comment", () => {
+      expect(isCommentOnly("// comment\nconst x = 1")).toBe(false);
+    });
+
+    it("returns false when code precedes a comment", () => {
+      expect(isCommentOnly("var y = readFile('foo')\n// comment")).toBe(false);
+    });
+
+    it("returns true for empty string", () => {
+      expect(isCommentOnly("")).toBe(true);
+    });
+
+    it("returns true for comments with blank lines in between", () => {
+      expect(isCommentOnly("// comment\n\n// more comments")).toBe(true);
+    });
+
+    it("returns true for multi-line block comments", () => {
+      expect(isCommentOnly("/* multi\nline\nblock */")).toBe(true);
+    });
+
+    it("returns false when code follows closing */ on the same line", () => {
+      expect(isCommentOnly("/* comment */ const x = 1")).toBe(false);
     });
   });
 
