@@ -18,10 +18,18 @@ export const SchemaChangeSchema = z.object({
   task: z.string(),
 });
 
+export const JudgeIssueObjectSchema = z.object({
+  task: z.string().optional(),
+  severity: z.string().optional(),
+  description: z.string(),
+});
+
+export const JudgeIssueSchema = z.union([z.string(), JudgeIssueObjectSchema]);
+
 export const JudgeAssessmentSchema = z.object({
   passed: z.boolean(),
-  issues: z.array(z.string()),
-  suggestions: z.array(z.string()),
+  issues: z.array(JudgeIssueSchema),
+  suggestions: z.array(JudgeIssueSchema),
 });
 
 export const PhaseReportStatusSchema = z.enum(["complete", "partial", "failed"]);
@@ -54,6 +62,7 @@ export const SharedStateSchema = z.object({
 export type CheckResult = z.infer<typeof CheckResultSchema>;
 export type ModifiedFile = z.infer<typeof ModifiedFileSchema>;
 export type SchemaChange = z.infer<typeof SchemaChangeSchema>;
+export type JudgeIssue = z.infer<typeof JudgeIssueSchema>;
 export type JudgeAssessment = z.infer<typeof JudgeAssessmentSchema>;
 export type PhaseReportStatus = z.infer<typeof PhaseReportStatusSchema>;
 export type RecommendedAction = z.infer<typeof RecommendedActionSchema>;

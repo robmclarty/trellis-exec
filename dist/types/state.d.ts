@@ -14,10 +14,28 @@ export declare const SchemaChangeSchema: z.ZodObject<{
     action: z.ZodString;
     task: z.ZodString;
 }, z.core.$strip>;
+export declare const JudgeIssueObjectSchema: z.ZodObject<{
+    task: z.ZodOptional<z.ZodString>;
+    severity: z.ZodOptional<z.ZodString>;
+    description: z.ZodString;
+}, z.core.$strip>;
+export declare const JudgeIssueSchema: z.ZodUnion<readonly [z.ZodString, z.ZodObject<{
+    task: z.ZodOptional<z.ZodString>;
+    severity: z.ZodOptional<z.ZodString>;
+    description: z.ZodString;
+}, z.core.$strip>]>;
 export declare const JudgeAssessmentSchema: z.ZodObject<{
     passed: z.ZodBoolean;
-    issues: z.ZodArray<z.ZodString>;
-    suggestions: z.ZodArray<z.ZodString>;
+    issues: z.ZodArray<z.ZodUnion<readonly [z.ZodString, z.ZodObject<{
+        task: z.ZodOptional<z.ZodString>;
+        severity: z.ZodOptional<z.ZodString>;
+        description: z.ZodString;
+    }, z.core.$strip>]>>;
+    suggestions: z.ZodArray<z.ZodUnion<readonly [z.ZodString, z.ZodObject<{
+        task: z.ZodOptional<z.ZodString>;
+        severity: z.ZodOptional<z.ZodString>;
+        description: z.ZodString;
+    }, z.core.$strip>]>>;
 }, z.core.$strip>;
 export declare const PhaseReportStatusSchema: z.ZodEnum<{
     complete: "complete";
@@ -41,8 +59,16 @@ export declare const PhaseReportSchema: z.ZodObject<{
     tasksFailed: z.ZodArray<z.ZodString>;
     judgeAssessment: z.ZodOptional<z.ZodObject<{
         passed: z.ZodBoolean;
-        issues: z.ZodArray<z.ZodString>;
-        suggestions: z.ZodArray<z.ZodString>;
+        issues: z.ZodArray<z.ZodUnion<readonly [z.ZodString, z.ZodObject<{
+            task: z.ZodOptional<z.ZodString>;
+            severity: z.ZodOptional<z.ZodString>;
+            description: z.ZodString;
+        }, z.core.$strip>]>>;
+        suggestions: z.ZodArray<z.ZodUnion<readonly [z.ZodString, z.ZodObject<{
+            task: z.ZodOptional<z.ZodString>;
+            severity: z.ZodOptional<z.ZodString>;
+            description: z.ZodString;
+        }, z.core.$strip>]>>;
     }, z.core.$strip>>;
     orchestratorAnalysis: z.ZodString;
     recommendedAction: z.ZodEnum<{
@@ -79,8 +105,16 @@ export declare const SharedStateSchema: z.ZodObject<{
         tasksFailed: z.ZodArray<z.ZodString>;
         judgeAssessment: z.ZodOptional<z.ZodObject<{
             passed: z.ZodBoolean;
-            issues: z.ZodArray<z.ZodString>;
-            suggestions: z.ZodArray<z.ZodString>;
+            issues: z.ZodArray<z.ZodUnion<readonly [z.ZodString, z.ZodObject<{
+                task: z.ZodOptional<z.ZodString>;
+                severity: z.ZodOptional<z.ZodString>;
+                description: z.ZodString;
+            }, z.core.$strip>]>>;
+            suggestions: z.ZodArray<z.ZodUnion<readonly [z.ZodString, z.ZodObject<{
+                task: z.ZodOptional<z.ZodString>;
+                severity: z.ZodOptional<z.ZodString>;
+                description: z.ZodString;
+            }, z.core.$strip>]>>;
         }, z.core.$strip>>;
         orchestratorAnalysis: z.ZodString;
         recommendedAction: z.ZodEnum<{
@@ -97,6 +131,7 @@ export declare const SharedStateSchema: z.ZodObject<{
 export type CheckResult = z.infer<typeof CheckResultSchema>;
 export type ModifiedFile = z.infer<typeof ModifiedFileSchema>;
 export type SchemaChange = z.infer<typeof SchemaChangeSchema>;
+export type JudgeIssue = z.infer<typeof JudgeIssueSchema>;
 export type JudgeAssessment = z.infer<typeof JudgeAssessmentSchema>;
 export type PhaseReportStatus = z.infer<typeof PhaseReportStatusSchema>;
 export type RecommendedAction = z.infer<typeof RecommendedActionSchema>;

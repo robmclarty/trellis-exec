@@ -28,23 +28,27 @@ Assess the changes against:
 
 ## Output
 
-Return a structured JSON assessment:
+Return a structured JSON assessment. **Output only the JSON block — no prose before or after.**
 
 ```json
 {
-  "passed": true | false,
+  "passed": true,
   "issues": [
-    "Spec violation: [description of what's wrong and what the spec requires]",
-    "Bug: [description of the defect]"
+    { "task": "phase-1-task-2", "severity": "must-fix", "description": "src/views/App.jsx does not exist but is required by acceptance criteria" }
   ],
   "suggestions": [
-    "Style: [optional improvement that doesn't affect correctness]",
-    "Enhancement: [nice-to-have that goes beyond current spec]"
+    { "task": "phase-1-task-1", "severity": "minor", "description": "Consider extracting the color map to a shared constant" }
   ]
 }
 ```
 
-**Be precise about issues.** Each issue should reference the specific file, the specific spec requirement, and what is wrong. Distinguish clearly between:
+Each issue/suggestion is an object with:
+
+- `task` — the task ID this relates to (e.g. `"phase-1-task-2"`)
+- `severity` — `"must-fix"` for issues, `"minor"` for suggestions
+- `description` — what is wrong, referencing the specific file and spec requirement
+
+**Be precise about issues.** Reference the specific file, the specific spec requirement, and what is wrong. Distinguish clearly between:
 
 - **Issues** (must fix): Spec violations, bugs, missing requirements, broken contracts.
 - **Suggestions** (nice to have): Style improvements, optional enhancements, readability tweaks.

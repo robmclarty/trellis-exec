@@ -2,7 +2,7 @@ import { copyFileSync, unlinkSync, mkdirSync, statSync } from "node:fs";
 import { resolve, basename, join } from "node:path";
 import { createInterface } from "node:readline";
 import type { TasksJson, Phase, Task } from "../types/tasks.js";
-import type { SharedState, PhaseReport, JudgeAssessment, CheckResult } from "../types/state.js";
+import type { SharedState, PhaseReport, JudgeAssessment, JudgeIssue, CheckResult } from "../types/state.js";
 import { JudgeAssessmentSchema } from "../types/state.js";
 import type { TrajectoryLogger } from "../logging/trajectoryLogger.js";
 import type { OrchestratorHandle } from "../orchestrator/agentLauncher.js";
@@ -345,17 +345,24 @@ export function dryRunReport(tasksJson: TasksJson, ctx: RunContext): string {
 // Interactive prompt
 // ---------------------------------------------------------------------------
 
-export async function promptForContinuation(): Promise<
-  "continue" | "retry" | "skip" | "quit"
-> {
+export async function promptForContinuation(options?: {
+  phaseId?: string;
+  retryCount?: number;
+  maxRetries?: number;
+}): Promise<"continue" | "retry" | "skip" | "quit"> {
   const rl = createInterface({
     input: process.stdin,
     output: process.stdout,
   });
 
+  let header = "";
+  if (options?.phaseId && options.retryCount !== undefined && options.maxRetries !== undefined) {
+    header = `\n[${options.phaseId}] retries used: ${options.retryCount}/${options.maxRetries}`;
+  }
+
   return new Promise((resolvePromise) => {
     rl.question(
-      "\n[Enter] continue  [r] retry  [s] skip  [q] quit\n> ",
+      `${header}\n[Enter] continue  [r] retry  [s] skip  [q] quit\n> `,
       (answer) => {
         rl.close();
         const trimmed = answer.trim().toLowerCase();
@@ -685,11 +692,19 @@ export function buildJudgePrompt(config: {
   lines.push("");
   lines.push(
     "Evaluate the changes against the spec and acceptance criteria. " +
-      "Return a JSON assessment in this exact format:",
+      "Return ONLY a JSON block — no prose before or after — in this exact format:",
   );
   lines.push("");
   lines.push("```json");
-  lines.push('{  "passed": true | false,  "issues": [...],  "suggestions": [...] }');
+  lines.push('{');
+  lines.push('  "passed": true,');
+  lines.push('  "issues": [');
+  lines.push('    { "task": "phase-1-task-2", "severity": "must-fix", "description": "..." }');
+  lines.push('  ],');
+  lines.push('  "suggestions": [');
+  lines.push('    { "task": "phase-1-task-1", "severity": "minor", "description": "..." }');
+  lines.push('  ]');
+  lines.push('}');
   lines.push("```");
   lines.push("");
   lines.push(
@@ -700,6 +715,43 @@ export function buildJudgePrompt(config: {
   return lines.join("\n");
 }
 
+/**
+ * Normalize issue arrays before Zod validation.
+ * Coerces `detail` → `description` for objects (the LLM alternates between the two).
+ */
+function normalizeIssueArray(arr: unknown[]): unknown[] {
+  return arr.map((item) => {
+    if (typeof item === "object" && item !== null && !Array.isArray(item)) {
+      const obj = item as Record<string, unknown>;
+      // Coerce `detail` → `description` if `description` is missing
+      if (typeof obj["detail"] === "string" && typeof obj["description"] !== "string") {
+        const { detail, ...rest } = obj;
+        return { ...rest, description: detail };
+      }
+    }
+    return item;
+  });
+}
+
+function tryParseAssessment(raw: unknown): JudgeAssessment | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const obj = raw as Record<string, unknown>;
+
+  // Normalize issue/suggestion arrays before Zod validation
+  if (Array.isArray(obj["issues"])) {
+    obj["issues"] = normalizeIssueArray(obj["issues"]);
+  }
+  if (Array.isArray(obj["suggestions"])) {
+    obj["suggestions"] = normalizeIssueArray(obj["suggestions"]);
+  }
+
+  try {
+    return JudgeAssessmentSchema.parse(obj);
+  } catch {
+    return null;
+  }
+}
+
 export function parseJudgeResult(output: string): JudgeAssessment {
   // Try to extract JSON from the output (may be in markdown fences)
   const fenceMatch = output.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
@@ -707,29 +759,41 @@ export function parseJudgeResult(output: string): JudgeAssessment {
 
   try {
     const parsed = JSON.parse(jsonStr.trim());
-    return JudgeAssessmentSchema.parse(parsed);
+    const result = tryParseAssessment(parsed);
+    if (result) return result;
   } catch {
-    // Try to find any JSON object in the output
-    const objectMatch = output.match(/\{[\s\S]*"passed"[\s\S]*\}/);
-    if (objectMatch) {
-      try {
-        const parsed = JSON.parse(objectMatch[0]);
-        return JudgeAssessmentSchema.parse(parsed);
-      } catch {
-        // Fall through to failure
-      }
-    }
-    return {
-      passed: false,
-      issues: [
-        `Judge output was unparseable: ${output.slice(0, 200)}`,
-      ],
-      suggestions: [],
-    };
+    // JSON parse failed, try fallback
   }
+
+  // Try to find any JSON object in the output
+  const objectMatch = output.match(/\{[\s\S]*"passed"[\s\S]*\}/);
+  if (objectMatch) {
+    try {
+      const parsed = JSON.parse(objectMatch[0]);
+      const result = tryParseAssessment(parsed);
+      if (result) return result;
+    } catch {
+      // Fall through to failure
+    }
+  }
+
+  return {
+    passed: false,
+    issues: [
+      `Judge output was unparseable: ${output.slice(0, 200)}`,
+    ],
+    suggestions: [],
+  };
 }
 
-export function buildFixPrompt(issues: string[], phase: Phase): string {
+/** Format a JudgeIssue (string or object) to a display string. */
+export function formatIssue(issue: JudgeIssue): string {
+  if (typeof issue === "string") return issue;
+  const prefix = issue.task ? `${issue.task}: ` : "";
+  return `${prefix}${issue.description}`;
+}
+
+export function buildFixPrompt(issues: JudgeIssue[], phase: Phase): string {
   const lines: string[] = [];
 
   lines.push("# Fix Request");
@@ -742,7 +806,7 @@ export function buildFixPrompt(issues: string[], phase: Phase): string {
   lines.push("## Issues to Fix");
   lines.push("");
   for (let i = 0; i < issues.length; i++) {
-    lines.push(`${i + 1}. ${issues[i]}`);
+    lines.push(`${i + 1}. ${formatIssue(issues[i]!)}`);
   }
 
   lines.push("");
@@ -841,7 +905,7 @@ async function judgePhase(config: {
       `Judge found ${assessment.issues.length} issue(s) in phase "${phase.id}":`,
     );
     for (const issue of assessment.issues) {
-      console.log(`  - ${issue}`);
+      console.log(`  - ${formatIssue(issue)}`);
     }
 
     if (attempt >= maxCorrections) {
@@ -1153,7 +1217,7 @@ export async function runPhases(
             recommendedAction: "retry",
             correctiveTasks: [
               ...report.correctiveTasks,
-              ...judgeResult.assessment.issues,
+              ...judgeResult.assessment.issues.map(formatIssue),
             ],
           };
         }
@@ -1161,10 +1225,19 @@ export async function runPhases(
 
       // Determine action: combine report recommendation with user input
       let action: "advance" | "retry" | "skip" | "halt" =
-        report.recommendedAction === "advance" ? "advance" : "halt";
+        report.recommendedAction === "advance"
+          ? "advance"
+          : report.recommendedAction === "retry"
+            ? "retry"
+            : "halt";
 
       if (!ctx.headless) {
-        const userChoice = await promptForContinuation();
+        const retryCount = state.phaseRetries[phase.id] ?? 0;
+        const userChoice = await promptForContinuation({
+          phaseId: phase.id,
+          retryCount,
+          maxRetries: ctx.maxRetries,
+        });
         if (userChoice === "quit") {
           // Save report to state before exiting
           state = {
@@ -1214,6 +1287,9 @@ export async function runPhases(
           continue;
         }
         // Max retries exceeded — halt
+        console.log(
+          `Max retries (${ctx.maxRetries}) exceeded for phase "${phase.id}". Halting.`,
+        );
         phasesFailed.push(phase.id);
         state = {
           ...state,
@@ -1392,7 +1468,7 @@ export async function runSinglePhase(
           recommendedAction: "retry",
           correctiveTasks: [
             ...report.correctiveTasks,
-            ...judgeResult.assessment.issues,
+            ...judgeResult.assessment.issues.map(formatIssue),
           ],
         };
       }

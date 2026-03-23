@@ -1,5 +1,5 @@
 import type { TasksJson, Phase } from "../types/tasks.js";
-import type { SharedState, PhaseReport, JudgeAssessment, CheckResult } from "../types/state.js";
+import type { SharedState, PhaseReport, JudgeAssessment, JudgeIssue, CheckResult } from "../types/state.js";
 import type { RunContext } from "../cli.js";
 import type { ChangedFile } from "../isolation/worktreeManager.js";
 export type PhaseRunnerResult = {
@@ -16,7 +16,11 @@ export declare function buildPhaseContext(phase: Phase, state: SharedState, hand
  */
 export declare function normalizeReport(raw: Record<string, unknown>, phaseId: string): PhaseReport;
 export declare function dryRunReport(tasksJson: TasksJson, ctx: RunContext): string;
-export declare function promptForContinuation(): Promise<"continue" | "retry" | "skip" | "quit">;
+export declare function promptForContinuation(options?: {
+    phaseId?: string;
+    retryCount?: number;
+    maxRetries?: number;
+}): Promise<"continue" | "retry" | "skip" | "quit">;
 /**
  * Extracts executable JS code from an orchestrator response.
  *
@@ -38,7 +42,9 @@ export declare function buildJudgePrompt(config: {
     orchestratorReport: PhaseReport;
 }): string;
 export declare function parseJudgeResult(output: string): JudgeAssessment;
-export declare function buildFixPrompt(issues: string[], phase: Phase): string;
+/** Format a JudgeIssue (string or object) to a display string. */
+export declare function formatIssue(issue: JudgeIssue): string;
+export declare function buildFixPrompt(issues: JudgeIssue[], phase: Phase): string;
 export declare function createDefaultCheck(projectRoot: string, phase: Phase): {
     run: () => Promise<CheckResult>;
 };

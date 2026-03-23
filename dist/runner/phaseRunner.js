@@ -229,13 +229,17 @@ export function dryRunReport(tasksJson, ctx) {
 // ---------------------------------------------------------------------------
 // Interactive prompt
 // ---------------------------------------------------------------------------
-export async function promptForContinuation() {
+export async function promptForContinuation(options) {
     const rl = createInterface({
         input: process.stdin,
         output: process.stdout,
     });
+    let header = "";
+    if (options?.phaseId && options.retryCount !== undefined && options.maxRetries !== undefined) {
+        header = `\n[${options.phaseId}] retries used: ${options.retryCount}/${options.maxRetries}`;
+    }
     return new Promise((resolvePromise) => {
-        rl.question("\n[Enter] continue  [r] retry  [s] skip  [q] quit\n> ", (answer) => {
+        rl.question(`${header}\n[Enter] continue  [r] retry  [s] skip  [q] quit\n> `, (answer) => {
             rl.close();
             const trimmed = answer.trim().toLowerCase();
             if (trimmed === "r" || trimmed === "retry")
@@ -482,15 +486,58 @@ export function buildJudgePrompt(config) {
     lines.push("## Instructions");
     lines.push("");
     lines.push("Evaluate the changes against the spec and acceptance criteria. " +
-        "Return a JSON assessment in this exact format:");
+        "Return ONLY a JSON block — no prose before or after — in this exact format:");
     lines.push("");
     lines.push("```json");
-    lines.push('{  "passed": true | false,  "issues": [...],  "suggestions": [...] }');
+    lines.push('{');
+    lines.push('  "passed": true,');
+    lines.push('  "issues": [');
+    lines.push('    { "task": "phase-1-task-2", "severity": "must-fix", "description": "..." }');
+    lines.push('  ],');
+    lines.push('  "suggestions": [');
+    lines.push('    { "task": "phase-1-task-1", "severity": "minor", "description": "..." }');
+    lines.push('  ]');
+    lines.push('}');
     lines.push("```");
     lines.push("");
     lines.push("Set `passed` to false only for must-fix problems: spec violations, bugs, " +
         "missing requirements, incomplete tasks. Style suggestions alone do not cause failure.");
     return lines.join("\n");
+}
+/**
+ * Normalize issue arrays before Zod validation.
+ * Coerces `detail` → `description` for objects (the LLM alternates between the two).
+ */
+function normalizeIssueArray(arr) {
+    return arr.map((item) => {
+        if (typeof item === "object" && item !== null && !Array.isArray(item)) {
+            const obj = item;
+            // Coerce `detail` → `description` if `description` is missing
+            if (typeof obj["detail"] === "string" && typeof obj["description"] !== "string") {
+                const { detail, ...rest } = obj;
+                return { ...rest, description: detail };
+            }
+        }
+        return item;
+    });
+}
+function tryParseAssessment(raw) {
+    if (typeof raw !== "object" || raw === null)
+        return null;
+    const obj = raw;
+    // Normalize issue/suggestion arrays before Zod validation
+    if (Array.isArray(obj["issues"])) {
+        obj["issues"] = normalizeIssueArray(obj["issues"]);
+    }
+    if (Array.isArray(obj["suggestions"])) {
+        obj["suggestions"] = normalizeIssueArray(obj["suggestions"]);
+    }
+    try {
+        return JudgeAssessmentSchema.parse(obj);
+    }
+    catch {
+        return null;
+    }
 }
 export function parseJudgeResult(output) {
     // Try to extract JSON from the output (may be in markdown fences)
@@ -498,28 +545,40 @@ export function parseJudgeResult(output) {
     const jsonStr = fenceMatch ? fenceMatch[1] : output;
     try {
         const parsed = JSON.parse(jsonStr.trim());
-        return JudgeAssessmentSchema.parse(parsed);
+        const result = tryParseAssessment(parsed);
+        if (result)
+            return result;
     }
     catch {
-        // Try to find any JSON object in the output
-        const objectMatch = output.match(/\{[\s\S]*"passed"[\s\S]*\}/);
-        if (objectMatch) {
-            try {
-                const parsed = JSON.parse(objectMatch[0]);
-                return JudgeAssessmentSchema.parse(parsed);
-            }
-            catch {
-                // Fall through to failure
-            }
-        }
-        return {
-            passed: false,
-            issues: [
-                `Judge output was unparseable: ${output.slice(0, 200)}`,
-            ],
-            suggestions: [],
-        };
+        // JSON parse failed, try fallback
     }
+    // Try to find any JSON object in the output
+    const objectMatch = output.match(/\{[\s\S]*"passed"[\s\S]*\}/);
+    if (objectMatch) {
+        try {
+            const parsed = JSON.parse(objectMatch[0]);
+            const result = tryParseAssessment(parsed);
+            if (result)
+                return result;
+        }
+        catch {
+            // Fall through to failure
+        }
+    }
+    return {
+        passed: false,
+        issues: [
+            `Judge output was unparseable: ${output.slice(0, 200)}`,
+        ],
+        suggestions: [],
+    };
+}
+/** Format a JudgeIssue (string or object) to a display string. */
+export function formatIssue(issue) {
+    if (typeof issue === "string")
+        return issue;
+    const prefix = issue.task ? `${issue.task}: ` : "";
+    return `${prefix}${issue.description}`;
 }
 export function buildFixPrompt(issues, phase) {
     const lines = [];
@@ -531,7 +590,7 @@ export function buildFixPrompt(issues, phase) {
     lines.push("## Issues to Fix");
     lines.push("");
     for (let i = 0; i < issues.length; i++) {
-        lines.push(`${i + 1}. ${issues[i]}`);
+        lines.push(`${i + 1}. ${formatIssue(issues[i])}`);
     }
     lines.push("");
     lines.push("## Context");
@@ -601,7 +660,7 @@ async function judgePhase(config) {
         // Judge found issues
         console.log(`Judge found ${assessment.issues.length} issue(s) in phase "${phase.id}":`);
         for (const issue of assessment.issues) {
-            console.log(`  - ${issue}`);
+            console.log(`  - ${formatIssue(issue)}`);
         }
         if (attempt >= maxCorrections) {
             break;
@@ -826,15 +885,24 @@ export async function runPhases(ctx, tasksJson) {
                         recommendedAction: "retry",
                         correctiveTasks: [
                             ...report.correctiveTasks,
-                            ...judgeResult.assessment.issues,
+                            ...judgeResult.assessment.issues.map(formatIssue),
                         ],
                     };
                 }
             }
             // Determine action: combine report recommendation with user input
-            let action = report.recommendedAction === "advance" ? "advance" : "halt";
+            let action = report.recommendedAction === "advance"
+                ? "advance"
+                : report.recommendedAction === "retry"
+                    ? "retry"
+                    : "halt";
             if (!ctx.headless) {
-                const userChoice = await promptForContinuation();
+                const retryCount = state.phaseRetries[phase.id] ?? 0;
+                const userChoice = await promptForContinuation({
+                    phaseId: phase.id,
+                    retryCount,
+                    maxRetries: ctx.maxRetries,
+                });
                 if (userChoice === "quit") {
                     // Save report to state before exiting
                     state = {
@@ -881,6 +949,7 @@ export async function runPhases(ctx, tasksJson) {
                     continue;
                 }
                 // Max retries exceeded — halt
+                console.log(`Max retries (${ctx.maxRetries}) exceeded for phase "${phase.id}". Halting.`);
                 phasesFailed.push(phase.id);
                 state = {
                     ...state,
@@ -1017,7 +1086,7 @@ export async function runSinglePhase(ctx, tasksJson, phaseId) {
                     recommendedAction: "retry",
                     correctiveTasks: [
                         ...report.correctiveTasks,
-                        ...judgeResult.assessment.issues,
+                        ...judgeResult.assessment.issues.map(formatIssue),
                     ],
                 };
             }
