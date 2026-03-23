@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.2
+
+- Add comprehensive test coverage for critical execution paths (191 → 273 unit tests)
+- New test files for replHelpers, extractCode, and compilePlan covering previously untested modules
+- Add mergeWorktree tests for clean merges, conflicts, and missing branches
+- Add CLI handler subprocess tests for handleStatus, handleCompile, and handleRun
+- Add buildJudgePrompt edge case and runPhases halt action tests
+- Export `stripCodeFences` from compilePlan for direct unit testing
+
 ## 0.4.1
 
 - Fix interactive prompt to accept full words "retry"/"skip"/"quit" (not just single chars)
