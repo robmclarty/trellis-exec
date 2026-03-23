@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.1
+
+- Fix interactive prompt to accept full words "retry"/"skip"/"quit" (not just single chars)
+- Fix REPL variable scoping — `var` declarations now persist across eval turns for synchronous code
+- Fix `searchFiles` to auto-detect glob patterns in first param instead of treating them as regex
+- Make spec and guidelines file references explicit in phase context with `readFile()` examples
+
 ## 0.4.0
 
 - Move judge invocation from orchestrator to phase runner — judge now runs as a system-controlled gate between phases using git diff for accurate changed-file detection
