@@ -142,16 +142,30 @@ export function createReplSession(config: ReplSessionConfig): ReplSession {
     consoleBuffer = [];
 
     try {
-      // Try expression form first (like Node REPL): wrap as return(expr).
-      // If that fails to parse, fall back to statement form.
+      // Wrap code for evaluation. If the code uses `await`, wrap in an async
+      // IIFE (variables are function-scoped and lost after return). Otherwise,
+      // run directly so `var` declarations persist in the vm context across
+      // eval calls — this lets the orchestrator store values between turns.
       let wrappedCode: string;
-      const exprForm = `(async () => { return (\n${code}\n) })()`;
-      try {
-        // Compile-only check — does not execute
-        new Script(exprForm);
-        wrappedCode = exprForm;
-      } catch {
-        wrappedCode = `(async () => {\n${code}\n})()`;
+      const needsAsync = /\bawait\b/.test(code);
+
+      if (needsAsync) {
+        const exprForm = `(async () => { return (\n${code}\n) })()`;
+        try {
+          new Script(exprForm);
+          wrappedCode = exprForm;
+        } catch {
+          wrappedCode = `(async () => {\n${code}\n})()`;
+        }
+      } else {
+        // Direct execution — var declarations go into the vm context
+        const exprForm = `(\n${code}\n)`;
+        try {
+          new Script(exprForm);
+          wrappedCode = exprForm;
+        } catch {
+          wrappedCode = code;
+        }
       }
 
       const promise = runInContext(wrappedCode, context, {

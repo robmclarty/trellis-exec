@@ -802,7 +802,11 @@ describe("phaseRunner", () => {
             ["r", "retry"],
             ["s", "skip"],
             ["q", "quit"],
+            ["retry", "retry"],
+            ["skip", "skip"],
+            ["quit", "quit"],
             ["  R  ", "retry"],
+            ["  RETRY  ", "retry"],
             ["Q", "quit"],
             ["anything-else", "continue"],
         ])("maps input %j to %j", async (input, expected) => {

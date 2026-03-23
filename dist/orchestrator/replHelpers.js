@@ -103,17 +103,25 @@ export function createReplHelpers(config) {
      * @returns Array of matches with relative path, 1-based line number, and line content
      */
     function searchFiles(pattern, glob) {
+        // If pattern looks like a glob (contains * or ?) and no explicit glob
+        // was provided, treat it as a file filter instead of a regex.
+        let effectivePattern = pattern;
+        let effectiveGlob = glob;
+        if (!glob && /[*?]/.test(pattern)) {
+            effectiveGlob = pattern;
+            effectivePattern = ".*";
+        }
         let regex;
         try {
-            if (pattern.length > 200) {
+            if (effectivePattern.length > 200) {
                 return [];
             }
-            regex = new RegExp(pattern);
+            regex = new RegExp(effectivePattern);
         }
         catch {
             return [];
         }
-        const globRegex = glob ? globToRegex(glob) : null;
+        const globRegex = effectiveGlob ? globToRegex(effectiveGlob) : null;
         const results = [];
         const entries = readdirSync(projectRoot, {
             recursive: true,

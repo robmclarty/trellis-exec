@@ -123,10 +123,20 @@ export function buildPhaseContext(
   lines.push(`Schema changes: ${state.schemaChanges.length}`);
   lines.push("");
   lines.push("## Spec Reference");
-  lines.push(basename(ctx.specPath));
+  lines.push(
+    `The spec file is available at \`${basename(ctx.specPath)}\` in the project root. ` +
+      `Use readFile('${basename(ctx.specPath)}') to read it.`,
+  );
   lines.push("");
   lines.push("## Guidelines Reference");
-  lines.push(ctx.guidelinesPath ? basename(ctx.guidelinesPath) : "none configured");
+  if (ctx.guidelinesPath) {
+    lines.push(
+      `The guidelines file is available at \`${basename(ctx.guidelinesPath)}\` in the project root. ` +
+        `Use readFile('${basename(ctx.guidelinesPath)}') to read it.`,
+    );
+  } else {
+    lines.push("none configured");
+  }
   lines.push("");
   lines.push("## Check Command");
   lines.push(ctx.checkCommand ?? "none configured");
@@ -138,11 +148,18 @@ export function buildPhaseContext(
       "Do NOT include any natural language, explanations, or markdown. " +
       "Output ONLY plain JavaScript code (no TypeScript, no `export`, no `module.exports`).",
   );
+  lines.push(
+    "Use `var` (not `const` or `let`) for variables you need to reference in later turns. " +
+      "`var` declarations persist across eval calls; `const` and `let` do not.",
+  );
   lines.push("");
   lines.push("Available REPL helper functions:");
   lines.push("- readFile(path) — read a file, returns string");
   lines.push("- listDir(path) — list directory contents");
-  lines.push("- searchFiles(pattern) — search files by glob pattern");
+  lines.push(
+    "- searchFiles(pattern, glob?) — search file contents by regex, optionally filtered by glob. " +
+      "If pattern contains * or **, it is treated as a glob file filter",
+  );
   lines.push(
     "- await dispatchSubAgent({ type, taskId, instructions, filePaths, outputPaths }) — dispatch a sub-agent to create/modify files",
   );
@@ -270,9 +287,11 @@ export async function promptForContinuation(): Promise<
       (answer) => {
         rl.close();
         const trimmed = answer.trim().toLowerCase();
-        if (trimmed === "r") resolvePromise("retry");
-        else if (trimmed === "s") resolvePromise("skip");
-        else if (trimmed === "q") resolvePromise("quit");
+        if (trimmed === "r" || trimmed === "retry") resolvePromise("retry");
+        else if (trimmed === "s" || trimmed === "skip")
+          resolvePromise("skip");
+        else if (trimmed === "q" || trimmed === "quit")
+          resolvePromise("quit");
         else resolvePromise("continue");
       },
     );

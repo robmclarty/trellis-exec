@@ -129,6 +129,24 @@ describe("replManager", () => {
         expect(result.output).toBe("cleared");
         session.destroy();
     });
+    it("var declarations persist across sync evals", async () => {
+        const session = createReplSession(makeConfig());
+        await session.eval("var x = 42");
+        const result = await session.eval("x");
+        expect(result.success).toBe(true);
+        expect(result.output).toBe("42");
+        session.destroy();
+    });
+    it("var declarations do not persist inside async IIFE (await path)", async () => {
+        const session = createReplSession(makeConfig());
+        // This uses await, so it wraps in IIFE — var is function-scoped
+        await session.eval("var y = await Promise.resolve(99)");
+        const result = await session.eval("typeof y");
+        expect(result.success).toBe(true);
+        // y is lost because it was inside the IIFE
+        expect(result.output).toBe("undefined");
+        session.destroy();
+    });
     it("tracks consecutive errors and resets on success", async () => {
         const session = createReplSession(makeConfig());
         await session.eval("throw new Error('fail 1')");
@@ -225,6 +243,21 @@ describe("replHelpers", () => {
         // Unclosed character class — would throw SyntaxError without the guard
         const results = helpers.searchFiles("[invalid");
         expect(results).toEqual([]);
+    });
+    it("searchFiles treats glob-like first param as file filter", () => {
+        const helpers = createReplHelpers({
+            projectRoot: FIXTURES_DIR,
+            statePath: "",
+            agentLauncher: null,
+        });
+        // When pattern contains *, treat it as glob file filter (match all content)
+        const results = helpers.searchFiles("**/*.txt");
+        expect(results.length).toBeGreaterThanOrEqual(1);
+        // Should find files matching the glob
+        const paths = [...new Set(results.map((r) => r.path))];
+        expect(paths.some((p) => p.endsWith(".txt"))).toBe(true);
+        // Should NOT find .md files
+        expect(paths.some((p) => p.endsWith(".md"))).toBe(false);
     });
     it("searchFiles returns empty array for excessively long patterns", () => {
         const helpers = createReplHelpers({

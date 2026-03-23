@@ -135,16 +135,25 @@ export function createReplHelpers(config: ReplHelpersConfig): ReplHelpers {
     pattern: string,
     glob?: string,
   ): Array<{ path: string; line: number; content: string }> {
+    // If pattern looks like a glob (contains * or ?) and no explicit glob
+    // was provided, treat it as a file filter instead of a regex.
+    let effectivePattern = pattern;
+    let effectiveGlob = glob;
+    if (!glob && /[*?]/.test(pattern)) {
+      effectiveGlob = pattern;
+      effectivePattern = ".*";
+    }
+
     let regex: RegExp;
     try {
-      if (pattern.length > 200) {
+      if (effectivePattern.length > 200) {
         return [];
       }
-      regex = new RegExp(pattern);
+      regex = new RegExp(effectivePattern);
     } catch {
       return [];
     }
-    const globRegex = glob ? globToRegex(glob) : null;
+    const globRegex = effectiveGlob ? globToRegex(effectiveGlob) : null;
     const results: Array<{ path: string; line: number; content: string }> = [];
 
     const entries = readdirSync(projectRoot, {
