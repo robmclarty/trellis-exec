@@ -21,6 +21,7 @@ import {
   detectTargetPathOverlaps,
 } from "./scheduler.js";
 import { createTrajectoryLogger } from "../logging/trajectoryLogger.js";
+import { startSpinner } from "../ui/spinner.js";
 import {
   createWorktree,
   commitPhase,
@@ -496,7 +497,9 @@ async function replTurnLoop(
       console.log("Waiting for orchestrator first response (this may take a moment)…");
     }
 
+    const spinner = startSpinner("Thinking");
     const rawResponse = await orchestrator.send(previousOutput);
+    spinner.stop();
     const code = extractCode(rawResponse);
 
     // Check if writePhaseReport was triggered by the orchestrator's response
@@ -802,6 +805,7 @@ async function judgePhase(config: {
       );
     }
 
+    const judgeSpinner = startSpinner("Judging");
     const startTime = Date.now();
     const result = await launcher.dispatchSubAgent({
       type: "judge",
@@ -812,6 +816,7 @@ async function judgePhase(config: {
       outputPaths: [],
     });
     const duration = Date.now() - startTime;
+    judgeSpinner.stop();
 
     logger.append({
       phaseId: phase.id,
@@ -984,7 +989,9 @@ async function executePhase(
       ...(ctx.model !== undefined ? { model: ctx.model } : {}),
     };
     console.log("Launching orchestrator…");
+    let spinner = startSpinner("Orchestrator");
     orchestrator = await launcher.launchOrchestrator(launchConfig);
+    spinner.stop();
 
     console.log("Orchestrator ready. Starting REPL turn loop…");
     const loopResult = await replTurnLoop(

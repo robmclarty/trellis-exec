@@ -1,10 +1,11 @@
-import { copyFileSync, unlinkSync, mkdirSync } from "node:fs";
+import { copyFileSync, unlinkSync, mkdirSync, statSync } from "node:fs";
 import { resolve, basename, join } from "node:path";
 import { createInterface } from "node:readline";
 import { JudgeAssessmentSchema } from "../types/state.js";
 import { initState, loadState, saveState, updateStateAfterPhase, } from "./stateManager.js";
 import { validateDependencies, resolveExecutionOrder, detectTargetPathOverlaps, } from "./scheduler.js";
 import { createTrajectoryLogger } from "../logging/trajectoryLogger.js";
+import { startSpinner } from "../ui/spinner.js";
 import { createWorktree, commitPhase, mergeWorktree, cleanupWorktree, getChangedFiles, getDiffContent, } from "../isolation/worktreeManager.js";
 import { createCheckRunner } from "../verification/checkRunner.js";
 import { createAgentLauncher } from "../orchestrator/agentLauncher.js";
@@ -111,6 +112,65 @@ function buildPartialReport(phaseId, phase, reason) {
         decisionsLog: [],
         handoff: "",
     };
+}
+/**
+ * Normalizes a raw report object (as produced by the orchestrator LLM) into
+ * a valid PhaseReport.  Maps common LLM-style field names to the canonical
+ * schema fields and fills in defaults for anything missing.
+ */
+export function normalizeReport(raw, phaseId) {
+    const validStatuses = new Set(["complete", "partial", "failed"]);
+    const validActions = new Set(["advance", "retry", "halt"]);
+    const status = validStatuses.has(raw.status)
+        ? raw.status
+        : "partial";
+    const recommendedAction = validActions.has(raw.recommendedAction)
+        ? raw.recommendedAction
+        : "advance";
+    // Map taskOutcomes → tasksCompleted / tasksFailed when canonical fields absent
+    let tasksCompleted = asStringArray(raw.tasksCompleted);
+    let tasksFailed = asStringArray(raw.tasksFailed);
+    if (tasksCompleted.length === 0 &&
+        tasksFailed.length === 0 &&
+        Array.isArray(raw.taskOutcomes)) {
+        for (const outcome of raw.taskOutcomes) {
+            const id = typeof outcome.taskId === "string" ? outcome.taskId : "";
+            if (!id)
+                continue;
+            if (outcome.status === "failed") {
+                tasksFailed.push(id);
+            }
+            else {
+                tasksCompleted.push(id);
+            }
+        }
+    }
+    // Map handoffBriefing → handoff when canonical field absent
+    const handoff = typeof raw.handoff === "string"
+        ? raw.handoff
+        : typeof raw.handoffBriefing === "string"
+            ? raw.handoffBriefing
+            : "";
+    return {
+        phaseId,
+        status,
+        summary: typeof raw.summary === "string" ? raw.summary : "",
+        tasksCompleted,
+        tasksFailed,
+        orchestratorAnalysis: typeof raw.orchestratorAnalysis === "string"
+            ? raw.orchestratorAnalysis
+            : "",
+        recommendedAction,
+        correctiveTasks: asStringArray(raw.correctiveTasks),
+        decisionsLog: asStringArray(raw.decisionsLog),
+        handoff,
+    };
+}
+/** Safely coerce a value to string[]. */
+function asStringArray(val) {
+    if (!Array.isArray(val))
+        return [];
+    return val.filter((v) => typeof v === "string");
 }
 function makeCorrectiveTask(phaseId, description, index) {
     return {
@@ -230,6 +290,52 @@ export function extractCode(response) {
     }
     return trimmed;
 }
+/**
+ * Returns true if every non-empty line in the string is a comment
+ * (single-line `//` or block `/* ... *​/`). An empty string returns true.
+ */
+export function isCommentOnly(code) {
+    const lines = code.split("\n").filter((l) => l.trim().length > 0);
+    if (lines.length === 0)
+        return true;
+    let inBlock = false;
+    for (const raw of lines) {
+        const line = raw.trim();
+        if (inBlock) {
+            const closeIdx = line.indexOf("*/");
+            if (closeIdx === -1) {
+                // still inside block comment
+                continue;
+            }
+            // Check if there's code after the closing */
+            const afterClose = line.slice(closeIdx + 2).trim();
+            inBlock = false;
+            if (afterClose.length > 0) {
+                return false;
+            }
+            continue;
+        }
+        if (line.startsWith("//")) {
+            continue;
+        }
+        if (line.startsWith("/*")) {
+            const closeIdx = line.indexOf("*/", 2);
+            if (closeIdx === -1) {
+                inBlock = true;
+            }
+            else {
+                // Check if there's code after the closing */ on the same line
+                const afterClose = line.slice(closeIdx + 2).trim();
+                if (afterClose.length > 0) {
+                    return false;
+                }
+            }
+            continue;
+        }
+        return false;
+    }
+    return true;
+}
 // ---------------------------------------------------------------------------
 // REPL turn loop
 // ---------------------------------------------------------------------------
@@ -242,28 +348,35 @@ async function replTurnLoop(orchestrator, repl, logger, phaseId, turnLimit, maxC
         if (turnNumber === 1) {
             console.log("Waiting for orchestrator first response (this may take a moment)…");
         }
+        const spinner = startSpinner("Thinking");
         const rawResponse = await orchestrator.send(previousOutput);
+        spinner.stop();
         const code = extractCode(rawResponse);
         // Check if writePhaseReport was triggered by the orchestrator's response
         if (isCaptured()) {
             return { reason: "complete" };
         }
-        // If extractCode returned empty (natural language response), skip eval
-        // and send a corrective nudge
-        if (!code) {
+        // If extractCode returned empty (natural language response) or the
+        // extracted code is nothing but comments, skip eval and send a
+        // corrective nudge.
+        if (!code || isCommentOnly(code)) {
             if (verbose) {
+                const preview = rawResponse.length > 500
+                    ? rawResponse.slice(0, 500) + `… [${rawResponse.length} chars total]`
+                    : rawResponse;
                 console.log(`[turn ${turnNumber}] skipped: response was natural language`);
+                console.log(`[turn ${turnNumber}] raw response: ${preview}`);
             }
             previousOutput =
-                "REPL: Your response was natural language and was skipped. " +
+                "REPL: Your response was natural language (or comments only) and was skipped. " +
                     "You MUST output ONLY JavaScript code. The functions runCheck() and " +
                     "writePhaseReport() are real JavaScript functions available in this REPL. " +
                     "Example of what you should output next:\n\n" +
                     "await runCheck()\n\n" +
                     "Or if checks pass, write the report:\n\n" +
                     'await writePhaseReport({ status: "complete", recommendedAction: "advance", ' +
-                    'taskOutcomes: [{ taskId: "phase-1-task-1", status: "passed" }], ' +
-                    'handoffBriefing: "Phase 1 complete." })';
+                    'tasksCompleted: ["task-1", "task-2"], tasksFailed: [], ' +
+                    'summary: "All tasks done.", handoff: "Phase complete." })';
             continue;
         }
         const startTime = performance.now();
@@ -279,8 +392,8 @@ async function replTurnLoop(orchestrator, repl, logger, phaseId, turnLimit, maxC
             duration,
         });
         if (verbose) {
-            console.log(`[turn ${turnNumber}] code: ${code.slice(0, 200)}`);
-            console.log(`[turn ${turnNumber}] result: ${evalResult.output.slice(0, 200)}`);
+            console.log(`[turn ${turnNumber}] code: ${code.slice(0, 500)}`);
+            console.log(`[turn ${turnNumber}] result: ${evalResult.output.slice(0, 1000)}`);
         }
         if (repl.getConsecutiveErrors() >= maxConsecutiveErrors) {
             return { reason: "errors" };
@@ -458,6 +571,7 @@ async function judgePhase(config) {
         if (ctx.verbose) {
             console.log(`[judge] attempt ${attempt}, reviewing ${changedFiles.length} changed file(s)`);
         }
+        const judgeSpinner = startSpinner("Judging");
         const startTime = Date.now();
         const result = await launcher.dispatchSubAgent({
             type: "judge",
@@ -468,6 +582,7 @@ async function judgePhase(config) {
             outputPaths: [],
         });
         const duration = Date.now() - startTime;
+        judgeSpinner.stop();
         logger.append({
             phaseId: phase.id,
             turnNumber: 0,
@@ -520,6 +635,37 @@ async function judgePhase(config) {
     return { assessment, correctionAttempts: maxCorrections };
 }
 // ---------------------------------------------------------------------------
+// Default file-existence check (used when no --check command is provided)
+// ---------------------------------------------------------------------------
+export function createDefaultCheck(projectRoot, phase) {
+    const allTargetPaths = phase.tasks.flatMap((t) => t.targetPaths);
+    return {
+        run: async () => {
+            if (allTargetPaths.length === 0) {
+                return { passed: true, output: "No target paths to check", exitCode: 0 };
+            }
+            const missing = [];
+            for (const p of allTargetPaths) {
+                const fullPath = resolve(projectRoot, p);
+                try {
+                    statSync(fullPath);
+                }
+                catch {
+                    missing.push(p);
+                }
+            }
+            if (missing.length === 0) {
+                return { passed: true, output: `All ${allTargetPaths.length} target paths exist`, exitCode: 0 };
+            }
+            return {
+                passed: false,
+                output: `Missing files (${missing.length}/${allTargetPaths.length}): ${missing.join(", ")}`,
+                exitCode: 1,
+            };
+        },
+    };
+}
+// ---------------------------------------------------------------------------
 // Single phase execution
 // ---------------------------------------------------------------------------
 async function executePhase(ctx, phase, state, projectRoot, logger) {
@@ -532,6 +678,7 @@ async function executePhase(ctx, phase, state, projectRoot, logger) {
     const checkRunner = ctx.checkCommand
         ? createCheckRunner({ command: ctx.checkCommand, cwd: projectRoot })
         : null;
+    const defaultCheck = !checkRunner ? createDefaultCheck(projectRoot, phase) : null;
     let capturedReport = null;
     const baseHelpers = createReplHelpers({
         projectRoot,
@@ -541,11 +688,13 @@ async function executePhase(ctx, phase, state, projectRoot, logger) {
     const helpers = {
         ...baseHelpers,
         writePhaseReport: (report) => {
-            capturedReport = report;
+            capturedReport = normalizeReport(report, phase.id);
         },
         runCheck: checkRunner
             ? () => checkRunner.run()
-            : baseHelpers.runCheck,
+            : defaultCheck
+                ? () => defaultCheck.run()
+                : baseHelpers.runCheck,
         llmQuery: (prompt, options) => launcher.llmQuery(prompt, options),
     };
     const repl = createReplSession({
@@ -564,7 +713,9 @@ async function executePhase(ctx, phase, state, projectRoot, logger) {
             ...(ctx.model !== undefined ? { model: ctx.model } : {}),
         };
         console.log("Launching orchestrator…");
+        let spinner = startSpinner("Orchestrator");
         orchestrator = await launcher.launchOrchestrator(launchConfig);
+        spinner.stop();
         console.log("Orchestrator ready. Starting REPL turn loop…");
         const loopResult = await replTurnLoop(orchestrator, repl, logger, phase.id, ctx.turnLimit, ctx.maxConsecutiveErrors, ctx.verbose, () => capturedReport !== null);
         const report = capturedReport ??

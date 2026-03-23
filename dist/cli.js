@@ -9,6 +9,7 @@ import { parsePlan } from "./compile/planParser.js";
 import { compilePlan } from "./compile/compilePlan.js";
 import { createAgentLauncher } from "./orchestrator/agentLauncher.js";
 import { runPhases, runSinglePhase, dryRunReport, } from "./runner/phaseRunner.js";
+import { startSpinner } from "./ui/spinner.js";
 // ---------------------------------------------------------------------------
 // Help text
 // ---------------------------------------------------------------------------
@@ -273,6 +274,7 @@ async function handleCompile(args) {
             pluginRoot,
             projectRoot: dirname(resolve(planPath)),
         });
+        const spinner = startSpinner("Compiling");
         const tasksJson = await compilePlan({
             planPath,
             specPath,
@@ -281,6 +283,7 @@ async function handleCompile(args) {
             outputPath,
             agentLauncher: launcher,
         });
+        spinner.stop();
         const taskCount = tasksJson.phases.reduce((sum, phase) => sum + phase.tasks.length, 0);
         const suffix = needsDecompose ? " (decomposed)" : " (enriched)";
         console.log(`Compiled ${tasksJson.phases.length} phases, ${taskCount} tasks${suffix} → ${outputPath}`);

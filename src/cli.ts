@@ -15,6 +15,7 @@ import {
   runSinglePhase,
   dryRunReport,
 } from "./runner/phaseRunner.js";
+import { startSpinner } from "./ui/spinner.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -381,6 +382,7 @@ async function handleCompile(args: string[]): Promise<void> {
       pluginRoot,
       projectRoot: dirname(resolve(planPath)),
     });
+    const spinner = startSpinner("Compiling");
     const tasksJson = await compilePlan({
       planPath,
       specPath,
@@ -389,6 +391,7 @@ async function handleCompile(args: string[]): Promise<void> {
       outputPath,
       agentLauncher: launcher,
     });
+    spinner.stop();
     const taskCount = tasksJson.phases.reduce(
       (sum, phase) => sum + phase.tasks.length,
       0,

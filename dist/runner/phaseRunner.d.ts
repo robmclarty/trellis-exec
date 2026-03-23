@@ -1,5 +1,5 @@
 import type { TasksJson, Phase } from "../types/tasks.js";
-import type { SharedState, PhaseReport, JudgeAssessment } from "../types/state.js";
+import type { SharedState, PhaseReport, JudgeAssessment, CheckResult } from "../types/state.js";
 import type { RunContext } from "../cli.js";
 import type { ChangedFile } from "../isolation/worktreeManager.js";
 export type PhaseRunnerResult = {
@@ -9,6 +9,12 @@ export type PhaseRunnerResult = {
     finalState: SharedState;
 };
 export declare function buildPhaseContext(phase: Phase, state: SharedState, handoff: string, ctx: RunContext): string;
+/**
+ * Normalizes a raw report object (as produced by the orchestrator LLM) into
+ * a valid PhaseReport.  Maps common LLM-style field names to the canonical
+ * schema fields and fills in defaults for anything missing.
+ */
+export declare function normalizeReport(raw: Record<string, unknown>, phaseId: string): PhaseReport;
 export declare function dryRunReport(tasksJson: TasksJson, ctx: RunContext): string;
 export declare function promptForContinuation(): Promise<"continue" | "retry" | "skip" | "quit">;
 /**
@@ -20,6 +26,11 @@ export declare function promptForContinuation(): Promise<"continue" | "retry" | 
  * If the response is clearly natural language (not JS), returns empty string.
  */
 export declare function extractCode(response: string): string;
+/**
+ * Returns true if every non-empty line in the string is a comment
+ * (single-line `//` or block `/* ... *​/`). An empty string returns true.
+ */
+export declare function isCommentOnly(code: string): boolean;
 export declare function buildJudgePrompt(config: {
     changedFiles: ChangedFile[];
     diffContent: string;
@@ -28,6 +39,9 @@ export declare function buildJudgePrompt(config: {
 }): string;
 export declare function parseJudgeResult(output: string): JudgeAssessment;
 export declare function buildFixPrompt(issues: string[], phase: Phase): string;
+export declare function createDefaultCheck(projectRoot: string, phase: Phase): {
+    run: () => Promise<CheckResult>;
+};
 export declare function runPhases(ctx: RunContext, tasksJson: TasksJson): Promise<PhaseRunnerResult>;
 export declare function runSinglePhase(ctx: RunContext, tasksJson: TasksJson, phaseId: string): Promise<PhaseRunnerResult>;
 //# sourceMappingURL=phaseRunner.d.ts.map
