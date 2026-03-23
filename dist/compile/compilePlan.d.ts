@@ -9,6 +9,10 @@ export type CompileConfig = {
     agentLauncher: AgentLauncher;
 };
 /**
+ * Strips markdown code fences from a JSON response if present.
+ */
+export declare function stripCodeFences(raw: string): string;
+/**
  * Full plan compilation pipeline:
  * 1. Read plan.md from disk.
  * 2. Run deterministic parser (Stage 1).

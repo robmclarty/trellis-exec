@@ -975,6 +975,132 @@ describe("phaseRunner", () => {
         });
     });
     // -------------------------------------------------------------------------
+    // buildJudgePrompt — edge cases
+    // -------------------------------------------------------------------------
+    describe("buildJudgePrompt — edge cases", () => {
+        it("handles empty changedFiles array", () => {
+            const phase = {
+                id: "phase-1",
+                name: "setup",
+                description: "Set up",
+                tasks: [
+                    {
+                        id: "task-1",
+                        title: "Init",
+                        description: "Initialize",
+                        dependsOn: [],
+                        specSections: [],
+                        targetPaths: [],
+                        acceptanceCriteria: ["works"],
+                        subAgentType: "implement",
+                        status: "pending",
+                    },
+                ],
+            };
+            const prompt = buildJudgePrompt({
+                changedFiles: [],
+                diffContent: "",
+                phase,
+                orchestratorReport: makePhaseReport("phase-1"),
+            });
+            expect(prompt).toBeDefined();
+            expect(typeof prompt).toBe("string");
+        });
+        it("handles deleted files (D status)", () => {
+            const phase = {
+                id: "phase-1",
+                name: "cleanup",
+                description: "Clean up",
+                tasks: [],
+            };
+            const prompt = buildJudgePrompt({
+                changedFiles: [{ path: "old-file.ts", status: "D" }],
+                diffContent: "-removed content",
+                phase,
+                orchestratorReport: makePhaseReport("phase-1"),
+            });
+            expect(prompt).toContain("[D] old-file.ts");
+        });
+        it("handles tasks with empty acceptanceCriteria", () => {
+            const phase = {
+                id: "phase-1",
+                name: "setup",
+                description: "Set up",
+                tasks: [
+                    {
+                        id: "task-1",
+                        title: "Init",
+                        description: "Initialize",
+                        dependsOn: [],
+                        specSections: [],
+                        targetPaths: [],
+                        acceptanceCriteria: [],
+                        subAgentType: "implement",
+                        status: "pending",
+                    },
+                ],
+            };
+            const prompt = buildJudgePrompt({
+                changedFiles: [{ path: "file.ts", status: "A" }],
+                diffContent: "+content",
+                phase,
+                orchestratorReport: makePhaseReport("phase-1"),
+            });
+            expect(prompt).toBeDefined();
+            expect(typeof prompt).toBe("string");
+        });
+        it("handles tasks with empty targetPaths", () => {
+            const phase = {
+                id: "phase-1",
+                name: "setup",
+                description: "Set up",
+                tasks: [
+                    {
+                        id: "task-1",
+                        title: "Init",
+                        description: "Initialize",
+                        dependsOn: [],
+                        specSections: [],
+                        targetPaths: [],
+                        acceptanceCriteria: ["passes"],
+                        subAgentType: "implement",
+                        status: "pending",
+                    },
+                ],
+            };
+            const prompt = buildJudgePrompt({
+                changedFiles: [{ path: "file.ts", status: "M" }],
+                diffContent: "+changes",
+                phase,
+                orchestratorReport: makePhaseReport("phase-1"),
+            });
+            expect(prompt).toBeDefined();
+        });
+    });
+    // -------------------------------------------------------------------------
+    // runPhases — error paths
+    // -------------------------------------------------------------------------
+    describe("runPhases — halt action", () => {
+        it("halts when report recommends halt in headless mode", async () => {
+            const tasksJson = makeTasksJson();
+            tmpDir = setupTmpDir(tasksJson);
+            const config = makeDefaultConfig(tmpDir);
+            const haltReport = makePhaseReport("phase-1", {
+                status: "partial",
+                recommendedAction: "halt",
+                tasksCompleted: [],
+                tasksFailed: ["task-1-1"],
+            });
+            const reports = new Map([
+                ["phase-1", haltReport],
+            ]);
+            setupMocksForSuccess(reports);
+            const result = await runPhases(config, tasksJson);
+            expect(result.success).toBe(false);
+            expect(result.phasesFailed).toContain("phase-1");
+        });
+    });
+    // -------------------------------------------------------------------------
     // Judge loop — integration with runPhases
     // -------------------------------------------------------------------------
     describe("runPhases — judge loop", () => {

@@ -7,7 +7,7 @@ import { buildDecomposePrompt } from "./prompts.js";
 /**
  * Strips markdown code fences from a JSON response if present.
  */
-function stripCodeFences(raw) {
+export function stripCodeFences(raw) {
     return raw.replace(/^```(?:json)?\s*\n?/m, "").replace(/\n?```\s*$/m, "");
 }
 /**

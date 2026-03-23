@@ -36,6 +36,8 @@ vi.mock("../isolation/worktreeManager.js", () => ({
     commitPhase: vi.fn(() => true),
     mergeWorktree: vi.fn(() => ({ success: true })),
     cleanupWorktree: vi.fn(),
+    getChangedFiles: vi.fn(() => []),
+    getDiffContent: vi.fn(() => ""),
 }));
 // Import modules under test AFTER vi.mock declarations
 import { parsePlan } from "../compile/planParser.js";

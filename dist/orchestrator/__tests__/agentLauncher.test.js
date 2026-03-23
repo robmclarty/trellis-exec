@@ -205,6 +205,33 @@ describe("createAgentLauncher", () => {
             logSpy.mockRestore();
         });
     });
+    describe("dispatchSubAgent — error handling", () => {
+        it("returns failure result in dryRun mode for all agent types", async () => {
+            const launcher = createAgentLauncher(makeLauncherConfig({ dryRun: true }));
+            // Even unusual agent types should return a valid result
+            const result = await launcher.dispatchSubAgent(makeSubAgentConfig({ type: "nonexistent-agent" }));
+            expect(result.success).toBe(true);
+            expect(result.output).toBe("[dry-run]");
+        });
+        it("returns default mock response for unknown agent types in mock mode", async () => {
+            const launcher = createAgentLauncher(makeLauncherConfig({ mockResponses: new Map() }));
+            const result = await launcher.dispatchSubAgent(makeSubAgentConfig({ type: "unknown" }));
+            expect(result.success).toBe(true);
+            expect(result.output).toBe("[mock] default response");
+        });
+    });
+    describe("llmQuery — error handling", () => {
+        it("handles empty prompt in dryRun mode", async () => {
+            const launcher = createAgentLauncher(makeLauncherConfig({ dryRun: true }));
+            const result = await launcher.llmQuery("");
+            expect(typeof result).toBe("string");
+        });
+        it("supports model override in mock mode", async () => {
+            const launcher = createAgentLauncher(makeLauncherConfig({ mockResponses: new Map() }));
+            const result = await launcher.llmQuery("test", { model: "opus" });
+            expect(typeof result).toBe("string");
+        });
+    });
     // -------------------------------------------------------------------------
     // The real orchestrator uses sequential one-shot calls with --continue
     // for multi-turn conversation. Each send() spawns a fresh claude process.
