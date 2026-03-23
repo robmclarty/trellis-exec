@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.8
+
+- Add adaptive REPL timeout: 30s for sync expressions, 5min for long-running helpers (dispatchSubAgent, runCheck, llmQuery) so sub-agents aren't killed prematurely
+- Strengthen post-timeout feedback to prevent orchestrator from hallucinating that timed-out work was completed
+- Pre-load spec and guidelines content into orchestrator phase context to eliminate warm-up turns
+
 ## 0.4.7
 
 - Accept structured judge output objects (`{task, severity, description}`) as the primary format, with plain strings as fallback
