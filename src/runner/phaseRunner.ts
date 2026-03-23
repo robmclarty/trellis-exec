@@ -544,9 +544,9 @@ async function replTurnLoop(
     });
 
     if (verbose) {
-      console.log(`[turn ${turnNumber}] code: ${code.slice(0, 200)}`);
+      console.log(`[turn ${turnNumber}] code: ${code.slice(0, 500)}`);
       console.log(
-        `[turn ${turnNumber}] result: ${evalResult.output.slice(0, 200)}`,
+        `[turn ${turnNumber}] result: ${evalResult.output.slice(0, 1000)}`,
       );
     }
 
