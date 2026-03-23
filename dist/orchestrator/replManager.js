@@ -32,6 +32,13 @@ function serialize(value) {
  */
 export function createReplSession(config) {
     const { outputLimit, timeout, helpers } = config;
+    const longTimeout = config.longTimeout ?? timeout;
+    /**
+     * Patterns that indicate the code invokes a long-running async helper
+     * (sub-agent dispatch, check command, LLM query). These need a longer
+     * timeout than simple sync expressions.
+     */
+    const LONG_RUNNING_PATTERN = /\b(?:dispatchSubAgent|runCheck|llmQuery)\s*\(/;
     // Store original references for scaffold restoration
     const originals = {};
     for (const name of HELPER_NAMES) {
@@ -132,17 +139,24 @@ export function createReplSession(config) {
                     wrappedCode = code;
                 }
             }
+            // Use the longer timeout when code calls long-running helpers
+            const effectiveTimeout = LONG_RUNNING_PATTERN.test(code)
+                ? longTimeout
+                : timeout;
             const promise = runInContext(wrappedCode, context, {
                 filename: "repl",
-                timeout,
+                timeout: effectiveTimeout,
             });
             // Race the promise against a timeout for async operations
             const timeoutPromise = new Promise((_, reject) => {
                 const id = setTimeout(() => {
-                    reject(new Error(`TIMEOUT: Code execution exceeded ${timeout}ms. ` +
-                        `If a sub-agent timed out, the task was NOT completed. ` +
-                        `Do NOT write the phase report as "complete" — retry with simpler instructions or mark the task as failed.`));
-                }, timeout);
+                    reject(new Error(`TIMEOUT: Code execution exceeded ${effectiveTimeout}ms. ` +
+                        `The sub-agent was killed and produced NO output — zero files were written or modified. ` +
+                        `This task is NOT complete. You MUST either:\n` +
+                        `1. Retry dispatchSubAgent() with simpler/smaller instructions, OR\n` +
+                        `2. Mark this task as failed in writePhaseReport().\n` +
+                        `Do NOT claim the task was completed. Do NOT write prose — output JavaScript code only.`));
+                }, effectiveTimeout);
                 // If the promise resolves first, clear the timeout
                 promise.then(() => clearTimeout(id), () => clearTimeout(id));
             });

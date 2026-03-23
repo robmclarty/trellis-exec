@@ -26,9 +26,10 @@ At session start you receive:
 1. **Task list** — the phase's tasks from `tasks.json`, each with an ID, description, type, sub-agent assignment, `dependsOn` list, `targetPaths`, and `outputPaths`.
 2. **Shared state** — accumulated state from prior phases (`state.json`): completed tasks, modified files, decisions log.
 3. **Handoff briefing** — the prior phase's summary of what was done, what to watch for, and any unresolved issues.
-4. **Spec file** — the spec file is copied into the project root at the start of each run. Use `readFile('spec.md')` (or whatever the spec filename is — check the "Spec Reference" field in the phase context) to read it directly.
+4. **Spec content** — the full spec is pre-loaded in the phase context below. You do NOT need to call `readFile()` to read it. It is also available on disk if you need to re-read after context compaction.
+5. **Guidelines content** — the full guidelines are pre-loaded in the phase context below. Same as spec — no need to `readFile()` them.
 
-Read these carefully before starting any task. They are your ground truth.
+Read these carefully before starting any task. They are your ground truth. **Do NOT spend turns reading the spec or guidelines — they are already in your context. Start dispatching tasks immediately.**
 
 ## Task Execution Flow
 

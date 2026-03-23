@@ -873,7 +873,7 @@ describe("phaseRunner", () => {
                 pluginRoot: ".",
             };
             const context = buildPhaseContext(phase, state, "", ctx);
-            expect(context).toContain("## Guidelines Reference");
+            expect(context).toContain("## Guidelines Content");
             expect(context).toContain("guidelines.md");
         });
         it("shows 'none configured' when guidelinesPath is absent", () => {
@@ -894,7 +894,7 @@ describe("phaseRunner", () => {
                 pluginRoot: ".",
             };
             const context = buildPhaseContext(phase, state, "", ctx);
-            expect(context).toContain("## Guidelines Reference");
+            expect(context).toContain("## Guidelines Content");
             expect(context).toContain("none configured");
         });
     });

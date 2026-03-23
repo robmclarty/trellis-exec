@@ -1,4 +1,4 @@
-import { copyFileSync, unlinkSync, mkdirSync, statSync } from "node:fs";
+import { copyFileSync, readFileSync, unlinkSync, mkdirSync, statSync } from "node:fs";
 import { resolve, basename, join } from "node:path";
 import { createInterface } from "node:readline";
 import type { TasksJson, Phase, Task } from "../types/tasks.js";
@@ -122,19 +122,32 @@ export function buildPhaseContext(
   );
   lines.push(`Modified files: ${state.modifiedFiles.length}`);
   lines.push(`Schema changes: ${state.schemaChanges.length}`);
+  // Pre-load spec and guidelines content so the orchestrator doesn't waste
+  // turns calling readFile() for these. They're still available on disk if
+  // the orchestrator needs to re-read them after context compaction.
   lines.push("");
-  lines.push("## Spec Reference");
+  lines.push("## Spec Content");
   lines.push(
-    `The spec file is available at \`${basename(ctx.specPath)}\` in the project root. ` +
-      `Use readFile('${basename(ctx.specPath)}') to read it.`,
+    `(Pre-loaded from \`${basename(ctx.specPath)}\`. Also available via readFile('${basename(ctx.specPath)}').)`,
   );
   lines.push("");
-  lines.push("## Guidelines Reference");
+  try {
+    lines.push(readFileSync(ctx.specPath, "utf-8"));
+  } catch {
+    lines.push("[ERROR: Could not read spec file]");
+  }
+  lines.push("");
+  lines.push("## Guidelines Content");
   if (ctx.guidelinesPath) {
     lines.push(
-      `The guidelines file is available at \`${basename(ctx.guidelinesPath)}\` in the project root. ` +
-        `Use readFile('${basename(ctx.guidelinesPath)}') to read it.`,
+      `(Pre-loaded from \`${basename(ctx.guidelinesPath)}\`. Also available via readFile('${basename(ctx.guidelinesPath)}').)`,
     );
+    lines.push("");
+    try {
+      lines.push(readFileSync(ctx.guidelinesPath, "utf-8"));
+    } catch {
+      lines.push("[ERROR: Could not read guidelines file]");
+    }
   } else {
     lines.push("none configured");
   }
@@ -567,8 +580,18 @@ async function replTurnLoop(
     const rawOutput = evalResult.success
       ? evalResult.output
       : `ERROR: ${evalResult.error ?? "unknown"}\n${evalResult.output}`;
+
+    // After a timeout, inject an extra-strong nudge so the orchestrator
+    // doesn't hallucinate that the timed-out work was completed.
+    const isTimeout = !evalResult.success && evalResult.error?.startsWith("TIMEOUT:");
+    const timeoutSuffix = isTimeout
+      ? "\n\nREPL SYSTEM: The previous dispatchSubAgent() call TIMED OUT. " +
+        "No files were created or modified. The task is NOT done. " +
+        "You must retry or mark the task as failed. Output JavaScript code only."
+      : "";
+
     // Ensure we never send an empty string (claude --print requires input)
-    previousOutput = rawOutput.trim() || "(no output)";
+    previousOutput = (rawOutput.trim() || "(no output)") + timeoutSuffix;
 
     // Check if writePhaseReport was called inside the eval'd code
     if (isCaptured()) {
@@ -1033,6 +1056,7 @@ async function executePhase(
     projectRoot,
     outputLimit: 8192,
     timeout: 30_000,
+    longTimeout: 300_000, // 5 min for dispatchSubAgent/runCheck/llmQuery
     helpers,
   });
 

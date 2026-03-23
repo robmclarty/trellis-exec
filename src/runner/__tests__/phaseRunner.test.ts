@@ -1029,7 +1029,7 @@ describe("phaseRunner", () => {
         pluginRoot: ".",
       };
       const context = buildPhaseContext(phase, state, "", ctx);
-      expect(context).toContain("## Guidelines Reference");
+      expect(context).toContain("## Guidelines Content");
       expect(context).toContain("guidelines.md");
     });
 
@@ -1051,7 +1051,7 @@ describe("phaseRunner", () => {
         pluginRoot: ".",
       };
       const context = buildPhaseContext(phase, state, "", ctx);
-      expect(context).toContain("## Guidelines Reference");
+      expect(context).toContain("## Guidelines Content");
       expect(context).toContain("none configured");
     });
   });

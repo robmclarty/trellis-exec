@@ -3,6 +3,8 @@ export type ReplSessionConfig = {
     projectRoot: string;
     outputLimit: number;
     timeout: number;
+    /** Timeout for code that invokes long-running helpers (dispatchSubAgent, runCheck, llmQuery). Defaults to timeout. */
+    longTimeout?: number;
     helpers: ReplHelpers;
 };
 export type ReplEvalResult = {
