@@ -28,7 +28,8 @@ For each incomplete phase:
   Create REPL session      →  replManager.createReplSession()
   Launch orchestrator      →  launcher.launchOrchestrator()
   Run REPL turn loop       →  replTurnLoop() (internal)
-  Decide action            →  report.recommendedAction + user input
+  Judge phase              →  judgePhase() (judge → fix correction loop)
+  Decide action            →  report.recommendedAction + judge assessment + user input
   Update state             →  stateManager.updateStateAfterPhase()
   Commit to worktree       →  worktreeManager.commitPhase()
 
@@ -54,20 +55,84 @@ This is the core inner loop. It mediates between the orchestrator (a `claude` su
 
 The orchestrator signals it's done by calling `writePhaseReport(report)` in the REPL. This works through a closure: the runner creates the REPL helpers with an overridden `writePhaseReport` that captures the report into a local variable. The turn loop checks this variable after each orchestrator response and after each REPL eval. When it's set, the loop exits with reason "complete".
 
+### Judge flow
+
+After the orchestrator completes a phase (status is not `"failed"`), the runner dispatches a **judge agent** to independently verify the work against the spec and task acceptance criteria. The judge runs inside a correction loop managed by `judgePhase()`.
+
+#### What the judge receives
+
+The runner builds a judge prompt containing:
+
+- **Changed files** — list with git status indicators (A/M/D)
+- **Full unified diff** — all changes made during the phase
+- **Task definitions** — IDs, titles, descriptions, target paths, and acceptance criteria
+- **Spec sections** — referenced via each task's `specSections` field
+- **Orchestrator's self-report** — the phase report with status and completion claims
+
+#### What the judge evaluates
+
+The judge (dispatched as a `"judge"` sub-agent on the `opus` model) assesses four dimensions:
+
+1. **Spec compliance** — do the changes implement what the spec requires?
+2. **Correctness** — are there obvious bugs or unhandled cases?
+3. **Completeness** — are all tasks fully addressed, or are TODOs left behind?
+4. **Consistency** — do the changes fit existing codebase patterns?
+
+It returns a `JudgeAssessment`:
+
+```typescript
+{
+  passed: boolean;
+  issues: string[];     // problems that must be fixed
+  suggestions: string[]; // optional improvements
+}
+```
+
+#### The judge → fix correction loop
+
+When the judge finds issues and correction attempts remain (default max: 2), the runner automatically dispatches a **fix agent** to address them:
+
+```text
+judgePhase(phase, report)
+  ├── Get changed files from git diff
+  ├── Skip if no files changed
+  └── Loop (up to maxCorrections):
+       ├── Dispatch judge sub-agent with diff + criteria
+       ├── Parse JudgeAssessment from response
+       ├── Log "judge_invoke" trajectory event
+       ├── If passed → break, return assessment
+       ├── If not passed and attempts remain:
+       │    ├── Dispatch fix sub-agent with issues list
+       │    ├── Run check command (if configured)
+       │    └── Refresh changed files for next pass
+       └── If max corrections exceeded → return final assessment
+```
+
+The fix agent (dispatched as a `"fix"` sub-agent on the `sonnet` model) receives only the specific issues identified by the judge and is constrained to fixing those issues — no refactoring.
+
+#### How the assessment affects action decisions
+
+The judge assessment is stored on the phase report as `judgeAssessment` and influences the action decision:
+
+**Interactive mode:** If the judge found issues and the orchestrator recommended `"advance"`, the runner overrides the recommendation to `"retry"` and populates `correctiveTasks` with the judge's issues. The user is then prompted with this adjusted recommendation.
+
+**Headless mode:** If the judge found issues and the orchestrator recommended `"advance"`, the runner downgrades the status to `"partial"` and changes the recommendation to `"retry"`.
+
 ### Action logic after a phase
 
-Once a phase finishes, the runner decides what to do next. In headless mode, it follows the report's `recommendedAction`. In interactive mode (the default), it also prompts the user:
+Once a phase finishes and the judge assessment is applied, the runner decides what to do next. In headless mode, it follows the (possibly judge-adjusted) `recommendedAction`. In interactive mode (the default), it also prompts the user:
 
-| Report recommends | User chooses | Result |
-|-------------------|-------------|--------|
-| `advance` | Enter | Commit changes, advance to next phase |
-| `advance` | `r` | Retry current phase |
-| `advance` | `s` | Skip, mark complete, advance |
-| `advance` | `q` | Save state, exit |
-| `retry` | (headless) | Retry if under `maxRetries`, else halt |
-| `halt` | (any) | Save state, exit |
+| Report recommends | Judge passed | User chooses | Result |
+|-------------------|-------------|-------------|--------|
+| `advance` | yes | Enter | Commit changes, advance to next phase |
+| `advance` | no | (overridden to `retry`) | Retry with judge issues as corrective tasks |
+| `advance` | — | `r` | Retry current phase |
+| `advance` | — | `s` | Skip, mark complete, advance |
+| `advance` | — | `q` | Save state, exit |
+| `retry` | — | (headless) | Retry if under `maxRetries`, else halt |
+| `halt` | — | (any) | Save state, exit |
 
-On retry, the runner appends the report's `correctiveTasks` as new task objects to the phase and re-enters it without advancing the phase index. The retry counter is stored in `state.phaseRetries` and persists across saves.
+On retry, the runner appends the report's `correctiveTasks` (which may include judge-identified issues) as new task objects to the phase and re-enters it without advancing the phase index. The retry counter is stored in `state.phaseRetries` and persists across saves.
 
 State is only updated after the action decision. This prevents a retry-bound phase from being prematurely marked as completed.
 
@@ -87,7 +152,7 @@ phaseRunner.runPhases()
   ├── worktreeManager   — create, commit, merge, cleanup
   └── executePhase()
        ├── agentLauncher.createAgentLauncher()
-       │    ├── .dispatchSubAgent()  →  wired into replHelpers
+       │    ├── .dispatchSubAgent()  →  wired into replHelpers + judgePhase
        │    ├── .llmQuery()          →  wired into replHelpers
        │    └── .launchOrchestrator() → orchestratorHandle
        ├── checkRunner.createCheckRunner()
@@ -95,7 +160,10 @@ phaseRunner.runPhases()
        ├── replHelpers.createReplHelpers()
        │    └── writePhaseReport, runCheck, llmQuery overridden
        ├── replManager.createReplSession(helpers)
-       └── replTurnLoop(orchestratorHandle, replSession, logger)
+       ├── replTurnLoop(orchestratorHandle, replSession, logger)
+       └── judgePhase(phase, report, launcher, logger)
+            ├── dispatchSubAgent("judge")  →  assess changes against criteria
+            └── dispatchSubAgent("fix")    →  correct issues (if judge fails)
 ```
 
 The REPL helpers bridge is the key integration point. The phase runner creates the helpers with `createReplHelpers()`, then overrides three methods using object spread:
