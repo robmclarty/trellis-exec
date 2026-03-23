@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.4
+
+- Document judge → fix correction loop in phase-runner.md
+- Update README architecture diagram to show judge/fix as post-orchestration Phase Runner step
+- Fix judge model reference (Sonnet → Opus) and remove stale env vars from README
+
 ## 0.4.3
 
 - Fix markdown lint errors in docs (trailing punctuation, blank lines, code fence labels)
