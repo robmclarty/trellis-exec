@@ -3,6 +3,7 @@
 ## Overview
 
 The Trellis phase runner is a sophisticated orchestration system that:
+
 1. Uses **git worktrees** (optional) to isolate work
 2. Spawns a **phase orchestrator** Claude agent as a persistent REPL session
 3. The orchestrator dispatches **sub-agents** for file creation/modification
@@ -11,7 +12,7 @@ The Trellis phase runner is a sophisticated orchestration system that:
 
 ## Architecture Diagram
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────┐
 │  Phase Runner (phaseRunner.ts)                                  │
 │                                                                  │
@@ -211,11 +212,12 @@ The Trellis phase runner is a sophisticated orchestration system that:
 │ cleanupWorktree(worktreePath)                                   │
 │  └─ git worktree remove --force                                 │
 └─────────────────────────────────────────────────────────────────┘
-```
+```text
 
 ## Key Files and Locations
 
 ### Core Execution
+
 - **phaseRunner.ts** – Main orchestration loop, worktree setup, phase execution
 - **scheduler.ts** – Task dependency resolution and execution ordering
 - **stateManager.ts** – State persistence (state.json) and updates
@@ -224,6 +226,7 @@ The Trellis phase runner is a sophisticated orchestration system that:
 - **replHelpers.ts** – Helper functions injected into REPL (readFile, listDir, etc.)
 
 ### Agents (in /agents/)
+
 - **phase-orchestrator.md** – Main orchestrator agent (persistent REPL session, Sonnet)
 - **implement.md** – Sub-agent for file creation/modification (Sonnet)
 - **test-writer.md** – Sub-agent for test generation (Sonnet)
@@ -231,12 +234,15 @@ The Trellis phase runner is a sophisticated orchestration system that:
 - **judge.md** – Sub-agent for evaluation (read-only, Sonnet)
 
 ### Worktree Management
+
 - **worktreeManager.ts** – Create, commit, merge, cleanup worktrees
 
 ### Verification
+
 - **checkRunner.ts** – Executes project check commands (build/lint/test)
 
 ### State & Types
+
 - **types/state.ts** – PhaseReport, SharedState, CheckResult
 - **types/tasks.ts** – Task, Phase, TasksJson structures
 - **types/agents.ts** – SubAgentConfig, SubAgentResult
@@ -244,6 +250,7 @@ The Trellis phase runner is a sophisticated orchestration system that:
 ## How Claude Code is Invoked
 
 ### 1. Phase Orchestrator Launch
+
 ```typescript
 // In executePhase()
 orchestrator = await launcher.launchOrchestrator({
@@ -255,6 +262,7 @@ orchestrator = await launcher.launchOrchestrator({
 ```
 
 **CLI executed:**
+
 ```bash
 claude --agent agents/phase-orchestrator.md \
        --print \
@@ -267,6 +275,7 @@ claude --agent agents/phase-orchestrator.md \
 ```
 
 **Key points:**
+
 - Uses `--agent` to specify the orchestrator prompts
 - Uses `--print` for stdout output (no interactive paging)
 - Uses `--dangerously-skip-permissions` to allow REPL execution
@@ -275,6 +284,7 @@ claude --agent agents/phase-orchestrator.md \
 - `--add-dir skills/` makes skill documentation available
 
 ### 2. Sub-Agent Dispatch
+
 ```typescript
 // In REPL execution, orchestrator calls:
 await dispatchSubAgent({
@@ -288,6 +298,7 @@ await dispatchSubAgent({
 ```
 
 **CLI executed (via execClaude):**
+
 ```bash
 claude --agent agents/implement.md \
        --print \
@@ -297,7 +308,8 @@ claude --agent agents/implement.md \
 ```
 
 **Sub-agent prompt structure:**
-```
+
+```text
 You are an implement sub-agent. Your task:
 
 <instructions>
@@ -315,6 +327,7 @@ Use the Write tool to create new files and the Edit tool to modify existing file
 ## Worktree Strategy
 
 ### When Used (ctx.isolation === "worktree")
+
 1. **Creation**: `git worktree add -b trellis-exec/<spec>/<timestamp> <path> HEAD`
    - Creates isolated environment at `.trellis-worktrees/<slug>/`
    - Branch name encodes spec name and timestamp for debugging
@@ -338,6 +351,7 @@ Use the Write tool to create new files and the Edit tool to modify existing file
    - Deletes worktree directory and branch
 
 ### When Not Used (ctx.isolation === "none")
+
 - Work directly in `ctx.projectRoot`
 - No branch isolation, no audit trail commits
 - Changes land directly in the working directory
@@ -345,7 +359,8 @@ Use the Write tool to create new files and the Edit tool to modify existing file
 ## Artifacts & File Flow
 
 ### Input Artifacts
-```
+
+```text
 spec.md             → Copied to projectRoot/ at start
 guidelines.md       → Copied to projectRoot/ at start (if provided)
 plan.json           → Referenced by orchestrator via readFile()
@@ -354,7 +369,8 @@ tasks.json          → Defines phases and tasks
 ```
 
 ### Output Artifacts
-```
+
+```text
 state.json          → Updated after each phase (atomic write)
 trajectory.jsonl    → Event log of all REPL turns and dispatches
 <worktree>/.git     → Git history of phase commits (if using worktree)
@@ -362,6 +378,7 @@ trajectory.jsonl    → Event log of all REPL turns and dispatches
 ```
 
 ### Data Persistence
+
 - **State**: `/path/to/state.json` (updated after each successful phase)
 - **Trajectory**: `/path/to/trajectory.jsonl` (append-only log)
 - **Spec & Guidelines**: Copied into project root temporarily, cleaned up at end
@@ -386,7 +403,8 @@ All paths are resolved relative to `projectRoot` with safety checks to prevent e
 ## Turn Loop Mechanism
 
 ### REPL Turn Loop (replTurnLoop)
-```
+
+```text
 Turn 1: Phase context + "Begin phase execution"
         → Orchestrator responds with JS code
 
@@ -401,13 +419,17 @@ Repeat until:
 ```
 
 ### Code Extraction
+
 Orchestrator responses are parsed for JavaScript:
-- Fenced code blocks: ```js ... ```
+
+- Fenced code blocks: `` ```js ... ``` ``
 - Raw code if it starts with `const`, `let`, `await`, etc.
 - Skips natural language responses (error feedback)
 
 ### Execution
+
 Each eval:
+
 1. Wraps code in `(async () => { ... })()`
 2. Runs in VM context with 30s timeout
 3. Captures console output and return value
@@ -418,16 +440,19 @@ Each eval:
 ## Error Handling
 
 ### Per-Task Retries
+
 - Orchestrator retries up to 3x with adjusted instructions
 - Uses `llmQuery()` to analyze failure before retrying
 - If all retries fail: task marked failed, phase continues
 
 ### Phase-Level Retries
+
 - Phase can recommend "retry" action in report
 - Phase runner respects retry count limit (configurable)
 - Can append corrective tasks to phase
 
 ### Worktree Cleanup
+
 - Even on failure, worktree is cleaned up (`--force`)
 - Uncommitted changes are discarded
 - On abort, changes stay in `.trellis-worktrees/` for manual inspection
@@ -435,15 +460,18 @@ Each eval:
 ## Resume Support
 
 ### State Persistence
+
 - `state.json` tracks completedPhases, currentPhase, phaseReports
 - On restart, phase runner skips already-completed phases
 - Allows resuming after partial failure
 
 ### Interactive Prompt (non-headless)
+
 - After each phase: "[Enter] continue [r] retry [s] skip [q] quit"
 - User can intervene mid-run
 - Choices recorded in state
 
 ### Headless Mode
+
 - No prompts; follows orchestrator recommendation
 - Used for CI/CD environments
