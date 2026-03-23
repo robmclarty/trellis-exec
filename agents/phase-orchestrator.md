@@ -74,15 +74,26 @@ After compacting, call `getState()` to verify your summary against the ground-tr
 
 ## Phase Completion
 
-After all tasks are processed:
+**CRITICAL: Do NOT call `writePhaseReport()` until you have attempted EVERY task in the phase.**
+Count the tasks in the task list. Process each one in dependency order. Only after all tasks have been dispatched (or marked failed after retries) should you write the report.
+
+After each task completes or fails, log progress:
+```js
+console.log(`Task ${taskId}: ${status} (${completedCount}/${totalCount})`)
+```
+
+After ALL tasks are processed:
 
 1. **Write the phase report.** Call `writePhaseReport()` with:
-   - `status`: "complete" or "partial"
+   - `status`: "complete" (all tasks passed) or "partial" (some failed)
    - `recommendedAction`: "advance", "retry", or "halt"
-   - Task outcomes (passed, failed, skipped)
-   - Summary of what was done
-   - If recommending retry: include `correctiveTasks` describing what needs to be fixed
-   - Handoff briefing for the next phase
+   - `tasksCompleted`: array of task IDs that passed
+   - `tasksFailed`: array of task IDs that failed
+   - `summary`: brief description of what was accomplished
+   - `handoff`: briefing for the next phase — what was created, key decisions, anything to watch for
+   - `correctiveTasks`: if recommending retry, describe what needs fixing
+   - `decisionsLog`: key decisions made during this phase
+   - `orchestratorAnalysis`: your assessment of the phase outcome
 
 2. **Signal complete.** After `writePhaseReport()`, your work is done. The phase runner handles quality review independently.
 

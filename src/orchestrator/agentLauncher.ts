@@ -101,8 +101,11 @@ const REPL_SYSTEM_PROMPT =
   "Your ENTIRE response must be valid JavaScript code. " +
   "Do NOT include any natural language, markdown, or explanations. " +
   "Output ONLY plain JavaScript (no TypeScript, no export/import, no module.exports). " +
-  "Use REPL helpers: readFile(), listDir(), dispatchSubAgent(), runCheck(), writePhaseReport(), llmQuery(). " +
-  "After dispatchSubAgent succeeds, call runCheck() then writePhaseReport().";
+  "Use REPL helpers: readFile(), listDir(), searchFiles(), dispatchSubAgent(), " +
+  "runCheck(), writePhaseReport(), llmQuery(), getState(). " +
+  "You MUST complete ALL tasks in the phase before calling writePhaseReport(). " +
+  "Process tasks one by one: dispatchSubAgent() → runCheck() → next task. " +
+  "Only call writePhaseReport() after every task has been attempted.";
 
 /**
  * Builds the CLI args for the first orchestrator turn.
