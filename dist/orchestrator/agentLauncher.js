@@ -56,8 +56,11 @@ const REPL_SYSTEM_PROMPT = "CRITICAL: You are communicating through a JavaScript
     "Your ENTIRE response must be valid JavaScript code. " +
     "Do NOT include any natural language, markdown, or explanations. " +
     "Output ONLY plain JavaScript (no TypeScript, no export/import, no module.exports). " +
-    "Use REPL helpers: readFile(), listDir(), dispatchSubAgent(), runCheck(), writePhaseReport(), llmQuery(). " +
-    "After dispatchSubAgent succeeds, call runCheck() then writePhaseReport().";
+    "Use REPL helpers: readFile(), listDir(), searchFiles(), dispatchSubAgent(), " +
+    "runCheck(), writePhaseReport(), llmQuery(), getState(). " +
+    "You MUST complete ALL tasks in the phase before calling writePhaseReport(). " +
+    "Process tasks one by one: dispatchSubAgent() → runCheck() → next task. " +
+    "Only call writePhaseReport() after every task has been attempted.";
 /**
  * Builds the CLI args for the first orchestrator turn.
  * Subsequent turns use --continue to resume the session.
@@ -167,7 +170,20 @@ export function createAgentLauncher(config) {
                 filesModified: [],
             };
         }
-        const result = await execClaude(args, projectRoot, prompt);
+        let result;
+        try {
+            result = await execClaude(args, projectRoot, prompt);
+        }
+        catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            return {
+                success: false,
+                output: `${message} Task "${subAgentConfig.taskId}" was NOT completed. ` +
+                    `Retry with simpler/smaller instructions, or mark this task as failed.`,
+                filesModified: [],
+                error: message,
+            };
+        }
         if (result.exitCode !== 0) {
             return {
                 success: false,

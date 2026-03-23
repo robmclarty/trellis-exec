@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { execSync } from "node:child_process";
 import path from "node:path";
 import os from "node:os";
-import { createWorktree, commitPhase, mergeWorktree, cleanupWorktree, } from "../worktreeManager.js";
+import { createWorktree, commitPhase, mergeWorktree, cleanupWorktree, getChangedFiles, getDiffContent, } from "../worktreeManager.js";
 function makeTempGitRepo() {
     const dir = mkdtempSync(path.join(os.tmpdir(), "trellis-wt-test-"));
     execSync("git init", { cwd: dir, stdio: "pipe" });
@@ -200,6 +200,94 @@ describe("worktreeManager", () => {
                 branchName: wt.branchName,
             });
             expect(result.success).toBe(true);
+        });
+    });
+    // -------------------------------------------------------------------------
+    // getChangedFiles
+    // -------------------------------------------------------------------------
+    describe("getChangedFiles", () => {
+        it("returns entries for modified tracked files", () => {
+            const wt = createWorktree({
+                projectRoot: repoDir,
+                branchName: "trellis-exec/changed/tracked",
+            });
+            expect(wt.success).toBe(true);
+            // Modify an existing committed file
+            writeFileSync(path.join(wt.worktreePath, "README.md"), "modified content");
+            const files = getChangedFiles(wt.worktreePath);
+            expect(files).toEqual(expect.arrayContaining([
+                expect.objectContaining({ path: "README.md", status: "M" }),
+            ]));
+            cleanupWorktree(wt.worktreePath);
+        });
+        it("returns entries for new untracked files", () => {
+            const wt = createWorktree({
+                projectRoot: repoDir,
+                branchName: "trellis-exec/changed/untracked",
+            });
+            expect(wt.success).toBe(true);
+            // Create a new file without git add
+            writeFileSync(path.join(wt.worktreePath, "brand-new.ts"), "export {}");
+            const files = getChangedFiles(wt.worktreePath);
+            expect(files).toEqual(expect.arrayContaining([
+                expect.objectContaining({ path: "brand-new.ts", status: "?" }),
+            ]));
+            cleanupWorktree(wt.worktreePath);
+        });
+        it("returns both tracked modifications and untracked files together", () => {
+            const wt = createWorktree({
+                projectRoot: repoDir,
+                branchName: "trellis-exec/changed/both",
+            });
+            expect(wt.success).toBe(true);
+            writeFileSync(path.join(wt.worktreePath, "README.md"), "modified");
+            writeFileSync(path.join(wt.worktreePath, "new-file.ts"), "new");
+            const files = getChangedFiles(wt.worktreePath);
+            const paths = files.map((f) => f.path);
+            expect(paths).toContain("README.md");
+            expect(paths).toContain("new-file.ts");
+            cleanupWorktree(wt.worktreePath);
+        });
+    });
+    // -------------------------------------------------------------------------
+    // getDiffContent
+    // -------------------------------------------------------------------------
+    describe("getDiffContent", () => {
+        it("includes diff content for tracked modifications", () => {
+            const wt = createWorktree({
+                projectRoot: repoDir,
+                branchName: "trellis-exec/diff/tracked",
+            });
+            expect(wt.success).toBe(true);
+            writeFileSync(path.join(wt.worktreePath, "README.md"), "changed content");
+            const diff = getDiffContent(wt.worktreePath);
+            expect(diff).toContain("changed content");
+            expect(diff).toContain("README.md");
+            cleanupWorktree(wt.worktreePath);
+        });
+        it("includes diff content for untracked new files", () => {
+            const wt = createWorktree({
+                projectRoot: repoDir,
+                branchName: "trellis-exec/diff/untracked",
+            });
+            expect(wt.success).toBe(true);
+            writeFileSync(path.join(wt.worktreePath, "new-file.ts"), "export const x = 42;");
+            const diff = getDiffContent(wt.worktreePath);
+            expect(diff).toContain("new-file.ts");
+            expect(diff).toContain("export const x = 42");
+            cleanupWorktree(wt.worktreePath);
+        });
+        it("returns non-empty string when only untracked files exist", () => {
+            const wt = createWorktree({
+                projectRoot: repoDir,
+                branchName: "trellis-exec/diff/only-untracked",
+            });
+            expect(wt.success).toBe(true);
+            writeFileSync(path.join(wt.worktreePath, "only-new.ts"), "brand new file");
+            const diff = getDiffContent(wt.worktreePath);
+            expect(diff.length).toBeGreaterThan(0);
+            expect(diff).toContain("only-new.ts");
+            cleanupWorktree(wt.worktreePath);
         });
     });
     // -------------------------------------------------------------------------

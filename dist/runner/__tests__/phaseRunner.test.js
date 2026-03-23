@@ -31,7 +31,7 @@ vi.mock("../../isolation/worktreeManager.js", () => ({
     getDiffContent: vi.fn(() => ""),
 }));
 // Import module under test and mocked modules AFTER vi.mock declarations
-import { runPhases, runSinglePhase, dryRunReport, promptForContinuation, buildPhaseContext, buildJudgePrompt, parseJudgeResult, buildFixPrompt, } from "../phaseRunner.js";
+import { runPhases, runSinglePhase, dryRunReport, promptForContinuation, buildPhaseContext, buildJudgePrompt, parseJudgeResult, buildFixPrompt, normalizeReport, isCommentOnly, createDefaultCheck, } from "../phaseRunner.js";
 import { createAgentLauncher } from "../../orchestrator/agentLauncher.js";
 import { createReplSession } from "../../orchestrator/replManager.js";
 import { createReplHelpers } from "../../orchestrator/replHelpers.js";
@@ -1291,6 +1291,199 @@ describe("phaseRunner", () => {
             const phase1Report = result.finalState.phaseReports.find((r) => r.phaseId === "phase-1");
             expect(phase1Report?.judgeAssessment?.passed).toBe(true);
             expect(phase1Report?.judgeAssessment?.issues).toEqual([]);
+        });
+    });
+    // -------------------------------------------------------------------------
+    // normalizeReport
+    // -------------------------------------------------------------------------
+    describe("normalizeReport", () => {
+        it("passes through correct schema fields unchanged (except phaseId injected)", () => {
+            const raw = {
+                phaseId: "wrong-id",
+                status: "complete",
+                summary: "All good",
+                tasksCompleted: ["t1", "t2"],
+                tasksFailed: [],
+                orchestratorAnalysis: "Went well",
+                recommendedAction: "advance",
+                correctiveTasks: [],
+                decisionsLog: ["decided X"],
+                handoff: "Ready for next phase",
+            };
+            const result = normalizeReport(raw, "phase-1");
+            expect(result.phaseId).toBe("phase-1");
+            expect(result.status).toBe("complete");
+            expect(result.summary).toBe("All good");
+            expect(result.tasksCompleted).toEqual(["t1", "t2"]);
+            expect(result.tasksFailed).toEqual([]);
+            expect(result.orchestratorAnalysis).toBe("Went well");
+            expect(result.recommendedAction).toBe("advance");
+            expect(result.correctiveTasks).toEqual([]);
+            expect(result.decisionsLog).toEqual(["decided X"]);
+            expect(result.handoff).toBe("Ready for next phase");
+        });
+        it("maps LLM-style taskOutcomes to tasksCompleted and tasksFailed", () => {
+            const raw = {
+                status: "complete",
+                recommendedAction: "advance",
+                taskOutcomes: [
+                    { taskId: "t1", status: "passed" },
+                    { taskId: "t2", status: "failed" },
+                    { taskId: "t3", status: "passed" },
+                ],
+            };
+            const result = normalizeReport(raw, "p1");
+            expect(result.tasksCompleted).toEqual(["t1", "t3"]);
+            expect(result.tasksFailed).toEqual(["t2"]);
+        });
+        it("maps handoffBriefing to handoff when handoff is absent", () => {
+            const raw = {
+                status: "complete",
+                recommendedAction: "advance",
+                handoffBriefing: "Next phase should do X",
+            };
+            const result = normalizeReport(raw, "p1");
+            expect(result.handoff).toBe("Next phase should do X");
+        });
+        it("prefers handoff over handoffBriefing when both present", () => {
+            const raw = {
+                status: "complete",
+                handoff: "canonical",
+                handoffBriefing: "should be ignored",
+            };
+            const result = normalizeReport(raw, "p1");
+            expect(result.handoff).toBe("canonical");
+        });
+        it("fills missing required fields with defaults", () => {
+            const raw = {};
+            const result = normalizeReport(raw, "p1");
+            expect(result.phaseId).toBe("p1");
+            expect(result.status).toBe("partial");
+            expect(result.summary).toBe("");
+            expect(result.tasksCompleted).toEqual([]);
+            expect(result.tasksFailed).toEqual([]);
+            expect(result.orchestratorAnalysis).toBe("");
+            expect(result.recommendedAction).toBe("advance");
+            expect(result.correctiveTasks).toEqual([]);
+            expect(result.decisionsLog).toEqual([]);
+            expect(result.handoff).toBe("");
+        });
+        it("always injects phaseId from argument, overriding raw value", () => {
+            const raw = { phaseId: "stale-id", status: "complete" };
+            const result = normalizeReport(raw, "correct-id");
+            expect(result.phaseId).toBe("correct-id");
+        });
+        it("defaults unrecognized status to 'partial'", () => {
+            const raw = { status: "done" };
+            const result = normalizeReport(raw, "p1");
+            expect(result.status).toBe("partial");
+        });
+        it("defaults unrecognized recommendedAction to 'advance'", () => {
+            const raw = { recommendedAction: "continue" };
+            const result = normalizeReport(raw, "p1");
+            expect(result.recommendedAction).toBe("advance");
+        });
+        it("does not use taskOutcomes when tasksCompleted is already present", () => {
+            const raw = {
+                status: "complete",
+                tasksCompleted: ["explicit-task"],
+                taskOutcomes: [
+                    { taskId: "t1", status: "passed" },
+                    { taskId: "t2", status: "failed" },
+                ],
+            };
+            const result = normalizeReport(raw, "p1");
+            expect(result.tasksCompleted).toEqual(["explicit-task"]);
+            expect(result.tasksFailed).toEqual([]);
+        });
+    });
+    describe("isCommentOnly", () => {
+        it("returns true for single-line comments only", () => {
+            expect(isCommentOnly("// just a comment\n// another comment")).toBe(true);
+        });
+        it("returns true for block comments only", () => {
+            expect(isCommentOnly("/* block comment */\n/* more */")).toBe(true);
+        });
+        it("returns false when real code follows a comment", () => {
+            expect(isCommentOnly("// comment\nconst x = 1")).toBe(false);
+        });
+        it("returns false when code precedes a comment", () => {
+            expect(isCommentOnly("var y = readFile('foo')\n// comment")).toBe(false);
+        });
+        it("returns true for empty string", () => {
+            expect(isCommentOnly("")).toBe(true);
+        });
+        it("returns true for comments with blank lines in between", () => {
+            expect(isCommentOnly("// comment\n\n// more comments")).toBe(true);
+        });
+        it("returns true for multi-line block comments", () => {
+            expect(isCommentOnly("/* multi\nline\nblock */")).toBe(true);
+        });
+        it("returns false when code follows closing */ on the same line", () => {
+            expect(isCommentOnly("/* comment */ const x = 1")).toBe(false);
+        });
+    });
+    // -------------------------------------------------------------------------
+    // createDefaultCheck
+    // -------------------------------------------------------------------------
+    describe("createDefaultCheck", () => {
+        let tmpDir;
+        beforeEach(() => {
+            tmpDir = mkdtempSync(join(tmpdir(), "default-check-"));
+        });
+        afterEach(() => {
+            rmSync(tmpDir, { recursive: true, force: true });
+        });
+        function makePhase(targetPathsPerTask) {
+            return {
+                id: "p1",
+                name: "Phase 1",
+                description: "test phase",
+                tasks: targetPathsPerTask.map((paths, i) => ({
+                    id: `t${i + 1}`,
+                    title: `Task ${i + 1}`,
+                    description: "",
+                    dependsOn: [],
+                    specSections: [],
+                    targetPaths: paths,
+                    acceptanceCriteria: [],
+                    subAgentType: "code",
+                    status: "pending",
+                })),
+            };
+        }
+        it("returns passed=true when all phase targetPaths exist as files", async () => {
+            writeFileSync(join(tmpDir, "a.ts"), "");
+            writeFileSync(join(tmpDir, "b.ts"), "");
+            const phase = makePhase([["a.ts"], ["b.ts"]]);
+            const result = await createDefaultCheck(tmpDir, phase).run();
+            expect(result.passed).toBe(true);
+            expect(result.output).toContain("2 target paths exist");
+            expect(result.exitCode).toBe(0);
+        });
+        it("returns passed=false with list of missing files when some targetPaths don't exist", async () => {
+            writeFileSync(join(tmpDir, "a.ts"), "");
+            // b.ts intentionally missing
+            const phase = makePhase([["a.ts", "b.ts"]]);
+            const result = await createDefaultCheck(tmpDir, phase).run();
+            expect(result.passed).toBe(false);
+            expect(result.output).toContain("b.ts");
+            expect(result.output).toContain("Missing files (1/2)");
+            expect(result.exitCode).toBe(1);
+        });
+        it("returns passed=true when phase has no targetPaths", async () => {
+            const phase = makePhase([[], []]);
+            const result = await createDefaultCheck(tmpDir, phase).run();
+            expect(result.passed).toBe(true);
+            expect(result.output).toContain("No target paths to check");
+            expect(result.exitCode).toBe(0);
+        });
+        it("handles directory-style targetPaths (check directory exists)", async () => {
+            mkdirSync(join(tmpDir, "src"), { recursive: true });
+            const phase = makePhase([["src"]]);
+            const result = await createDefaultCheck(tmpDir, phase).run();
+            expect(result.passed).toBe(true);
+            expect(result.exitCode).toBe(0);
         });
     });
 });
