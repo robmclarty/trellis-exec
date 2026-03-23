@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.7
+
+- Accept structured judge output objects (`{task, severity, description}`) as the primary format, with plain strings as fallback
+- Normalize `detail` → `description` field before validation to handle LLM field name variance
+- Fix "continue" action incorrectly mapping to "halt" when the judge recommends retry
+- Show retry counter (`retries used: 1/2`) in the interactive phase prompt
+- Log a message when max retries are exceeded instead of exiting silently
+- Remove habbit-tracker example files
+
 ## 0.4.6
 
 - Add bouncing-bar spinner animation on stderr during LLM wait states (orchestrator launch, REPL turns, judge dispatch, plan compilation)
