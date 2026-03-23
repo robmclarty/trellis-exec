@@ -78,6 +78,7 @@ After compacting, call `getState()` to verify your summary against the ground-tr
 Count the tasks in the task list. Process each one in dependency order. Only after all tasks have been dispatched (or marked failed after retries) should you write the report.
 
 After each task completes or fails, log progress:
+
 ```js
 console.log(`Task ${taskId}: ${status} (${completedCount}/${totalCount})`)
 ```
