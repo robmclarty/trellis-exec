@@ -59,6 +59,7 @@ import {
   buildFixPrompt,
   normalizeReport,
   isCommentOnly,
+  createDefaultCheck,
 } from "../phaseRunner.js";
 import type { RunContext } from "../../cli.js";
 import { createAgentLauncher } from "../../orchestrator/agentLauncher.js";
@@ -1665,6 +1666,78 @@ describe("phaseRunner", () => {
 
     it("returns false when code follows closing */ on the same line", () => {
       expect(isCommentOnly("/* comment */ const x = 1")).toBe(false);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // createDefaultCheck
+  // -------------------------------------------------------------------------
+
+  describe("createDefaultCheck", () => {
+    let tmpDir: string;
+
+    beforeEach(() => {
+      tmpDir = mkdtempSync(join(tmpdir(), "default-check-"));
+    });
+
+    afterEach(() => {
+      rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    function makePhase(targetPathsPerTask: string[][]): Phase {
+      return {
+        id: "p1",
+        name: "Phase 1",
+        description: "test phase",
+        tasks: targetPathsPerTask.map((paths, i) => ({
+          id: `t${i + 1}`,
+          title: `Task ${i + 1}`,
+          description: "",
+          dependsOn: [],
+          specSections: [],
+          targetPaths: paths,
+          acceptanceCriteria: [],
+          subAgentType: "code",
+          status: "pending" as const,
+        })),
+      };
+    }
+
+    it("returns passed=true when all phase targetPaths exist as files", async () => {
+      writeFileSync(join(tmpDir, "a.ts"), "");
+      writeFileSync(join(tmpDir, "b.ts"), "");
+      const phase = makePhase([["a.ts"], ["b.ts"]]);
+      const result = await createDefaultCheck(tmpDir, phase).run();
+      expect(result.passed).toBe(true);
+      expect(result.output).toContain("2 target paths exist");
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("returns passed=false with list of missing files when some targetPaths don't exist", async () => {
+      writeFileSync(join(tmpDir, "a.ts"), "");
+      // b.ts intentionally missing
+      const phase = makePhase([["a.ts", "b.ts"]]);
+      const result = await createDefaultCheck(tmpDir, phase).run();
+      expect(result.passed).toBe(false);
+      expect(result.output).toContain("b.ts");
+      expect(result.output).toContain("Missing files (1/2)");
+      expect(result.exitCode).toBe(1);
+    });
+
+    it("returns passed=true when phase has no targetPaths", async () => {
+      const phase = makePhase([[], []]);
+      const result = await createDefaultCheck(tmpDir, phase).run();
+      expect(result.passed).toBe(true);
+      expect(result.output).toContain("No target paths to check");
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("handles directory-style targetPaths (check directory exists)", async () => {
+      mkdirSync(join(tmpDir, "src"), { recursive: true });
+      const phase = makePhase([["src"]]);
+      const result = await createDefaultCheck(tmpDir, phase).run();
+      expect(result.passed).toBe(true);
+      expect(result.exitCode).toBe(0);
     });
   });
 

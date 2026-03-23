@@ -1,8 +1,8 @@
-import { copyFileSync, unlinkSync, mkdirSync } from "node:fs";
+import { copyFileSync, unlinkSync, mkdirSync, statSync } from "node:fs";
 import { resolve, basename, join } from "node:path";
 import { createInterface } from "node:readline";
 import type { TasksJson, Phase, Task } from "../types/tasks.js";
-import type { SharedState, PhaseReport, JudgeAssessment } from "../types/state.js";
+import type { SharedState, PhaseReport, JudgeAssessment, CheckResult } from "../types/state.js";
 import { JudgeAssessmentSchema } from "../types/state.js";
 import type { TrajectoryLogger } from "../logging/trajectoryLogger.js";
 import type { OrchestratorHandle } from "../orchestrator/agentLauncher.js";
@@ -879,6 +879,41 @@ async function judgePhase(config: {
 }
 
 // ---------------------------------------------------------------------------
+// Default file-existence check (used when no --check command is provided)
+// ---------------------------------------------------------------------------
+
+export function createDefaultCheck(
+  projectRoot: string,
+  phase: Phase,
+): { run: () => Promise<CheckResult> } {
+  const allTargetPaths = phase.tasks.flatMap((t) => t.targetPaths);
+  return {
+    run: async (): Promise<CheckResult> => {
+      if (allTargetPaths.length === 0) {
+        return { passed: true, output: "No target paths to check", exitCode: 0 };
+      }
+      const missing: string[] = [];
+      for (const p of allTargetPaths) {
+        const fullPath = resolve(projectRoot, p);
+        try {
+          statSync(fullPath);
+        } catch {
+          missing.push(p);
+        }
+      }
+      if (missing.length === 0) {
+        return { passed: true, output: `All ${allTargetPaths.length} target paths exist`, exitCode: 0 };
+      }
+      return {
+        passed: false,
+        output: `Missing files (${missing.length}/${allTargetPaths.length}): ${missing.join(", ")}`,
+        exitCode: 1,
+      };
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Single phase execution
 // ---------------------------------------------------------------------------
 
@@ -901,6 +936,8 @@ async function executePhase(
     ? createCheckRunner({ command: ctx.checkCommand, cwd: projectRoot })
     : null;
 
+  const defaultCheck = !checkRunner ? createDefaultCheck(projectRoot, phase) : null;
+
   let capturedReport: PhaseReport | null = null;
 
   const baseHelpers = createReplHelpers({
@@ -916,7 +953,9 @@ async function executePhase(
     },
     runCheck: checkRunner
       ? () => checkRunner.run()
-      : baseHelpers.runCheck,
+      : defaultCheck
+        ? () => defaultCheck.run()
+        : baseHelpers.runCheck,
     llmQuery: (prompt: string, options?: { model?: string }) =>
       launcher.llmQuery(prompt, options),
   };
