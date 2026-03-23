@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.5
+
+- Add `normalizeReport()` to validate and map orchestrator phase reports to the canonical schema, fixing Zod validation errors from LLM-style field names
+- Detect and skip comment-only code blocks in the REPL turn loop; log raw orchestrator responses in verbose mode for debugging
+- Increase verbose output limits from 200 to 500/1000 chars for code/results
+- Add default file-existence check when no `--check` command is provided, verifying all phase `targetPaths` exist
+- Include untracked files in `getChangedFiles()` and `getDiffContent()` so the judge reviews new files created by sub-agents
+- Improve timeout error messages to prevent orchestrator from writing false "complete" reports after sub-agent timeouts
+- Enforce all-tasks iteration in orchestrator prompts — `writePhaseReport()` must not be called until every task is attempted
+
 ## 0.4.4
 
 - Document judge → fix correction loop in phase-runner.md
