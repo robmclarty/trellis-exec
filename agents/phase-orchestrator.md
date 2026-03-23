@@ -76,21 +76,15 @@ After compacting, call `getState()` to verify your summary against the ground-tr
 
 After all tasks are processed:
 
-1. **Invoke the judge.** Dispatch the judge sub-agent via `dispatchSubAgent({ type: 'judge', ... })` with the list of modified files, relevant spec sections, and task descriptions.
-
-2. **Parse the assessment.** The judge returns `{ passed, issues, suggestions }`.
-
-3. **Synthesize.** Combine the judge's findings with your own execution context: why certain issues exist, whether flagged problems are intentional tradeoffs, what corrective action you recommend. Add interpretive context the judge lacks.
-
-4. **Write the phase report.** Call `writePhaseReport()` with:
+1. **Write the phase report.** Call `writePhaseReport()` with:
    - `status`: "complete" or "partial"
    - `recommendedAction`: "advance", "retry", or "halt"
    - Task outcomes (passed, failed, skipped)
-   - Judge assessment + your synthesis
+   - Summary of what was done
    - If recommending retry: include `correctiveTasks` describing what needs to be fixed
    - Handoff briefing for the next phase
 
-5. **Signal complete.** After `writePhaseReport()`, your work is done. The phase runner takes over.
+2. **Signal complete.** After `writePhaseReport()`, your work is done. The phase runner handles quality review independently.
 
 ## Error Handling
 

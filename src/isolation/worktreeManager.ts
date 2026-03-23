@@ -178,6 +178,59 @@ export function mergeWorktree(config: MergeConfig): MergeResult {
  *
  * @param worktreePath - Absolute path to the worktree to remove
  */
+export type ChangedFile = {
+  path: string;
+  status: "A" | "M" | "D" | "R" | (string & {});
+};
+
+/**
+ * Returns the list of files changed relative to HEAD.
+ *
+ * In worktree mode the worktree branches off HEAD at creation time,
+ * so `git diff --name-status HEAD` captures exactly what the
+ * orchestrator changed during the phase.
+ *
+ * @param cwd - Working directory (worktree or project root)
+ * @returns Array of changed files with their git status letter
+ */
+export function getChangedFiles(cwd: string): ChangedFile[] {
+  try {
+    const output = execFileSync(
+      "git",
+      ["diff", "--name-status", "HEAD"],
+      { cwd, encoding: "utf-8", stdio: "pipe" },
+    );
+    return output
+      .trim()
+      .split("\n")
+      .filter((line) => line.length > 0)
+      .map((line) => {
+        const [status, ...rest] = line.split("\t");
+        return { path: rest.join("\t"), status: status as ChangedFile["status"] };
+      });
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Returns the full unified diff relative to HEAD.
+ *
+ * @param cwd - Working directory (worktree or project root)
+ * @returns The unified diff string, or empty string on failure
+ */
+export function getDiffContent(cwd: string): string {
+  try {
+    return execFileSync(
+      "git",
+      ["diff", "HEAD"],
+      { cwd, encoding: "utf-8", stdio: "pipe", maxBuffer: 10 * 1024 * 1024 },
+    );
+  } catch {
+    return "";
+  }
+}
+
 export function cleanupWorktree(worktreePath: string): void {
   // Derive project root: worktreePath is always <projectRoot>/.trellis-worktrees/<slug>
   const projectRoot = resolve(worktreePath, "..", "..");

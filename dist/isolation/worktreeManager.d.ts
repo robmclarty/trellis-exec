@@ -57,5 +57,27 @@ export declare function mergeWorktree(config: MergeConfig): MergeResult;
  *
  * @param worktreePath - Absolute path to the worktree to remove
  */
+export type ChangedFile = {
+    path: string;
+    status: "A" | "M" | "D" | "R" | (string & {});
+};
+/**
+ * Returns the list of files changed relative to HEAD.
+ *
+ * In worktree mode the worktree branches off HEAD at creation time,
+ * so `git diff --name-status HEAD` captures exactly what the
+ * orchestrator changed during the phase.
+ *
+ * @param cwd - Working directory (worktree or project root)
+ * @returns Array of changed files with their git status letter
+ */
+export declare function getChangedFiles(cwd: string): ChangedFile[];
+/**
+ * Returns the full unified diff relative to HEAD.
+ *
+ * @param cwd - Working directory (worktree or project root)
+ * @returns The unified diff string, or empty string on failure
+ */
+export declare function getDiffContent(cwd: string): string;
 export declare function cleanupWorktree(worktreePath: string): void;
 //# sourceMappingURL=worktreeManager.d.ts.map

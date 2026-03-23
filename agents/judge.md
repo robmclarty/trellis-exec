@@ -1,7 +1,7 @@
 ---
 name: judge
 description: Evaluate phase changes for spec compliance
-model: sonnet
+model: opus
 tools: [Read, Glob, Grep]
 ---
 

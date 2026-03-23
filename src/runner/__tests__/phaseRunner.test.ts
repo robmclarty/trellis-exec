@@ -43,6 +43,8 @@ vi.mock("../../isolation/worktreeManager.js", () => ({
   commitPhase: vi.fn(() => true),
   mergeWorktree: vi.fn(() => ({ success: true })),
   cleanupWorktree: vi.fn(),
+  getChangedFiles: vi.fn(() => []),
+  getDiffContent: vi.fn(() => ""),
 }));
 
 // Import module under test and mocked modules AFTER vi.mock declarations
@@ -52,11 +54,15 @@ import {
   dryRunReport,
   promptForContinuation,
   buildPhaseContext,
+  buildJudgePrompt,
+  parseJudgeResult,
+  buildFixPrompt,
 } from "../phaseRunner.js";
 import type { RunContext } from "../../cli.js";
 import { createAgentLauncher } from "../../orchestrator/agentLauncher.js";
 import { createReplSession } from "../../orchestrator/replManager.js";
 import { createReplHelpers } from "../../orchestrator/replHelpers.js";
+import { getChangedFiles, getDiffContent } from "../../isolation/worktreeManager.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -1040,6 +1046,327 @@ describe("phaseRunner", () => {
       const context = buildPhaseContext(phase, state, "", ctx);
       expect(context).toContain("## Guidelines Reference");
       expect(context).toContain("none configured");
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Judge loop — pure function tests
+  // -------------------------------------------------------------------------
+
+  describe("parseJudgeResult", () => {
+    it("parses valid JSON directly", () => {
+      const result = parseJudgeResult(
+        '{ "passed": true, "issues": [], "suggestions": ["nice code"] }',
+      );
+      expect(result.passed).toBe(true);
+      expect(result.issues).toEqual([]);
+      expect(result.suggestions).toEqual(["nice code"]);
+    });
+
+    it("extracts JSON from markdown fences", () => {
+      const result = parseJudgeResult(
+        'Here is my assessment:\n\n```json\n{ "passed": false, "issues": ["Bug: off-by-one"], "suggestions": [] }\n```\n',
+      );
+      expect(result.passed).toBe(false);
+      expect(result.issues).toEqual(["Bug: off-by-one"]);
+    });
+
+    it("finds JSON object with passed field in mixed output", () => {
+      const result = parseJudgeResult(
+        'I reviewed the code.\n{ "passed": true, "issues": [], "suggestions": [] }\nThat is all.',
+      );
+      expect(result.passed).toBe(true);
+    });
+
+    it("returns failure assessment on unparseable output", () => {
+      const result = parseJudgeResult("This is just text with no JSON");
+      expect(result.passed).toBe(false);
+      expect(result.issues.length).toBe(1);
+      expect(result.issues[0]).toContain("unparseable");
+    });
+  });
+
+  describe("buildJudgePrompt", () => {
+    it("includes changed files and task acceptance criteria", () => {
+      const phase: Phase = {
+        id: "phase-1",
+        name: "setup",
+        description: "Set up project",
+        tasks: [
+          {
+            id: "task-1",
+            title: "Init",
+            description: "Initialize",
+            dependsOn: [],
+            specSections: ["§1"],
+            targetPaths: ["package.json"],
+            acceptanceCriteria: ["npm install exits 0"],
+            subAgentType: "implement",
+            status: "pending",
+          },
+        ],
+      };
+
+      const prompt = buildJudgePrompt({
+        changedFiles: [
+          { path: "package.json", status: "A" },
+          { path: "src/index.ts", status: "M" },
+        ],
+        diffContent: "+added line",
+        phase,
+        orchestratorReport: makePhaseReport("phase-1"),
+      });
+
+      expect(prompt).toContain("[A] package.json");
+      expect(prompt).toContain("[M] src/index.ts");
+      expect(prompt).toContain("npm install exits 0");
+      expect(prompt).toContain("+added line");
+      expect(prompt).toContain("not authoritative");
+    });
+  });
+
+  describe("buildFixPrompt", () => {
+    it("includes numbered issues and phase context", () => {
+      const phase: Phase = {
+        id: "phase-1",
+        name: "setup",
+        description: "Set up project",
+        tasks: [],
+      };
+
+      const prompt = buildFixPrompt(
+        ["Missing export in utils.ts", "Wrong return type in handler"],
+        phase,
+      );
+
+      expect(prompt).toContain("1. Missing export in utils.ts");
+      expect(prompt).toContain("2. Wrong return type in handler");
+      expect(prompt).toContain("phase-1");
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Judge loop — integration with runPhases
+  // -------------------------------------------------------------------------
+
+  describe("runPhases — judge loop", () => {
+    it("judge passes: phase advances normally", async () => {
+      const tasksJson = makeTasksJson();
+      tmpDir = setupTmpDir(tasksJson);
+      const config = makeDefaultConfig(tmpDir);
+
+      // Mock getChangedFiles to return some files (triggers judge)
+      const mockGetChangedFiles = getChangedFiles as ReturnType<typeof vi.fn>;
+      mockGetChangedFiles.mockReturnValue([
+        { path: "src/index.ts", status: "A" },
+      ]);
+      const mockGetDiffContent = getDiffContent as ReturnType<typeof vi.fn>;
+      mockGetDiffContent.mockReturnValue("+new file content");
+
+      const reports = new Map<string, PhaseReport>([
+        [
+          "phase-1",
+          makePhaseReport("phase-1", {
+            tasksCompleted: ["task-1-1", "task-1-2"],
+          }),
+        ],
+        [
+          "phase-2",
+          makePhaseReport("phase-2", {
+            tasksCompleted: ["task-2-1", "task-2-2"],
+          }),
+        ],
+      ]);
+
+      // Set up mocks with judge-aware dispatchSubAgent
+      const mockCreateAgentLauncher = createAgentLauncher as ReturnType<typeof vi.fn>;
+      const mockCreateReplSession = createReplSession as ReturnType<typeof vi.fn>;
+      const mockCreateReplHelpers = createReplHelpers as ReturnType<typeof vi.fn>;
+
+      mockCreateReplHelpers.mockImplementation(() => createMockHelpers());
+
+      let launchCount = 0;
+      const phaseIds = [...reports.keys()];
+
+      mockCreateAgentLauncher.mockImplementation(() => ({
+        dispatchSubAgent: async (subConfig: { type: string }) => {
+          if (subConfig.type === "judge") {
+            return {
+              success: true,
+              output: JSON.stringify({
+                passed: true,
+                issues: [],
+                suggestions: ["looks good"],
+              }),
+              filesModified: [],
+            };
+          }
+          return { success: true, output: "", filesModified: [] };
+        },
+        llmQuery: async () => "mock",
+        launchOrchestrator: async () => {
+          const phaseId = phaseIds[launchCount] ?? phaseIds[phaseIds.length - 1]!;
+          launchCount++;
+          const report = reports.get(phaseId)!;
+          return createMockOrchestrator([
+            'console.log("working...")',
+            `writePhaseReport(${JSON.stringify(report)})`,
+          ]);
+        },
+      }));
+
+      mockCreateReplSession.mockImplementation(
+        (sessionConfig: { helpers: ReplHelpers }) => {
+          let consecutiveErrors = 0;
+          return {
+            async eval(code: string): Promise<ReplEvalResult> {
+              if (code.includes("writePhaseReport(")) {
+                try {
+                  const jsonMatch = code.match(/writePhaseReport\((.+)\)/s);
+                  if (jsonMatch?.[1]) {
+                    sessionConfig.helpers.writePhaseReport(JSON.parse(jsonMatch[1]));
+                  }
+                } catch {}
+                consecutiveErrors = 0;
+                return { success: true, output: "Report written.", truncated: false, duration: 1 };
+              }
+              consecutiveErrors = 0;
+              return { success: true, output: "ok", truncated: false, duration: 1 };
+            },
+            restoreScaffold() {},
+            getConsecutiveErrors() { return consecutiveErrors; },
+            resetConsecutiveErrors() { consecutiveErrors = 0; },
+            destroy() {},
+          } satisfies ReplSession;
+        },
+      );
+
+      const result = await runPhases(config, tasksJson);
+
+      expect(result.success).toBe(true);
+      expect(result.phasesCompleted).toContain("phase-1");
+      expect(result.phasesCompleted).toContain("phase-2");
+      // Judge assessment should be attached to reports
+      const phase1Report = result.finalState.phaseReports.find(
+        (r) => r.phaseId === "phase-1",
+      );
+      expect(phase1Report?.judgeAssessment?.passed).toBe(true);
+    });
+
+    it("judge fails: downgrades recommendation to retry", async () => {
+      const tasksJson = makeTasksJson();
+      tmpDir = setupTmpDir(tasksJson);
+      const config = { ...makeDefaultConfig(tmpDir), maxRetries: 0 };
+
+      const mockGetChangedFiles = getChangedFiles as ReturnType<typeof vi.fn>;
+      mockGetChangedFiles.mockReturnValue([
+        { path: "src/a.ts", status: "A" },
+      ]);
+      const mockGetDiffContent = getDiffContent as ReturnType<typeof vi.fn>;
+      mockGetDiffContent.mockReturnValue("+content");
+
+      const mockCreateAgentLauncher = createAgentLauncher as ReturnType<typeof vi.fn>;
+      const mockCreateReplSession = createReplSession as ReturnType<typeof vi.fn>;
+      const mockCreateReplHelpers = createReplHelpers as ReturnType<typeof vi.fn>;
+
+      mockCreateReplHelpers.mockImplementation(() => createMockHelpers());
+
+      const phase1Report = makePhaseReport("phase-1", {
+        tasksCompleted: ["task-1-1", "task-1-2"],
+      });
+
+      mockCreateAgentLauncher.mockImplementation(() => ({
+        dispatchSubAgent: async (subConfig: { type: string }) => {
+          if (subConfig.type === "judge") {
+            return {
+              success: true,
+              output: JSON.stringify({
+                passed: false,
+                issues: ["Spec violation: missing export"],
+                suggestions: [],
+              }),
+              filesModified: [],
+            };
+          }
+          if (subConfig.type === "fix") {
+            return { success: true, output: "Fixed.", filesModified: [] };
+          }
+          return { success: true, output: "", filesModified: [] };
+        },
+        llmQuery: async () => "mock",
+        launchOrchestrator: async () =>
+          createMockOrchestrator([
+            'console.log("work")',
+            `writePhaseReport(${JSON.stringify(phase1Report)})`,
+          ]),
+      }));
+
+      mockCreateReplSession.mockImplementation(
+        (sessionConfig: { helpers: ReplHelpers }) => {
+          let consecutiveErrors = 0;
+          return {
+            async eval(code: string): Promise<ReplEvalResult> {
+              if (code.includes("writePhaseReport(")) {
+                try {
+                  const jsonMatch = code.match(/writePhaseReport\((.+)\)/s);
+                  if (jsonMatch?.[1]) {
+                    sessionConfig.helpers.writePhaseReport(JSON.parse(jsonMatch[1]));
+                  }
+                } catch {}
+                return { success: true, output: "ok", truncated: false, duration: 1 };
+              }
+              consecutiveErrors = 0;
+              return { success: true, output: "ok", truncated: false, duration: 1 };
+            },
+            restoreScaffold() {},
+            getConsecutiveErrors() { return consecutiveErrors; },
+            resetConsecutiveErrors() { consecutiveErrors = 0; },
+            destroy() {},
+          } satisfies ReplSession;
+        },
+      );
+
+      const result = await runPhases(config, tasksJson);
+
+      // With maxRetries=0, judge failure should halt
+      expect(result.success).toBe(false);
+      expect(result.phasesFailed).toContain("phase-1");
+    });
+
+    it("no changed files: judge is skipped", async () => {
+      const tasksJson = makeTasksJson();
+      tmpDir = setupTmpDir(tasksJson);
+      const config = makeDefaultConfig(tmpDir);
+
+      // getChangedFiles returns empty (default mock behavior)
+      const mockGetChangedFiles = getChangedFiles as ReturnType<typeof vi.fn>;
+      mockGetChangedFiles.mockReturnValue([]);
+
+      const reports = new Map<string, PhaseReport>([
+        [
+          "phase-1",
+          makePhaseReport("phase-1", {
+            tasksCompleted: ["task-1-1", "task-1-2"],
+          }),
+        ],
+        [
+          "phase-2",
+          makePhaseReport("phase-2", {
+            tasksCompleted: ["task-2-1", "task-2-2"],
+          }),
+        ],
+      ]);
+      setupMocksForSuccess(reports);
+
+      const result = await runPhases(config, tasksJson);
+
+      expect(result.success).toBe(true);
+      // Judge should have trivially passed (no files)
+      const phase1Report = result.finalState.phaseReports.find(
+        (r) => r.phaseId === "phase-1",
+      );
+      expect(phase1Report?.judgeAssessment?.passed).toBe(true);
+      expect(phase1Report?.judgeAssessment?.issues).toEqual([]);
     });
   });
 

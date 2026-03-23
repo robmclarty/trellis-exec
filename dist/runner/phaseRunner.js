@@ -1,10 +1,11 @@
 import { copyFileSync, unlinkSync, mkdirSync } from "node:fs";
 import { resolve, basename, join } from "node:path";
 import { createInterface } from "node:readline";
+import { JudgeAssessmentSchema } from "../types/state.js";
 import { initState, loadState, saveState, updateStateAfterPhase, } from "./stateManager.js";
 import { validateDependencies, resolveExecutionOrder, detectTargetPathOverlaps, } from "./scheduler.js";
 import { createTrajectoryLogger } from "../logging/trajectoryLogger.js";
-import { createWorktree, commitPhase, mergeWorktree, cleanupWorktree, } from "../isolation/worktreeManager.js";
+import { createWorktree, commitPhase, mergeWorktree, cleanupWorktree, getChangedFiles, getDiffContent, } from "../isolation/worktreeManager.js";
 import { createCheckRunner } from "../verification/checkRunner.js";
 import { createAgentLauncher } from "../orchestrator/agentLauncher.js";
 import { createReplHelpers } from "../orchestrator/replHelpers.js";
@@ -228,6 +229,9 @@ async function replTurnLoop(orchestrator, repl, logger, phaseId, turnLimit, maxC
         if (!orchestrator.isAlive()) {
             return { reason: "dead" };
         }
+        if (turnNumber === 1) {
+            console.log("Waiting for orchestrator first response (this may take a moment)…");
+        }
         const rawResponse = await orchestrator.send(previousOutput);
         const code = extractCode(rawResponse);
         // Check if writePhaseReport was triggered by the orchestrator's response
@@ -312,6 +316,199 @@ function cleanupCopiedFile(file) {
         }
     }
 }
+export function buildJudgePrompt(config) {
+    const lines = [];
+    lines.push("# Judge Review");
+    lines.push("");
+    lines.push("## Changed Files (from git diff — system-verified)");
+    lines.push("");
+    for (const f of config.changedFiles) {
+        lines.push(`- [${f.status}] ${f.path}`);
+    }
+    lines.push("");
+    lines.push("## Diff");
+    lines.push("");
+    lines.push("```diff");
+    lines.push(config.diffContent);
+    lines.push("```");
+    lines.push("");
+    lines.push("## Phase Tasks & Acceptance Criteria");
+    lines.push("");
+    for (const task of config.phase.tasks) {
+        lines.push(`### ${task.id}: ${task.title}`);
+        lines.push(`Description: ${task.description}`);
+        lines.push(`Target paths: ${task.targetPaths.join(", ")}`);
+        lines.push(`Spec sections: ${task.specSections.join(", ")}`);
+        lines.push("Acceptance criteria:");
+        for (const criterion of task.acceptanceCriteria) {
+            lines.push(`- ${criterion}`);
+        }
+        lines.push("");
+    }
+    lines.push("## Spec & Guidelines");
+    lines.push("");
+    lines.push("Read `spec.md` and `guidelines.md` in the project root for full context.");
+    lines.push("");
+    lines.push("## Orchestrator Self-Report (context only — not authoritative)");
+    lines.push("");
+    lines.push(`Status: ${config.orchestratorReport.status}`);
+    lines.push(`Summary: ${config.orchestratorReport.summary}`);
+    lines.push(`Tasks completed: ${config.orchestratorReport.tasksCompleted.join(", ") || "none"}`);
+    lines.push(`Tasks failed: ${config.orchestratorReport.tasksFailed.join(", ") || "none"}`);
+    lines.push("");
+    lines.push("## Instructions");
+    lines.push("");
+    lines.push("Evaluate the changes against the spec and acceptance criteria. " +
+        "Return a JSON assessment in this exact format:");
+    lines.push("");
+    lines.push("```json");
+    lines.push('{  "passed": true | false,  "issues": [...],  "suggestions": [...] }');
+    lines.push("```");
+    lines.push("");
+    lines.push("Set `passed` to false only for must-fix problems: spec violations, bugs, " +
+        "missing requirements, incomplete tasks. Style suggestions alone do not cause failure.");
+    return lines.join("\n");
+}
+export function parseJudgeResult(output) {
+    // Try to extract JSON from the output (may be in markdown fences)
+    const fenceMatch = output.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+    const jsonStr = fenceMatch ? fenceMatch[1] : output;
+    try {
+        const parsed = JSON.parse(jsonStr.trim());
+        return JudgeAssessmentSchema.parse(parsed);
+    }
+    catch {
+        // Try to find any JSON object in the output
+        const objectMatch = output.match(/\{[\s\S]*"passed"[\s\S]*\}/);
+        if (objectMatch) {
+            try {
+                const parsed = JSON.parse(objectMatch[0]);
+                return JudgeAssessmentSchema.parse(parsed);
+            }
+            catch {
+                // Fall through to failure
+            }
+        }
+        return {
+            passed: false,
+            issues: [
+                `Judge output was unparseable: ${output.slice(0, 200)}`,
+            ],
+            suggestions: [],
+        };
+    }
+}
+export function buildFixPrompt(issues, phase) {
+    const lines = [];
+    lines.push("# Fix Request");
+    lines.push("");
+    lines.push("The judge found the following issues after reviewing this phase's work. " +
+        "Fix each one. Do not refactor or restructure beyond what is needed.");
+    lines.push("");
+    lines.push("## Issues to Fix");
+    lines.push("");
+    for (let i = 0; i < issues.length; i++) {
+        lines.push(`${i + 1}. ${issues[i]}`);
+    }
+    lines.push("");
+    lines.push("## Context");
+    lines.push("");
+    lines.push(`Phase: ${phase.name} (${phase.id})`);
+    lines.push("Read `spec.md` and `guidelines.md` in the project root for full spec context.");
+    lines.push("");
+    lines.push("## Output");
+    lines.push("");
+    lines.push("After fixing, print a brief summary of what you changed for each issue.");
+    return lines.join("\n");
+}
+async function judgePhase(config) {
+    const maxCorrections = config.maxCorrections ?? 2;
+    const { phase, report, projectRoot, ctx, logger } = config;
+    let changedFiles = getChangedFiles(projectRoot);
+    if (changedFiles.length === 0) {
+        return {
+            assessment: { passed: true, issues: [], suggestions: [] },
+            correctionAttempts: 0,
+        };
+    }
+    const launcher = createAgentLauncher({
+        pluginRoot: ctx.pluginRoot,
+        projectRoot,
+        dryRun: ctx.dryRun,
+    });
+    let assessment = { passed: true, issues: [], suggestions: [] };
+    for (let attempt = 0; attempt <= maxCorrections; attempt++) {
+        const diffContent = getDiffContent(projectRoot);
+        const prompt = buildJudgePrompt({
+            changedFiles,
+            diffContent,
+            phase,
+            orchestratorReport: report,
+        });
+        if (ctx.verbose) {
+            console.log(`[judge] attempt ${attempt}, reviewing ${changedFiles.length} changed file(s)`);
+        }
+        const startTime = Date.now();
+        const result = await launcher.dispatchSubAgent({
+            type: "judge",
+            model: "opus",
+            taskId: `${phase.id}-judge-${attempt}`,
+            instructions: prompt,
+            filePaths: changedFiles.map((f) => f.path),
+            outputPaths: [],
+        });
+        const duration = Date.now() - startTime;
+        logger.append({
+            phaseId: phase.id,
+            turnNumber: 0,
+            type: "judge_invoke",
+            input: { attempt, fileCount: changedFiles.length },
+            output: result.output.slice(0, 2000),
+            duration,
+        });
+        assessment = parseJudgeResult(result.output);
+        if (assessment.passed) {
+            if (ctx.verbose) {
+                console.log(`[judge] passed on attempt ${attempt}`);
+            }
+            return { assessment, correctionAttempts: attempt };
+        }
+        // Judge found issues
+        console.log(`Judge found ${assessment.issues.length} issue(s) in phase "${phase.id}":`);
+        for (const issue of assessment.issues) {
+            console.log(`  - ${issue}`);
+        }
+        if (attempt >= maxCorrections) {
+            break;
+        }
+        // Dispatch fix agent
+        console.log(`Dispatching fix agent (attempt ${attempt + 1})…`);
+        const fixPrompt = buildFixPrompt(assessment.issues, phase);
+        await launcher.dispatchSubAgent({
+            type: "fix",
+            taskId: `${phase.id}-fix-${attempt}`,
+            instructions: fixPrompt,
+            filePaths: changedFiles.map((f) => f.path),
+            outputPaths: changedFiles
+                .filter((f) => f.status !== "D")
+                .map((f) => f.path),
+        });
+        // Run check command after fix if configured
+        if (ctx.checkCommand) {
+            const checkRunner = createCheckRunner({
+                command: ctx.checkCommand,
+                cwd: projectRoot,
+            });
+            const checkResult = await checkRunner.run();
+            if (ctx.verbose) {
+                console.log(`[check] after fix: ${checkResult.passed ? "passed" : "failed"}`);
+            }
+        }
+        // Refresh changed files for next judge pass
+        changedFiles = getChangedFiles(projectRoot);
+    }
+    return { assessment, correctionAttempts: maxCorrections };
+}
 // ---------------------------------------------------------------------------
 // Single phase execution
 // ---------------------------------------------------------------------------
@@ -356,7 +553,9 @@ async function executePhase(ctx, phase, state, projectRoot, logger) {
             phaseContext,
             ...(ctx.model !== undefined ? { model: ctx.model } : {}),
         };
+        console.log("Launching orchestrator…");
         orchestrator = await launcher.launchOrchestrator(launchConfig);
+        console.log("Orchestrator ready. Starting REPL turn loop…");
         const loopResult = await replTurnLoop(orchestrator, repl, logger, phase.id, ctx.turnLimit, ctx.maxConsecutiveErrors, ctx.verbose, () => capturedReport !== null);
         const report = capturedReport ??
             buildPartialReport(phase.id, phase, loopResult.reason);
@@ -384,6 +583,7 @@ async function executePhase(ctx, phase, state, projectRoot, logger) {
 // Main loop
 // ---------------------------------------------------------------------------
 export async function runPhases(ctx, tasksJson) {
+    console.log(`Starting phase runner with ${tasksJson.phases.length} phase(s)…`);
     // Validate dependencies for all phases upfront, allowing cross-phase refs
     const priorPhaseTaskIds = new Set();
     for (const phase of tasksJson.phases) {
@@ -402,6 +602,7 @@ export async function runPhases(ctx, tasksJson) {
     // Worktree setup
     let worktreeResult = null;
     if (ctx.isolation === "worktree") {
+        console.log("Creating isolated worktree…");
         worktreeResult = createWorktree({
             projectRoot: ctx.projectRoot,
             specName: basename(ctx.specPath),
@@ -415,6 +616,7 @@ export async function runPhases(ctx, tasksJson) {
     // Ensure the project root directory exists (worktree may not have been created yet).
     mkdirSync(projectRoot, { recursive: true });
     // Copy spec and guidelines into project root so the sandbox can read them.
+    console.log("Copying spec and guidelines into project root…");
     const specFile = copySpecToProjectRoot(ctx.specPath, projectRoot);
     const guidelinesFile = copyGuidelinesToProjectRoot(ctx.guidelinesPath, projectRoot);
     // Handle dry run early
@@ -440,8 +642,34 @@ export async function runPhases(ctx, tasksJson) {
                 continue;
             }
             state = { ...state, currentPhase: phase.id };
+            const taskCount = phase.tasks.length;
+            console.log(`\nStarting phase "${phase.id}" (${taskCount} task${taskCount === 1 ? "" : "s"})…`);
             const phaseResult = await executePhase(ctx, phase, state, projectRoot, logger);
-            const report = phaseResult.report;
+            let report = phaseResult.report;
+            // Judge loop: always runs unless phase outright failed
+            if (phaseResult.status !== "failed") {
+                console.log(`Judging phase "${phase.id}"…`);
+                const judgeResult = await judgePhase({
+                    phase,
+                    report,
+                    projectRoot,
+                    ctx,
+                    logger,
+                });
+                report = { ...report, judgeAssessment: judgeResult.assessment };
+                if (!judgeResult.assessment.passed &&
+                    report.recommendedAction === "advance") {
+                    console.log(`Judge found unresolved issues in phase "${phase.id}". Recommending retry.`);
+                    report = {
+                        ...report,
+                        recommendedAction: "retry",
+                        correctiveTasks: [
+                            ...report.correctiveTasks,
+                            ...judgeResult.assessment.issues,
+                        ],
+                    };
+                }
+            }
             // Determine action: combine report recommendation with user input
             let action = report.recommendedAction === "advance" ? "advance" : "halt";
             if (!ctx.headless) {
@@ -566,6 +794,8 @@ export async function runSinglePhase(ctx, tasksJson, phaseId) {
     if (!phase) {
         throw new Error(`Phase not found: ${phaseId}`);
     }
+    const taskCount = phase.tasks.length;
+    console.log(`Starting single phase "${phaseId}" (${taskCount} task${taskCount === 1 ? "" : "s"})…`);
     // Collect task IDs from all phases prior to the target phase
     const priorPhaseTaskIds = new Set();
     for (const p of tasksJson.phases) {
@@ -585,6 +815,7 @@ export async function runSinglePhase(ctx, tasksJson, phaseId) {
     const phasesFailed = [];
     let worktreeResult = null;
     if (ctx.isolation === "worktree") {
+        console.log("Creating isolated worktree…");
         worktreeResult = createWorktree({
             projectRoot: ctx.projectRoot,
             specName: basename(ctx.specPath),
@@ -598,13 +829,39 @@ export async function runSinglePhase(ctx, tasksJson, phaseId) {
     // Ensure the project root directory exists (worktree may not have been created yet).
     mkdirSync(projectRoot, { recursive: true });
     // Copy spec and guidelines into project root so the sandbox can read them.
+    console.log("Copying spec and guidelines into project root…");
     const specFile = copySpecToProjectRoot(ctx.specPath, projectRoot);
     const guidelinesFile = copyGuidelinesToProjectRoot(ctx.guidelinesPath, projectRoot);
     try {
         state = { ...state, currentPhase: phase.id };
         const phaseResult = await executePhase(ctx, phase, state, projectRoot, logger);
-        const report = phaseResult.report;
-        if (phaseResult.status === "complete") {
+        let report = phaseResult.report;
+        // Judge loop: always runs unless phase outright failed
+        if (phaseResult.status !== "failed") {
+            console.log(`Judging phase "${phase.id}"…`);
+            const judgeResult = await judgePhase({
+                phase,
+                report,
+                projectRoot,
+                ctx,
+                logger,
+            });
+            report = { ...report, judgeAssessment: judgeResult.assessment };
+            if (!judgeResult.assessment.passed &&
+                report.recommendedAction === "advance") {
+                console.log(`Judge found unresolved issues in phase "${phase.id}". Downgrading to partial.`);
+                report = {
+                    ...report,
+                    status: "partial",
+                    recommendedAction: "retry",
+                    correctiveTasks: [
+                        ...report.correctiveTasks,
+                        ...judgeResult.assessment.issues,
+                    ],
+                };
+            }
+        }
+        if (report.status === "complete" && report.recommendedAction === "advance") {
             phasesCompleted.push(phase.id);
             state = updateStateAfterPhase(state, report, tasksJson.phases);
             if (worktreeResult) {

@@ -1,6 +1,7 @@
 import type { TasksJson, Phase } from "../types/tasks.js";
-import type { SharedState } from "../types/state.js";
+import type { SharedState, PhaseReport, JudgeAssessment } from "../types/state.js";
 import type { RunContext } from "../cli.js";
+import type { ChangedFile } from "../isolation/worktreeManager.js";
 export type PhaseRunnerResult = {
     success: boolean;
     phasesCompleted: string[];
@@ -19,6 +20,14 @@ export declare function promptForContinuation(): Promise<"continue" | "retry" | 
  * If the response is clearly natural language (not JS), returns empty string.
  */
 export declare function extractCode(response: string): string;
+export declare function buildJudgePrompt(config: {
+    changedFiles: ChangedFile[];
+    diffContent: string;
+    phase: Phase;
+    orchestratorReport: PhaseReport;
+}): string;
+export declare function parseJudgeResult(output: string): JudgeAssessment;
+export declare function buildFixPrompt(issues: string[], phase: Phase): string;
 export declare function runPhases(ctx: RunContext, tasksJson: TasksJson): Promise<PhaseRunnerResult>;
 export declare function runSinglePhase(ctx: RunContext, tasksJson: TasksJson, phaseId: string): Promise<PhaseRunnerResult>;
 //# sourceMappingURL=phaseRunner.d.ts.map
