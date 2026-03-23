@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.3
+
+- Fix markdown lint errors in docs (trailing punctuation, blank lines, code fence labels)
+
 ## 0.4.2
 
 - Add comprehensive test coverage for critical execution paths (191 → 273 unit tests)
