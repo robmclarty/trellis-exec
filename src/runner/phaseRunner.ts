@@ -201,6 +201,77 @@ function buildPartialReport(
   };
 }
 
+/**
+ * Normalizes a raw report object (as produced by the orchestrator LLM) into
+ * a valid PhaseReport.  Maps common LLM-style field names to the canonical
+ * schema fields and fills in defaults for anything missing.
+ */
+export function normalizeReport(
+  raw: Record<string, unknown>,
+  phaseId: string,
+): PhaseReport {
+  const validStatuses = new Set(["complete", "partial", "failed"]);
+  const validActions = new Set(["advance", "retry", "halt"]);
+
+  const status = validStatuses.has(raw.status as string)
+    ? (raw.status as PhaseReport["status"])
+    : "partial";
+
+  const recommendedAction = validActions.has(raw.recommendedAction as string)
+    ? (raw.recommendedAction as PhaseReport["recommendedAction"])
+    : "advance";
+
+  // Map taskOutcomes → tasksCompleted / tasksFailed when canonical fields absent
+  let tasksCompleted = asStringArray(raw.tasksCompleted);
+  let tasksFailed = asStringArray(raw.tasksFailed);
+
+  if (
+    tasksCompleted.length === 0 &&
+    tasksFailed.length === 0 &&
+    Array.isArray(raw.taskOutcomes)
+  ) {
+    for (const outcome of raw.taskOutcomes as Array<Record<string, unknown>>) {
+      const id = typeof outcome.taskId === "string" ? outcome.taskId : "";
+      if (!id) continue;
+      if (outcome.status === "failed") {
+        tasksFailed.push(id);
+      } else {
+        tasksCompleted.push(id);
+      }
+    }
+  }
+
+  // Map handoffBriefing → handoff when canonical field absent
+  const handoff =
+    typeof raw.handoff === "string"
+      ? raw.handoff
+      : typeof raw.handoffBriefing === "string"
+        ? raw.handoffBriefing
+        : "";
+
+  return {
+    phaseId,
+    status,
+    summary: typeof raw.summary === "string" ? raw.summary : "",
+    tasksCompleted,
+    tasksFailed,
+    orchestratorAnalysis:
+      typeof raw.orchestratorAnalysis === "string"
+        ? raw.orchestratorAnalysis
+        : "",
+    recommendedAction,
+    correctiveTasks: asStringArray(raw.correctiveTasks),
+    decisionsLog: asStringArray(raw.decisionsLog),
+    handoff,
+  };
+}
+
+/** Safely coerce a value to string[]. */
+function asStringArray(val: unknown): string[] {
+  if (!Array.isArray(val)) return [];
+  return val.filter((v): v is string => typeof v === "string");
+}
+
 function makeCorrectiveTask(
   phaseId: string,
   description: string,
@@ -396,8 +467,8 @@ async function replTurnLoop(
         "await runCheck()\n\n" +
         "Or if checks pass, write the report:\n\n" +
         'await writePhaseReport({ status: "complete", recommendedAction: "advance", ' +
-        'taskOutcomes: [{ taskId: "phase-1-task-1", status: "passed" }], ' +
-        'handoffBriefing: "Phase 1 complete." })';
+        'tasksCompleted: ["task-1", "task-2"], tasksFailed: [], ' +
+        'summary: "All tasks done.", handoff: "Phase complete." })';
       continue;
     }
 
@@ -785,7 +856,7 @@ async function executePhase(
   const helpers: ReplHelpers = {
     ...baseHelpers,
     writePhaseReport: (report: PhaseReport) => {
-      capturedReport = report;
+      capturedReport = normalizeReport(report as unknown as Record<string, unknown>, phase.id);
     },
     runCheck: checkRunner
       ? () => checkRunner.run()

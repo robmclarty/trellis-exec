@@ -57,6 +57,7 @@ import {
   buildJudgePrompt,
   parseJudgeResult,
   buildFixPrompt,
+  normalizeReport,
 } from "../phaseRunner.js";
 import type { RunContext } from "../../cli.js";
 import { createAgentLauncher } from "../../orchestrator/agentLauncher.js";
@@ -1516,6 +1517,119 @@ describe("phaseRunner", () => {
       );
       expect(phase1Report?.judgeAssessment?.passed).toBe(true);
       expect(phase1Report?.judgeAssessment?.issues).toEqual([]);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // normalizeReport
+  // -------------------------------------------------------------------------
+  describe("normalizeReport", () => {
+    it("passes through correct schema fields unchanged (except phaseId injected)", () => {
+      const raw = {
+        phaseId: "wrong-id",
+        status: "complete",
+        summary: "All good",
+        tasksCompleted: ["t1", "t2"],
+        tasksFailed: [],
+        orchestratorAnalysis: "Went well",
+        recommendedAction: "advance",
+        correctiveTasks: [],
+        decisionsLog: ["decided X"],
+        handoff: "Ready for next phase",
+      };
+      const result = normalizeReport(raw, "phase-1");
+      expect(result.phaseId).toBe("phase-1");
+      expect(result.status).toBe("complete");
+      expect(result.summary).toBe("All good");
+      expect(result.tasksCompleted).toEqual(["t1", "t2"]);
+      expect(result.tasksFailed).toEqual([]);
+      expect(result.orchestratorAnalysis).toBe("Went well");
+      expect(result.recommendedAction).toBe("advance");
+      expect(result.correctiveTasks).toEqual([]);
+      expect(result.decisionsLog).toEqual(["decided X"]);
+      expect(result.handoff).toBe("Ready for next phase");
+    });
+
+    it("maps LLM-style taskOutcomes to tasksCompleted and tasksFailed", () => {
+      const raw = {
+        status: "complete",
+        recommendedAction: "advance",
+        taskOutcomes: [
+          { taskId: "t1", status: "passed" },
+          { taskId: "t2", status: "failed" },
+          { taskId: "t3", status: "passed" },
+        ],
+      };
+      const result = normalizeReport(raw, "p1");
+      expect(result.tasksCompleted).toEqual(["t1", "t3"]);
+      expect(result.tasksFailed).toEqual(["t2"]);
+    });
+
+    it("maps handoffBriefing to handoff when handoff is absent", () => {
+      const raw = {
+        status: "complete",
+        recommendedAction: "advance",
+        handoffBriefing: "Next phase should do X",
+      };
+      const result = normalizeReport(raw, "p1");
+      expect(result.handoff).toBe("Next phase should do X");
+    });
+
+    it("prefers handoff over handoffBriefing when both present", () => {
+      const raw = {
+        status: "complete",
+        handoff: "canonical",
+        handoffBriefing: "should be ignored",
+      };
+      const result = normalizeReport(raw, "p1");
+      expect(result.handoff).toBe("canonical");
+    });
+
+    it("fills missing required fields with defaults", () => {
+      const raw = {};
+      const result = normalizeReport(raw, "p1");
+      expect(result.phaseId).toBe("p1");
+      expect(result.status).toBe("partial");
+      expect(result.summary).toBe("");
+      expect(result.tasksCompleted).toEqual([]);
+      expect(result.tasksFailed).toEqual([]);
+      expect(result.orchestratorAnalysis).toBe("");
+      expect(result.recommendedAction).toBe("advance");
+      expect(result.correctiveTasks).toEqual([]);
+      expect(result.decisionsLog).toEqual([]);
+      expect(result.handoff).toBe("");
+    });
+
+    it("always injects phaseId from argument, overriding raw value", () => {
+      const raw = { phaseId: "stale-id", status: "complete" };
+      const result = normalizeReport(raw, "correct-id");
+      expect(result.phaseId).toBe("correct-id");
+    });
+
+    it("defaults unrecognized status to 'partial'", () => {
+      const raw = { status: "done" };
+      const result = normalizeReport(raw, "p1");
+      expect(result.status).toBe("partial");
+    });
+
+    it("defaults unrecognized recommendedAction to 'advance'", () => {
+      const raw = { recommendedAction: "continue" };
+      const result = normalizeReport(raw, "p1");
+      expect(result.recommendedAction).toBe("advance");
+    });
+
+    it("does not use taskOutcomes when tasksCompleted is already present", () => {
+      const raw = {
+        status: "complete",
+        tasksCompleted: ["explicit-task"],
+        taskOutcomes: [
+          { taskId: "t1", status: "passed" },
+          { taskId: "t2", status: "failed" },
+        ],
+      };
+      const result = normalizeReport(raw, "p1");
+      expect(result.tasksCompleted).toEqual(["explicit-task"]);
+      expect(result.tasksFailed).toEqual([]);
     });
   });
 
