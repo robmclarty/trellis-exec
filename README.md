@@ -88,7 +88,7 @@ Show execution status for all phases and tasks.
                     │                       │
                     │  planParser.ts        │  Stage 1: deterministic
                     │  planEnricher.ts      │  Stage 2: LLM enrichment
-                    │  compilePlan.ts       │  Stage 3: fallback parse
+                    │  compilePlan.ts       │  Orchestrator (fallback: full LLM decomposition)
                     └───────────┬───────────┘
                                 │
                            tasks.json
@@ -130,37 +130,45 @@ Show execution status for all phases and tasks.
          │               │              │
          └───────────────┼──────────────┘
                          │
-                         ▼
-               ┌───────────────────┐
-               │      judge        │
-               │  (Sonnet, r/o)    │
-               │  Spec compliance  │
-               └────────┬──────────┘
-                        │
-                        ▼
-                   phase report
-                  (in state.json)
-                        │
-               ┌────────▼──────────┐
-               │  advance phase?   │
-               │  retry? halt?     │
-               └────────┬──────────┘
-                        │
-                        ▼
-                    next phase
+                    phase report
+                         │
+          ┌──────────────▼──────────────────────┐
+          │      JUDGE → FIX LOOP               │
+          │  (dispatched by Phase Runner)       │
+          │                                     │
+          │  ┌───────────────┐  ┌────────────┐  │
+          │  │    judge      │  │    fix     │  │
+          │  │  (Opus, r/o)  │──▶  (Sonnet)  │  │
+          │  │  assess diff  │  │ apply fix  │  │
+          │  └───────┬───────┘  └─────┬──────┘  │
+          │          │◀───────────────┘         │
+          │          │  (retry if issues remain)│
+          └──────────┼──────────────────────────┘
+                     │
+                     ▼
+            judge assessment
+           merged into report
+                     │
+            ┌────────▼──────────┐
+            │  advance phase?   │
+            │  retry? halt?     │
+            └────────┬──────────┘
+                     │
+                     ▼
+                 next phase
 ```
 
 The system has four layers:
 
 1. **Plan Compiler** -- Parses `plan.md` into `tasks.json` using a deterministic TypeScript parser with targeted LLM enrichment for ambiguous fields.
 
-2. **Phase Runner** -- A deterministic Node.js loop that owns the phase queue and iterative refinement cycle. It advances phases, handles retries, and writes a `trajectory.jsonl` log. No LLM dependencies.
+2. **Phase Runner** -- A deterministic Node.js loop that owns the phase queue and iterative refinement cycle. It advances phases, handles retries, dispatches the judge → fix correction loop after each phase, and writes a `trajectory.jsonl` log.
 
 3. **Phase Orchestrator** -- An LLM agent launched once per phase via `claude` CLI subprocess. It receives the phase's task list and shared state, works through tasks using a persistent JS REPL session, and dispatches sub-agents. Self-compacts when approaching context limits.
 
 4. **Sub-agents** -- Claude Code agent files (`agents/*.md`) dispatched for discrete tasks. Each receives a focused context bundle and returns a result. Different agent types can use different models.
 
-Data flows top-to-bottom: `plan.md` -> Plan Compiler -> `tasks.json` -> Phase Runner -> Phase Orchestrator -> Sub-agents -> verification -> phase report -> next phase.
+Data flows top-to-bottom: `plan.md` -> Plan Compiler -> `tasks.json` -> Phase Runner -> Phase Orchestrator -> Sub-agents -> phase report -> judge → fix loop -> action decision -> next phase.
 
 ## Configuration
 
@@ -169,12 +177,10 @@ All environment variables are optional.
 | Variable | Purpose | Example |
 |----------|---------|---------|
 | `TRELLIS_EXEC_MODEL` | Default orchestrator model override | `sonnet` |
-| `TRELLIS_EXEC_TURN_LIMIT` | Max REPL turns per phase | `100` |
-| `TRELLIS_EXEC_REPL_OUTPUT_LIMIT` | Max chars returned from REPL per turn | `8192` |
+| `TRELLIS_EXEC_TURN_LIMIT` | Max REPL turns per phase | `200` |
 | `TRELLIS_EXEC_MAX_RETRIES` | Max phase retries before halting | `2` |
 | `TRELLIS_EXEC_CONCURRENCY` | Max parallel sub-agents per phase | `3` |
 | `TRELLIS_EXEC_MAX_CONSECUTIVE_ERRORS` | Consecutive REPL errors before halting phase | `5` |
-| `TRELLIS_EXEC_COMPACTION_THRESHOLD` | Context usage % that triggers compaction | `80` |
 
 `CLAUDE_PLUGIN_ROOT` is set automatically by Claude Code in plugin contexts.
 
@@ -188,6 +194,7 @@ agents/
   test-writer.md
   scaffold.md
   judge.md
+  fix.md
   your-agent.md        # add your own
 ```
 
