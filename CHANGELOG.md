@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.0
+
+- Move judge invocation from orchestrator to phase runner — judge now runs as a system-controlled gate between phases using git diff for accurate changed-file detection
+- Add lightweight fix agent (`agents/fix.md`) for targeted corrections from judge feedback
+- Upgrade judge model from sonnet to opus for better reasoning on tricky issues
+- Add bounded judge-fix correction loop (max 2 attempts) before surfacing issues
+- Add `getChangedFiles()` and `getDiffContent()` git diff helpers to worktree manager
+- Add progress logging during phase runner startup
+
 ## 0.3.12
 
 - Fix cross-phase task dependency validation — tasks can now reference IDs from prior phases without being rejected as non-existent
