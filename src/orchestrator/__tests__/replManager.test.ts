@@ -175,6 +175,50 @@ describe("replManager", () => {
     session.destroy();
   });
 
+  it("async var declaration returns the assigned value", async () => {
+    const session = createReplSession(makeConfig());
+    const result = await session.eval("var r = await Promise.resolve({ok:true})");
+    expect(result.success).toBe(true);
+    expect(result.output).toContain('"ok": true');
+    session.destroy();
+  });
+
+  it("multiple async var declarations returns last value", async () => {
+    const session = createReplSession(makeConfig());
+    const result = await session.eval(
+      "var a = await Promise.resolve(1)\nvar b = await Promise.resolve(2)",
+    );
+    expect(result.success).toBe(true);
+    expect(result.output).toContain("2");
+    session.destroy();
+  });
+
+  it("dispatchSubAgent result appears in console output via self-reporting", async () => {
+    const mockResult = {
+      success: true,
+      output: "agent did work",
+      filesModified: ["src/app.ts"],
+    };
+    // Use createReplHelpers with an agentLauncher to exercise the
+    // self-reporting console.log inside replHelpers' dispatchSubAgent.
+    const helpers = createReplHelpers({
+      projectRoot: FIXTURES_DIR,
+      statePath: "",
+      agentLauncher: async () => mockResult,
+    });
+    const session = createReplSession(
+      makeConfig({ helpers }),
+    );
+    const result = await session.eval(
+      'await dispatchSubAgent({ type: "coder", taskId: "t1", instructions: "test" })',
+    );
+    expect(result.success).toBe(true);
+    expect(result.output).toContain("[dispatchSubAgent:t1]");
+    expect(result.output).toContain('"success":true');
+    expect(result.output).toContain("src/app.ts");
+    session.destroy();
+  });
+
   it("tracks consecutive errors and resets on success", async () => {
     const session = createReplSession(makeConfig());
 

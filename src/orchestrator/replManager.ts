@@ -129,6 +129,34 @@ export function createReplSession(config: ReplSessionConfig): ReplSession {
     sandbox[name] = helpers[name];
   }
 
+  // Wrap async helpers with self-reporting so the orchestrator always sees
+  // results in console output, even when the IIFE wrapper drops return values.
+  const rawDispatch = helpers.dispatchSubAgent;
+  sandbox["dispatchSubAgent"] = async (...args: unknown[]) => {
+    const result = await rawDispatch(...(args as Parameters<typeof rawDispatch>));
+    const summary = {
+      success: result.success,
+      filesModified: result.filesModified,
+      ...(result.error ? { error: result.error } : {}),
+      outputLength: result.output.length,
+      outputPreview: result.output.slice(0, 500),
+    };
+    const taskId = (args[0] as Record<string, unknown>)?.taskId ?? "unknown";
+    capturedConsole.log(`[dispatchSubAgent:${taskId}] ${JSON.stringify(summary)}`);
+    return result;
+  };
+
+  const rawCheck = helpers.runCheck;
+  sandbox["runCheck"] = async () => {
+    const result = await rawCheck();
+    capturedConsole.log(`[runCheck] ${JSON.stringify(result)}`);
+    return result;
+  };
+
+  // Update originals for wrapped helpers so restoreScaffold preserves them
+  originals["dispatchSubAgent"] = sandbox["dispatchSubAgent"];
+  originals["runCheck"] = sandbox["runCheck"];
+
   const context = createContext(sandbox);
 
   let consecutiveErrors = 0;
@@ -165,7 +193,16 @@ export function createReplSession(config: ReplSessionConfig): ReplSession {
           new Script(exprForm);
           wrappedCode = exprForm;
         } catch {
-          wrappedCode = `(async () => {\n${code}\n})()`;
+          // Statement form: if the code contains `var` declarations, return
+          // the last one's value so the orchestrator can see the result.
+          const varMatches = code.match(/\bvar\s+(\w+)\s*=/g);
+          if (varMatches) {
+            const lastMatch = varMatches[varMatches.length - 1]!;
+            const lastVar = lastMatch.match(/var\s+(\w+)/)![1];
+            wrappedCode = `(async () => {\n${code}\nreturn ${lastVar};\n})()`;
+          } else {
+            wrappedCode = `(async () => {\n${code}\n})()`;
+          }
         }
       } else {
         // Direct execution — var declarations go into the vm context
