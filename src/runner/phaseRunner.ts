@@ -140,9 +140,10 @@ export function buildPhaseContext(
   // Completion protocol
   lines.push("");
   lines.push("## Completion Protocol");
+  const reportAbsPath = join(ctx.projectRoot, REPORT_FILENAME);
   lines.push(
-    "When ALL tasks have been attempted, write `.trellis-phase-report.json` in the project root using the Write tool. " +
-      "The JSON must contain:",
+    `When ALL tasks have been attempted, use the Write tool to create the report file at exactly this absolute path: ${reportAbsPath}` +
+      "\n\nThe JSON must contain:",
   );
   lines.push("");
   lines.push("```json");
