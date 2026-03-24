@@ -2,7 +2,6 @@ import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { TasksJsonSchema } from "../types/tasks.js";
 import type { TasksJson } from "../types/tasks.js";
-import type { AgentLauncher } from "../orchestrator/agentLauncher.js";
 import { parsePlan } from "./planParser.js";
 import { enrichPlan } from "./planEnricher.js";
 import { buildDecomposePrompt } from "./prompts.js";
@@ -13,7 +12,7 @@ export type CompileConfig = {
   guidelinesPath?: string;
   projectRoot: string;
   outputPath: string;
-  agentLauncher: AgentLauncher;
+  query: (prompt: string) => Promise<string>;
 };
 
 /**
@@ -48,7 +47,7 @@ export async function compilePlan(config: CompileConfig): Promise<TasksJson> {
   let tasksJson: TasksJson;
 
   if (parseResult.success && parseResult.tasksJson) {
-    const enricher = (prompt: string) => config.agentLauncher.llmQuery(prompt);
+    const enricher = config.query;
     tasksJson = await enrichPlan(parseResult, enricher);
     if (guidelinesRef) {
       tasksJson = { ...tasksJson, guidelinesRef };
@@ -67,7 +66,7 @@ export async function compilePlan(config: CompileConfig): Promise<TasksJson> {
       guidelinesContent,
       guidelinesRef,
     );
-    const raw = await config.agentLauncher.llmQuery(decomposePrompt);
+    const raw = await config.query(decomposePrompt);
     const parsed = JSON.parse(stripCodeFences(raw));
     const validation = TasksJsonSchema.safeParse(parsed);
     if (!validation.success) {

@@ -14,7 +14,7 @@ export declare const SubAgentResultSchema: z.ZodObject<{
     error: z.ZodOptional<z.ZodString>;
 }, z.core.$strip>;
 export declare const TrajectoryEventTypeSchema: z.ZodEnum<{
-    repl_exec: "repl_exec";
+    phase_exec: "phase_exec";
     sub_agent_dispatch: "sub_agent_dispatch";
     check_run: "check_run";
     judge_invoke: "judge_invoke";
@@ -23,7 +23,7 @@ export declare const TrajectoryEventSchema: z.ZodObject<{
     phaseId: z.ZodString;
     turnNumber: z.ZodNumber;
     type: z.ZodEnum<{
-        repl_exec: "repl_exec";
+        phase_exec: "phase_exec";
         sub_agent_dispatch: "sub_agent_dispatch";
         check_run: "check_run";
         judge_invoke: "judge_invoke";

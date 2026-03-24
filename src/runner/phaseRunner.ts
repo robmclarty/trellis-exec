@@ -1,13 +1,10 @@
-import { copyFileSync, readFileSync, unlinkSync, mkdirSync, statSync } from "node:fs";
+import { readFileSync, existsSync, unlinkSync, statSync } from "node:fs";
 import { resolve, basename, join } from "node:path";
 import { createInterface } from "node:readline";
 import type { TasksJson, Phase, Task } from "../types/tasks.js";
 import type { SharedState, PhaseReport, JudgeAssessment, JudgeIssue, CheckResult } from "../types/state.js";
 import { JudgeAssessmentSchema } from "../types/state.js";
 import type { TrajectoryLogger } from "../logging/trajectoryLogger.js";
-import type { OrchestratorHandle } from "../orchestrator/agentLauncher.js";
-import type { ReplSession } from "../orchestrator/replManager.js";
-import type { ReplHelpers } from "../orchestrator/replHelpers.js";
 import type { RunContext } from "../cli.js";
 import {
   initState,
@@ -22,19 +19,16 @@ import {
 } from "./scheduler.js";
 import { createTrajectoryLogger } from "../logging/trajectoryLogger.js";
 import { startSpinner } from "../ui/spinner.js";
-import {
-  createWorktree,
-  commitPhase,
-  mergeWorktree,
-  cleanupWorktree,
-  getChangedFiles,
-  getDiffContent,
-} from "../isolation/worktreeManager.js";
-import type { WorktreeResult, ChangedFile } from "../isolation/worktreeManager.js";
+import { getChangedFiles, getDiffContent } from "../git.js";
+import type { ChangedFile } from "../git.js";
 import { createCheckRunner } from "../verification/checkRunner.js";
 import { createAgentLauncher } from "../orchestrator/agentLauncher.js";
-import { createReplHelpers } from "../orchestrator/replHelpers.js";
-import { createReplSession } from "../orchestrator/replManager.js";
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+const REPORT_FILENAME = ".trellis-phase-report.json";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -52,28 +46,9 @@ type PhaseExecResult = {
   report: PhaseReport;
 };
 
-type TurnLoopResult = {
-  reason: "complete" | "turn_limit" | "errors" | "dead";
-};
-
 // ---------------------------------------------------------------------------
 // Pure helpers
 // ---------------------------------------------------------------------------
-
-function deriveProjectRoot(
-  baseProjectRoot: string,
-  worktreeResult: WorktreeResult | null,
-  isolation: "worktree" | "none",
-): string {
-  if (
-    isolation === "worktree" &&
-    worktreeResult &&
-    worktreeResult.success
-  ) {
-    return worktreeResult.worktreePath;
-  }
-  return baseProjectRoot;
-}
 
 function getHandoffFromState(state: SharedState): string {
   const last = state.phaseReports.at(-1);
@@ -122,13 +97,14 @@ export function buildPhaseContext(
   );
   lines.push(`Modified files: ${state.modifiedFiles.length}`);
   lines.push(`Schema changes: ${state.schemaChanges.length}`);
+
   // Pre-load spec and guidelines content so the orchestrator doesn't waste
-  // turns calling readFile() for these. They're still available on disk if
-  // the orchestrator needs to re-read them after context compaction.
+  // turns reading these. They're still available on disk if the orchestrator
+  // needs to re-read them after context compaction.
   lines.push("");
   lines.push("## Spec Content");
   lines.push(
-    `(Pre-loaded from \`${basename(ctx.specPath)}\`. Also available via readFile('${basename(ctx.specPath)}').)`,
+    `(Pre-loaded from \`${basename(ctx.specPath)}\`. Also available on disk via the Read tool.)`,
   );
   lines.push("");
   try {
@@ -140,7 +116,7 @@ export function buildPhaseContext(
   lines.push("## Guidelines Content");
   if (ctx.guidelinesPath) {
     lines.push(
-      `(Pre-loaded from \`${basename(ctx.guidelinesPath)}\`. Also available via readFile('${basename(ctx.guidelinesPath)}').)`,
+      `(Pre-loaded from \`${basename(ctx.guidelinesPath)}\`. Also available on disk via the Read tool.)`,
     );
     lines.push("");
     try {
@@ -151,47 +127,94 @@ export function buildPhaseContext(
   } else {
     lines.push("none configured");
   }
+
   lines.push("");
   lines.push("## Check Command");
-  lines.push(ctx.checkCommand ?? "none configured");
+  if (ctx.checkCommand) {
+    lines.push(`Run this with Bash after completing tasks: ${ctx.checkCommand}`);
+  } else {
+    lines.push("none configured");
+  }
+
+  // Completion protocol
   lines.push("");
-  lines.push("## REPL Protocol");
+  lines.push("## Completion Protocol");
   lines.push(
-    "IMPORTANT: You are communicating through a JavaScript REPL. " +
-      "Every response you give will be eval'd as JavaScript. " +
-      "Do NOT include any natural language, explanations, or markdown. " +
-      "Output ONLY plain JavaScript code (no TypeScript, no `export`, no `module.exports`).",
-  );
-  lines.push(
-    "Use `var` (not `const` or `let`) for variables you need to reference in later turns. " +
-      "`var` declarations persist across eval calls; `const` and `let` do not.",
-  );
-  lines.push("");
-  lines.push("Available REPL helper functions:");
-  lines.push("- readFile(path) — read a file, returns string");
-  lines.push("- writeFile(path, content) — write a file to disk (creates parent directories automatically). Use for simple single-file creation instead of dispatchSubAgent().");
-  lines.push("- listDir(path) — list directory contents");
-  lines.push(
-    "- searchFiles(pattern, glob?) — search file contents by regex, optionally filtered by glob. " +
-      "If pattern contains * or **, it is treated as a glob file filter",
-  );
-  lines.push(
-    "- await dispatchSubAgent({ type, taskId, instructions, filePaths, outputPaths }) — dispatch a sub-agent to create/modify files",
-  );
-  lines.push("- await runCheck() — run the project check command");
-  lines.push("- getState() — get current shared state");
-  lines.push(
-    "- await writePhaseReport({ status, recommendedAction, ... }) — write the phase report (signals completion). " +
-      "IMPORTANT: Every task in the phase must appear in tasksCompleted or tasksFailed, or the report will be rejected.",
-  );
-  lines.push(
-    "- await llmQuery(prompt, options?) — quick LLM query for analysis",
+    "When ALL tasks have been attempted, write `.trellis-phase-report.json` in the project root using the Write tool. " +
+      "The JSON must contain:",
   );
   lines.push("");
-  lines.push("**dispatchSubAgent MUST receive an object, not positional arguments:**");
-  lines.push('```js');
-  lines.push('await dispatchSubAgent({ type: "implement", taskId: "phase-1-task-1", instructions: "...", filePaths: [], outputPaths: ["src/file.js"] })');
-  lines.push('```');
+  lines.push("```json");
+  lines.push('{');
+  lines.push(`  "phaseId": "${phase.id}",`);
+  lines.push('  "status": "complete | partial",');
+  lines.push('  "recommendedAction": "advance | retry | halt",');
+  lines.push('  "tasksCompleted": ["task-id-1"],');
+  lines.push('  "tasksFailed": ["task-id-2"],');
+  lines.push('  "summary": "Brief description",');
+  lines.push('  "handoff": "Briefing for next phase",');
+  lines.push('  "correctiveTasks": [],');
+  lines.push('  "decisionsLog": [],');
+  lines.push('  "orchestratorAnalysis": "Phase outcome assessment"');
+  lines.push('}');
+  lines.push("```");
+  lines.push("");
+  lines.push(
+    "CRITICAL: Every task ID must appear in EITHER tasksCompleted OR tasksFailed. " +
+      "The report will be rejected if any tasks are unaccounted for.",
+  );
+
+  // Previous attempt context (retries)
+  const retryCount = state.phaseRetries[phase.id] ?? 0;
+  if (retryCount > 0) {
+    const lastReport = state.phaseReports.at(-1);
+    lines.push("");
+    lines.push("## Previous Attempt");
+    lines.push("");
+    lines.push(`This is retry attempt ${retryCount}. The prior attempt did not fully pass the judge review.`);
+
+    if (lastReport) {
+      lines.push("");
+      lines.push(`**Last report status:** ${lastReport.status}`);
+      lines.push(`**Last summary:** ${lastReport.summary}`);
+      lines.push(`**Tasks completed:** ${lastReport.tasksCompleted.join(", ") || "none"}`);
+      lines.push(`**Tasks failed:** ${lastReport.tasksFailed.join(", ") || "none"}`);
+      lines.push(`**Orchestrator analysis:** ${lastReport.orchestratorAnalysis}`);
+
+      if (lastReport.judgeAssessment) {
+        const assessment = lastReport.judgeAssessment;
+        if (assessment.issues.length > 0) {
+          lines.push("");
+          lines.push("**Judge issues (must fix):**");
+          for (const issue of assessment.issues) {
+            lines.push(`- ${formatIssue(issue)}`);
+          }
+        }
+        if (assessment.suggestions.length > 0) {
+          lines.push("");
+          lines.push("**Judge suggestions (non-blocking):**");
+          for (const suggestion of assessment.suggestions) {
+            lines.push(`- ${formatIssue(suggestion)}`);
+          }
+        }
+      }
+
+      if (lastReport.correctiveTasks.length > 0) {
+        lines.push("");
+        lines.push("**Corrective tasks appended:**");
+        for (const ct of lastReport.correctiveTasks) {
+          lines.push(`- ${ct}`);
+        }
+      }
+    }
+
+    lines.push("");
+    lines.push("**Retry strategy:**");
+    lines.push("1. Read existing files first — prior attempts may have partially completed work.");
+    lines.push("2. Focus on judge issues — they are the primary reason for this retry.");
+    lines.push("3. Run checks after each fix.");
+    lines.push("4. All tasks (original + corrective) must appear in the report.");
+  }
 
   return lines.join("\n");
 }
@@ -231,59 +254,53 @@ export function normalizeReport(
   raw: Record<string, unknown>,
   phaseId: string,
 ): PhaseReport {
+  const r = raw;
   const validStatuses = new Set(["complete", "partial", "failed"]);
   const validActions = new Set(["advance", "retry", "halt"]);
 
-  const status = validStatuses.has(raw.status as string)
-    ? (raw.status as PhaseReport["status"])
+  const status = validStatuses.has(r["status"] as string)
+    ? (r["status"] as PhaseReport["status"])
     : "partial";
+  const recommendedAction = validActions.has(r["recommendedAction"] as string)
+    ? (r["recommendedAction"] as PhaseReport["recommendedAction"])
+    : "halt";
 
-  const recommendedAction = validActions.has(raw.recommendedAction as string)
-    ? (raw.recommendedAction as PhaseReport["recommendedAction"])
-    : "advance";
-
-  // Map taskOutcomes → tasksCompleted / tasksFailed when canonical fields absent
-  let tasksCompleted = asStringArray(raw.tasksCompleted);
-  let tasksFailed = asStringArray(raw.tasksFailed);
-
-  if (
-    tasksCompleted.length === 0 &&
-    tasksFailed.length === 0 &&
-    Array.isArray(raw.taskOutcomes)
-  ) {
-    for (const outcome of raw.taskOutcomes as Array<Record<string, unknown>>) {
-      const id = typeof outcome.taskId === "string" ? outcome.taskId : "";
-      if (!id) continue;
-      if (outcome.status === "failed") {
-        tasksFailed.push(id);
-      } else {
-        tasksCompleted.push(id);
-      }
-    }
-  }
-
-  // Map handoffBriefing → handoff when canonical field absent
-  const handoff =
-    typeof raw.handoff === "string"
-      ? raw.handoff
-      : typeof raw.handoffBriefing === "string"
-        ? raw.handoffBriefing
-        : "";
+  const tasksCompleted = asStringArray(
+    r["tasksCompleted"] ??
+      (r["taskOutcomes"] && Array.isArray(r["taskOutcomes"])
+        ? (r["taskOutcomes"] as Record<string, unknown>[])
+            .filter((o) => o["status"] === "complete" || o["status"] === "completed")
+            .map((o) => o["taskId"] as string)
+        : []),
+  );
+  const tasksFailed = asStringArray(
+    r["tasksFailed"] ??
+      (r["taskOutcomes"] && Array.isArray(r["taskOutcomes"])
+        ? (r["taskOutcomes"] as Record<string, unknown>[])
+            .filter((o) => o["status"] === "failed")
+            .map((o) => o["taskId"] as string)
+        : []),
+  );
 
   return {
-    phaseId,
+    phaseId: typeof r["phaseId"] === "string" ? r["phaseId"] : phaseId,
     status,
-    summary: typeof raw.summary === "string" ? raw.summary : "",
+    summary: typeof r["summary"] === "string" ? r["summary"] : "",
     tasksCompleted,
     tasksFailed,
     orchestratorAnalysis:
-      typeof raw.orchestratorAnalysis === "string"
-        ? raw.orchestratorAnalysis
+      typeof r["orchestratorAnalysis"] === "string"
+        ? r["orchestratorAnalysis"]
         : "",
     recommendedAction,
-    correctiveTasks: asStringArray(raw.correctiveTasks),
-    decisionsLog: asStringArray(raw.decisionsLog),
-    handoff,
+    correctiveTasks: asStringArray(r["correctiveTasks"] ?? []),
+    decisionsLog: asStringArray(r["decisionsLog"] ?? []),
+    handoff:
+      typeof r["handoff"] === "string"
+        ? r["handoff"]
+        : typeof r["handoffBriefing"] === "string"
+          ? r["handoffBriefing"]
+          : "",
   };
 }
 
@@ -395,296 +412,6 @@ export async function promptForContinuation(options?: {
       },
     );
   });
-}
-
-// ---------------------------------------------------------------------------
-// Code extraction from orchestrator responses
-// ---------------------------------------------------------------------------
-
-/**
- * Extracts executable JS code from an orchestrator response.
- *
- * The orchestrator may wrap code in markdown fences (```js ... ```) or
- * include explanatory text alongside code. This function extracts the
- * code blocks, falling back to the raw response if no fences are found.
- * If the response is clearly natural language (not JS), returns empty string.
- */
-export function extractCode(response: string): string {
-  // Match fenced code blocks: ```js, ```javascript, ```typescript, or plain ```
-  const fencePattern = /```(?:js|javascript|typescript|ts)?\s*\n([\s\S]*?)```/g;
-  const blocks: string[] = [];
-  let match: RegExpExecArray | null;
-  while ((match = fencePattern.exec(response)) !== null) {
-    blocks.push(match[1]!.trim());
-  }
-
-  if (blocks.length > 0) {
-    return blocks.join("\n\n");
-  }
-
-  const trimmed = response.trim();
-
-  // Heuristic: detect natural language responses.
-  // JS code typically starts with: const, let, var, await, function, //, (,
-  // or an identifier followed by ( or =.
-  // Natural language starts with: The, I, This, It, File, Task, etc.
-  const jsStartPattern =
-    /^(?:const |let |var |await |function |\/\/|\/\*|\(|[a-z_$][a-z0-9_$]*\s*[=(.])/i;
-  if (!jsStartPattern.test(trimmed)) {
-    return "";
-  }
-
-  // Additional check: if the first line is a sentence (contains spaces and
-  // no operators), it's likely natural language
-  const firstLine = trimmed.split("\n")[0]!;
-  if (
-    /^[A-Z][a-z]/.test(firstLine) &&
-    firstLine.includes(" ") &&
-    !/[=;{}[\]]/.test(firstLine)
-  ) {
-    return "";
-  }
-
-  return trimmed;
-}
-
-/**
- * Returns true if every non-empty line in the string is a comment
- * (single-line `//` or block `/* ... *​/`). An empty string returns true.
- */
-export function isCommentOnly(code: string): boolean {
-  const lines = code.split("\n").filter((l) => l.trim().length > 0);
-  if (lines.length === 0) return true;
-
-  let inBlock = false;
-  for (const raw of lines) {
-    const line = raw.trim();
-
-    if (inBlock) {
-      const closeIdx = line.indexOf("*/");
-      if (closeIdx === -1) {
-        // still inside block comment
-        continue;
-      }
-      // Check if there's code after the closing */
-      const afterClose = line.slice(closeIdx + 2).trim();
-      inBlock = false;
-      if (afterClose.length > 0) {
-        return false;
-      }
-      continue;
-    }
-
-    if (line.startsWith("//")) {
-      continue;
-    }
-
-    if (line.startsWith("/*")) {
-      const closeIdx = line.indexOf("*/", 2);
-      if (closeIdx === -1) {
-        inBlock = true;
-      } else {
-        // Check if there's code after the closing */ on the same line
-        const afterClose = line.slice(closeIdx + 2).trim();
-        if (afterClose.length > 0) {
-          return false;
-        }
-      }
-      continue;
-    }
-
-    return false;
-  }
-
-  return true;
-}
-
-// ---------------------------------------------------------------------------
-// Stuck-loop detection
-// ---------------------------------------------------------------------------
-
-const STUCK_FINGERPRINT_LENGTH = 200;
-
-/**
- * Returns true if the last `threshold` entries in `recentOutputs` are identical,
- * indicating the orchestrator is stuck repeating the same action.
- */
-export function detectStuck(recentOutputs: string[], threshold: number = 4): boolean {
-  if (recentOutputs.length < threshold) return false;
-  const last = recentOutputs.slice(-threshold);
-  return last.every((o) => o === last[0]);
-}
-
-// ---------------------------------------------------------------------------
-// REPL turn loop
-// ---------------------------------------------------------------------------
-
-async function replTurnLoop(
-  orchestrator: OrchestratorHandle,
-  repl: ReplSession,
-  logger: TrajectoryLogger,
-  phaseId: string,
-  phase: Phase,
-  turnLimit: number,
-  maxConsecutiveErrors: number,
-  verbose: boolean,
-  isCaptured: () => boolean,
-): Promise<TurnLoopResult> {
-  let previousOutput = "Begin phase execution.";
-  const recentOutputs: string[] = [];
-
-  for (let turnNumber = 1; turnNumber <= turnLimit; turnNumber++) {
-    if (!orchestrator.isAlive()) {
-      return { reason: "dead" };
-    }
-
-    if (turnNumber === 1) {
-      console.log("Waiting for orchestrator first response (this may take a moment)…");
-    }
-
-    const spinner = startSpinner("Thinking");
-    const rawResponse = await orchestrator.send(previousOutput);
-    spinner.stop();
-    const code = extractCode(rawResponse);
-
-    // Check if writePhaseReport was triggered by the orchestrator's response
-    if (isCaptured()) {
-      return { reason: "complete" };
-    }
-
-    // If extractCode returned empty (natural language response) or the
-    // extracted code is nothing but comments, skip eval and send a
-    // corrective nudge.
-    if (!code || isCommentOnly(code)) {
-      if (verbose) {
-        const preview = rawResponse.length > 500
-          ? rawResponse.slice(0, 500) + `… [${rawResponse.length} chars total]`
-          : rawResponse;
-        console.log(`[turn ${turnNumber}] skipped: response was natural language`);
-        console.log(`[turn ${turnNumber}] raw response: ${preview}`);
-      }
-      previousOutput =
-        "REPL: Your response was natural language (or comments only) and was skipped. " +
-        "You MUST output ONLY JavaScript code. The functions runCheck() and " +
-        "writePhaseReport() are real JavaScript functions available in this REPL. " +
-        "Example of what you should output next:\n\n" +
-        "await runCheck()\n\n" +
-        "Or if checks pass, write the report:\n\n" +
-        'await writePhaseReport({ status: "complete", recommendedAction: "advance", ' +
-        'tasksCompleted: ["task-1", "task-2"], tasksFailed: [], ' +
-        'summary: "All tasks done.", handoff: "Phase complete." })';
-      continue;
-    }
-
-    const startTime = performance.now();
-    const evalResult = await repl.eval(code);
-    const duration = performance.now() - startTime;
-
-    repl.restoreScaffold();
-
-    logger.append({
-      phaseId,
-      turnNumber,
-      type: "repl_exec",
-      input: code,
-      output: evalResult.output,
-      duration,
-    });
-
-    if (verbose) {
-      console.log(`[turn ${turnNumber}] code: ${code.slice(0, 500)}`);
-      console.log(
-        `[turn ${turnNumber}] result: ${evalResult.output.slice(0, 1000)}`,
-      );
-    }
-
-    if (repl.getConsecutiveErrors() >= maxConsecutiveErrors) {
-      return { reason: "errors" };
-    }
-
-    const rawOutput = evalResult.success
-      ? evalResult.output
-      : `ERROR: ${evalResult.error ?? "unknown"}\n${evalResult.output}`;
-
-    // After a timeout, inject an extra-strong nudge so the orchestrator
-    // doesn't hallucinate that the timed-out work was completed.
-    const isTimeout = !evalResult.success && evalResult.error?.startsWith("TIMEOUT:");
-    const timeoutSuffix = isTimeout
-      ? "\n\nREPL SYSTEM: The previous dispatchSubAgent() call TIMED OUT. " +
-        "No files were created or modified. The task is NOT done. " +
-        "You must retry or mark the task as failed. Output JavaScript code only."
-      : "";
-
-    // Ensure we never send an empty string (claude --print requires input)
-    previousOutput = (rawOutput.trim() || "(no output)") + timeoutSuffix;
-
-    // Track recent outputs for stuck-loop detection
-    recentOutputs.push(previousOutput.slice(0, STUCK_FINGERPRINT_LENGTH));
-    if (recentOutputs.length > 6) recentOutputs.shift();
-
-    if (detectStuck(recentOutputs)) {
-      const taskIds = phase.tasks.map((t) => t.id);
-      previousOutput =
-        `REPL SYSTEM: You appear stuck in a loop — the last ${4} outputs were identical. ` +
-        `You MUST change your approach. Phase tasks: ${taskIds.join(", ")}.\n` +
-        `Options:\n` +
-        `1. Fix the argument format — dispatchSubAgent() requires an object: { type, taskId, instructions, filePaths, outputPaths }\n` +
-        `2. Use writeFile(path, content) for simple file creation instead of dispatchSubAgent()\n` +
-        `3. Mark stuck tasks as failed and call writePhaseReport() with ALL tasks accounted for\n` +
-        `Output JavaScript code only.`;
-      recentOutputs.length = 0; // reset so intervention isn't immediately re-triggered
-    }
-
-    // Check if writePhaseReport was called inside the eval'd code
-    if (isCaptured()) {
-      return { reason: "complete" };
-    }
-  }
-
-  return { reason: "turn_limit" };
-}
-
-// ---------------------------------------------------------------------------
-// Spec/guidelines file copy helpers
-// ---------------------------------------------------------------------------
-
-type CopiedFile = {
-  destPath: string;
-  copied: boolean;
-};
-
-function copySpecToProjectRoot(specPath: string, projectRoot: string): CopiedFile {
-  const destPath = join(projectRoot, basename(specPath));
-  const copied = resolve(specPath) !== resolve(destPath);
-  if (copied) {
-    copyFileSync(specPath, destPath);
-  }
-  return { destPath, copied };
-}
-
-function copyGuidelinesToProjectRoot(
-  guidelinesPath: string | undefined,
-  projectRoot: string,
-): CopiedFile {
-  if (!guidelinesPath) {
-    return { destPath: "", copied: false };
-  }
-  const destPath = join(projectRoot, basename(guidelinesPath));
-  const copied = resolve(guidelinesPath) !== resolve(destPath);
-  if (copied) {
-    copyFileSync(guidelinesPath, destPath);
-  }
-  return { destPath, copied };
-}
-
-function cleanupCopiedFile(file: CopiedFile): void {
-  if (file.copied) {
-    try {
-      unlinkSync(file.destPath);
-    } catch {
-      // Ignore — file may already be gone
-    }
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1066,90 +793,93 @@ async function executePhase(
     dryRun: ctx.dryRun,
   });
 
-  const checkRunner = ctx.checkCommand
-    ? createCheckRunner({ command: ctx.checkCommand, cwd: projectRoot })
-    : null;
+  const phaseContext = buildPhaseContext(phase, state, handoff, ctx);
 
-  const defaultCheck = !checkRunner ? createDefaultCheck(projectRoot, phase) : null;
+  // Delete stale report file (important for retries)
+  const reportPath = join(projectRoot, REPORT_FILENAME);
+  try {
+    if (existsSync(reportPath)) {
+      unlinkSync(reportPath);
+    }
+  } catch {
+    // Ignore — file may not exist
+  }
 
-  let capturedReport: PhaseReport | null = null;
-
-  const baseHelpers = createReplHelpers({
-    projectRoot,
-    statePath: ctx.statePath,
-    agentLauncher: (c) => launcher.dispatchSubAgent(c),
-  });
-
-  const helpers: ReplHelpers = {
-    ...baseHelpers,
-    writePhaseReport: (report: PhaseReport) => {
-      const normalized = normalizeReport(report as unknown as Record<string, unknown>, phase.id);
-      const allTaskIds = phase.tasks.map((t) => t.id);
-      const accountedFor = new Set([...normalized.tasksCompleted, ...normalized.tasksFailed]);
-      const missing = allTaskIds.filter((id) => !accountedFor.has(id));
-      if (missing.length > 0) {
-        throw new Error(
-          `writePhaseReport() REJECTED: ${missing.length} task(s) not accounted for: ${missing.join(", ")}. ` +
-          `Every task must appear in tasksCompleted or tasksFailed. ` +
-          `Process the missing tasks first (dispatch or mark failed), then call writePhaseReport() again.`,
-        );
-      }
-      capturedReport = normalized;
-    },
-    runCheck: checkRunner
-      ? () => checkRunner.run()
-      : defaultCheck
-        ? () => defaultCheck.run()
-        : baseHelpers.runCheck,
-    llmQuery: (prompt: string, options?: { model?: string }) =>
-      launcher.llmQuery(prompt, options),
-  };
-
-  const repl = createReplSession({
-    projectRoot,
-    outputLimit: 8192,
-    timeout: 30_000,
-    longTimeout: 300_000, // 5 min for dispatchSubAgent/runCheck/llmQuery
-    helpers,
-  });
-
-  const phaseContext = buildPhaseContext(
-    phase,
-    state,
-    handoff,
-    ctx,
-  );
-
-  let orchestrator: OrchestratorHandle | null = null;
+  const agentFile = resolve(ctx.pluginRoot, "agents/phase-orchestrator.md");
 
   try {
-    const launchConfig = {
-      agentFile: resolve(ctx.pluginRoot, "agents/phase-orchestrator.md"),
-      skillsDir: resolve(ctx.pluginRoot, "skills"),
-      phaseContext,
-      ...(ctx.model !== undefined ? { model: ctx.model } : {}),
-    };
     console.log("Launching orchestrator…");
-    let spinner = startSpinner("Orchestrator");
-    orchestrator = await launcher.launchOrchestrator(launchConfig);
+    const spinner = startSpinner("Orchestrator");
+    const startTime = Date.now();
+    const result = await launcher.runPhaseOrchestrator(
+      phaseContext,
+      agentFile,
+      ctx.model,
+    );
+    const duration = Date.now() - startTime;
     spinner.stop();
 
-    console.log("Orchestrator ready. Starting REPL turn loop…");
-    const loopResult = await replTurnLoop(
-      orchestrator,
-      repl,
-      logger,
-      phase.id,
-      phase,
-      ctx.turnLimit,
-      ctx.maxConsecutiveErrors,
-      ctx.verbose,
-      () => capturedReport !== null,
-    );
+    logger.append({
+      phaseId: phase.id,
+      turnNumber: 0,
+      type: "phase_exec",
+      input: { taskCount: phase.tasks.length },
+      output: result.stdout.slice(0, 2000),
+      duration,
+    });
 
-    const report =
-      capturedReport ??
-      buildPartialReport(phase.id, phase, loopResult.reason);
+    if (ctx.verbose) {
+      console.log(`[orchestrator] exit code: ${result.exitCode}`);
+      if (result.stderr) {
+        console.log(`[orchestrator] stderr: ${result.stderr.slice(0, 500)}`);
+      }
+    }
+
+    // Read the report file
+    if (!existsSync(reportPath)) {
+      const reason = result.exitCode !== 0
+        ? `orchestrator exited with code ${result.exitCode}`
+        : "orchestrator did not write report file";
+      return {
+        status: "failed",
+        report: buildPartialReport(phase.id, phase, reason),
+      };
+    }
+
+    let rawReport: Record<string, unknown>;
+    try {
+      rawReport = JSON.parse(readFileSync(reportPath, "utf-8"));
+    } catch {
+      return {
+        status: "failed",
+        report: buildPartialReport(phase.id, phase, "report file contained invalid JSON"),
+      };
+    }
+
+    const report = normalizeReport(rawReport, phase.id);
+
+    // Validate all task IDs are accounted for
+    const allTaskIds = phase.tasks.map((t) => t.id);
+    const accountedFor = new Set([...report.tasksCompleted, ...report.tasksFailed]);
+    const missing = allTaskIds.filter((id) => !accountedFor.has(id));
+    if (missing.length > 0) {
+      console.log(
+        `Report missing ${missing.length} task(s): ${missing.join(", ")}. Marking as partial.`,
+      );
+      return {
+        status: "partial",
+        report: {
+          ...report,
+          status: "partial",
+          recommendedAction: "retry",
+          tasksFailed: [...report.tasksFailed, ...missing],
+          correctiveTasks: [
+            ...report.correctiveTasks,
+            `Tasks not accounted for in report: ${missing.join(", ")}`,
+          ],
+        },
+      };
+    }
 
     return {
       status: report.status === "complete" ? "complete" : report.status,
@@ -1161,14 +891,10 @@ async function executePhase(
     if (ctx.verbose) {
       console.error(`[executePhase] error:`, err);
     }
-    const report =
-      capturedReport ?? buildPartialReport(phase.id, phase, reason);
-    return { status: "failed", report };
-  } finally {
-    repl.destroy();
-    if (orchestrator) {
-      orchestrator.kill();
-    }
+    return {
+      status: "failed",
+      report: buildPartialReport(phase.id, phase, reason),
+    };
   }
 }
 
@@ -1201,31 +927,7 @@ export async function runPhases(
   const phasesCompleted: string[] = [];
   const phasesFailed: string[] = [];
 
-  // Worktree setup
-  let worktreeResult: WorktreeResult | null = null;
-  if (ctx.isolation === "worktree") {
-    console.log("Creating isolated worktree…");
-    worktreeResult = createWorktree({
-      projectRoot: ctx.projectRoot,
-      specName: basename(ctx.specPath),
-    });
-    if (!worktreeResult.success) {
-      logger.close();
-      throw new Error(
-        `Failed to create worktree: ${worktreeResult.error ?? "unknown"}`,
-      );
-    }
-  }
-
-  const projectRoot = deriveProjectRoot(ctx.projectRoot, worktreeResult, ctx.isolation);
-
-  // Ensure the project root directory exists (worktree may not have been created yet).
-  mkdirSync(projectRoot, { recursive: true });
-
-  // Copy spec and guidelines into project root so the sandbox can read them.
-  console.log("Copying spec and guidelines into project root…");
-  const specFile = copySpecToProjectRoot(ctx.specPath, projectRoot);
-  const guidelinesFile = copyGuidelinesToProjectRoot(ctx.guidelinesPath, projectRoot);
+  const projectRoot = ctx.projectRoot;
 
   // Handle dry run early
   if (ctx.dryRun) {
@@ -1402,34 +1104,10 @@ export async function runPhases(
       // action === "advance"
       phasesCompleted.push(phase.id);
       state = updateStateAfterPhase(state, report, tasksJson.phases);
-      if (worktreeResult) {
-        commitPhase(worktreeResult.worktreePath, phase.id);
-      }
       saveState(ctx.statePath, state);
       phaseIndex++;
     }
-
-    // Merge worktree on success
-    if (
-      worktreeResult &&
-      phasesFailed.length === 0 &&
-      phasesCompleted.length > 0
-    ) {
-      const mergeResult = mergeWorktree({
-        projectRoot: ctx.projectRoot,
-        worktreePath: worktreeResult.worktreePath,
-        branchName: worktreeResult.branchName,
-      });
-      if (!mergeResult.success) {
-        console.error("Worktree merge failed:", mergeResult.error);
-      }
-    }
   } finally {
-    cleanupCopiedFile(specFile);
-    cleanupCopiedFile(guidelinesFile);
-    if (worktreeResult) {
-      cleanupWorktree(worktreeResult.worktreePath);
-    }
     logger.close();
   }
 
@@ -1481,30 +1159,7 @@ export async function runSinglePhase(
   const phasesCompleted: string[] = [];
   const phasesFailed: string[] = [];
 
-  let worktreeResult: WorktreeResult | null = null;
-  if (ctx.isolation === "worktree") {
-    console.log("Creating isolated worktree…");
-    worktreeResult = createWorktree({
-      projectRoot: ctx.projectRoot,
-      specName: basename(ctx.specPath),
-    });
-    if (!worktreeResult.success) {
-      logger.close();
-      throw new Error(
-        `Failed to create worktree: ${worktreeResult.error ?? "unknown"}`,
-      );
-    }
-  }
-
-  const projectRoot = deriveProjectRoot(ctx.projectRoot, worktreeResult, ctx.isolation);
-
-  // Ensure the project root directory exists (worktree may not have been created yet).
-  mkdirSync(projectRoot, { recursive: true });
-
-  // Copy spec and guidelines into project root so the sandbox can read them.
-  console.log("Copying spec and guidelines into project root…");
-  const specFile = copySpecToProjectRoot(ctx.specPath, projectRoot);
-  const guidelinesFile = copyGuidelinesToProjectRoot(ctx.guidelinesPath, projectRoot);
+  const projectRoot = ctx.projectRoot;
 
   try {
     state = { ...state, currentPhase: phase.id };
@@ -1555,14 +1210,6 @@ export async function runSinglePhase(
     if (report.status === "complete" && report.recommendedAction === "advance") {
       phasesCompleted.push(phase.id);
       state = updateStateAfterPhase(state, report, tasksJson.phases);
-      if (worktreeResult) {
-        commitPhase(worktreeResult.worktreePath, phase.id);
-        mergeWorktree({
-          projectRoot: ctx.projectRoot,
-          worktreePath: worktreeResult.worktreePath,
-          branchName: worktreeResult.branchName,
-        });
-      }
     } else {
       phasesFailed.push(phase.id);
       state = {
@@ -1573,11 +1220,6 @@ export async function runSinglePhase(
 
     saveState(ctx.statePath, state);
   } finally {
-    cleanupCopiedFile(specFile);
-    cleanupCopiedFile(guidelinesFile);
-    if (worktreeResult) {
-      cleanupWorktree(worktreeResult.worktreePath);
-    }
     logger.close();
   }
 

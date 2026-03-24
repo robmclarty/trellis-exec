@@ -77,8 +77,6 @@ describe("buildRunContext", () => {
         "--dry-run",
         "--check",
         "npm test",
-        "--isolation",
-        "none",
         "--concurrency",
         "5",
         "--model",
@@ -93,7 +91,6 @@ describe("buildRunContext", () => {
 
     expect(result.context.dryRun).toBe(true);
     expect(result.context.checkCommand).toBe("npm test");
-    expect(result.context.isolation).toBe("none");
     expect(result.context.concurrency).toBe(5);
     expect(result.context.model).toBe("opus");
     expect(result.context.maxRetries).toBe(4);
@@ -109,11 +106,8 @@ describe("buildRunContext", () => {
 
     const result = buildRunContext([tasksJsonPath], emptyEnv);
 
-    expect(result.context.isolation).toBe("worktree");
     expect(result.context.concurrency).toBe(3);
     expect(result.context.maxRetries).toBe(2);
-    expect(result.context.turnLimit).toBe(200);
-    expect(result.context.maxConsecutiveErrors).toBe(5);
     expect(result.context.headless).toBe(false);
     expect(result.context.verbose).toBe(false);
     expect(result.context.dryRun).toBe(false);
@@ -129,8 +123,6 @@ describe("buildRunContext", () => {
       TRELLIS_EXEC_MODEL: "haiku",
       TRELLIS_EXEC_CONCURRENCY: "8",
       TRELLIS_EXEC_MAX_RETRIES: "5",
-      TRELLIS_EXEC_TURN_LIMIT: "150",
-      TRELLIS_EXEC_MAX_CONSECUTIVE_ERRORS: "10",
       CLAUDE_PLUGIN_ROOT: "/custom/plugin",
     };
 
@@ -139,8 +131,6 @@ describe("buildRunContext", () => {
     expect(result.context.model).toBe("haiku");
     expect(result.context.concurrency).toBe(8);
     expect(result.context.maxRetries).toBe(5);
-    expect(result.context.turnLimit).toBe(150);
-    expect(result.context.maxConsecutiveErrors).toBe(10);
     expect(result.context.pluginRoot).toBe("/custom/plugin");
   });
 

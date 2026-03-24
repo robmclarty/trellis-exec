@@ -11,7 +11,7 @@ function makeEvent(): Omit<TrajectoryEvent, "timestamp"> {
   return {
     phaseId: "phase-1",
     turnNumber: 1,
-    type: "repl_exec",
+    type: "phase_exec",
     input: "readFile('src/index.ts')",
     output: "file contents",
     duration: 45,
@@ -39,7 +39,7 @@ describe("trajectoryLogger", () => {
 
     const parsed = JSON.parse(lines[0]!);
     expect(parsed.phaseId).toBe("phase-1");
-    expect(parsed.type).toBe("repl_exec");
+    expect(parsed.type).toBe("phase_exec");
   });
 
   it("append includes timestamp automatically", () => {

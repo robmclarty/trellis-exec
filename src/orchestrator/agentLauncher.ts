@@ -3,33 +3,27 @@ import { resolve } from "node:path";
 import type { SubAgentConfig, SubAgentResult } from "../types/agents.js";
 
 const DEFAULT_TIMEOUT = 300_000; // 5 minutes for sub-agent execution
+const ORCHESTRATOR_TIMEOUT = 600_000; // 10 minutes for phase orchestration
+
+export type ExecClaudeResult = {
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+};
 
 export type AgentLauncherConfig = {
   pluginRoot: string;
   projectRoot: string;
   dryRun?: boolean;
-  mockResponses?: Map<string, SubAgentResult>;
-};
-
-export type OrchestratorLaunchConfig = {
-  agentFile: string;
-  skillsDir: string;
-  phaseContext: string;
-  model?: string;
-};
-
-export type OrchestratorHandle = {
-  send(input: string): Promise<string>;
-  isAlive(): boolean;
-  kill(): void;
 };
 
 export type AgentLauncher = {
   dispatchSubAgent(config: SubAgentConfig): Promise<SubAgentResult>;
-  llmQuery(prompt: string, options?: { model?: string }): Promise<string>;
-  launchOrchestrator(
-    config: OrchestratorLaunchConfig,
-  ): Promise<OrchestratorHandle>;
+  runPhaseOrchestrator(
+    prompt: string,
+    agentFile: string,
+    model?: string,
+  ): Promise<ExecClaudeResult>;
 };
 
 /**
@@ -90,85 +84,10 @@ export function buildSubAgentArgs(
 }
 
 /**
- * Builds the CLI args array for an llmQuery call.
- */
-export function buildLlmQueryArgs(model: string): string[] {
-  return ["--print", "--model", model];
-}
-
-const REPL_SYSTEM_PROMPT =
-  "CRITICAL: You are communicating through a JavaScript REPL. " +
-  "Your ENTIRE response must be valid JavaScript code. " +
-  "Do NOT include any natural language, markdown, or explanations. " +
-  "Output ONLY plain JavaScript (no TypeScript, no export/import, no module.exports). " +
-  "Use REPL helpers: readFile(), writeFile(), listDir(), searchFiles(), dispatchSubAgent(), " +
-  "runCheck(), writePhaseReport(), llmQuery(), getState(). " +
-  "Use writeFile(path, content) for simple file creation. " +
-  "dispatchSubAgent() MUST receive an object: { type, taskId, instructions, filePaths, outputPaths }. " +
-  "You MUST complete ALL tasks in the phase before calling writePhaseReport(). " +
-  "Every task must appear in tasksCompleted or tasksFailed — the system will REJECT incomplete reports. " +
-  "Process tasks one by one: dispatchSubAgent() → runCheck() → next task. " +
-  "Only call writePhaseReport() after every task has been attempted.";
-
-/**
- * Builds the CLI args for the first orchestrator turn.
- * Subsequent turns use --continue to resume the session.
- */
-export function buildOrchestratorArgs(
-  config: OrchestratorLaunchConfig,
-): string[] {
-  const args = [
-    "--agent",
-    config.agentFile,
-    "--print",
-    "--dangerously-skip-permissions",
-    "--disallowedTools",
-    "Write,Edit,Bash,Read,Glob,Grep,NotebookEdit,Agent,WebFetch,WebSearch,TodoWrite",
-    "--append-system-prompt",
-    REPL_SYSTEM_PROMPT,
-    "--add-dir",
-    config.skillsDir,
-  ];
-  if (config.model) {
-    args.push("--model", config.model);
-  }
-  return args;
-}
-
-/**
- * Builds the CLI args for continuing an orchestrator session (turn 2+).
- */
-export function buildOrchestratorContinueArgs(
-  config: OrchestratorLaunchConfig,
-): string[] {
-  const args = [
-    "--print",
-    "--continue",
-    "--dangerously-skip-permissions",
-    "--disallowedTools",
-    "Write,Edit,Bash,Read,Glob,Grep,NotebookEdit,Agent,WebFetch,WebSearch,TodoWrite",
-    "--append-system-prompt",
-    REPL_SYSTEM_PROMPT,
-    "--add-dir",
-    config.skillsDir,
-  ];
-  if (config.model) {
-    args.push("--model", config.model);
-  }
-  return args;
-}
-
-type ExecClaudeResult = {
-  stdout: string;
-  stderr: string;
-  exitCode: number;
-};
-
-/**
  * Spawns a `claude` CLI subprocess, optionally pipes stdin, and collects
  * stdout/stderr. Rejects on timeout.
  */
-function execClaude(
+export function execClaude(
   args: string[],
   cwd: string,
   stdin?: string,
@@ -214,15 +133,14 @@ function execClaude(
 
 /**
  * Creates an AgentLauncher that manages claude CLI subprocesses for sub-agent
- * dispatch, LLM queries, and long-running orchestrator sessions.
+ * dispatch and phase orchestration.
  *
- * Supports three modes:
+ * Supports two modes:
  * - **real**: spawns actual `claude` CLI processes
  * - **dryRun**: logs commands without executing, returns mock results
- * - **mock**: returns pre-configured responses from `mockResponses` map
  */
 export function createAgentLauncher(config: AgentLauncherConfig): AgentLauncher {
-  const { pluginRoot, projectRoot, dryRun, mockResponses } = config;
+  const { pluginRoot, projectRoot, dryRun } = config;
 
   async function dispatchSubAgent(
     subAgentConfig: SubAgentConfig,
@@ -236,16 +154,6 @@ export function createAgentLauncher(config: AgentLauncherConfig): AgentLauncher 
       console.log("[dry-run] dispatchSubAgent:", "claude", args.join(" "));
       console.log("[dry-run] prompt:", prompt.slice(0, 200));
       return { success: true, output: "[dry-run]", filesModified: [] };
-    }
-
-    if (mockResponses) {
-      const mock = mockResponses.get(subAgentConfig.type);
-      if (mock) return mock;
-      return {
-        success: true,
-        output: "[mock] default response",
-        filesModified: [],
-      };
     }
 
     let result: ExecClaudeResult;
@@ -279,117 +187,27 @@ export function createAgentLauncher(config: AgentLauncherConfig): AgentLauncher 
     };
   }
 
-  async function llmQuery(
+  async function runPhaseOrchestrator(
     prompt: string,
-    options?: { model?: string },
-  ): Promise<string> {
-    const model = options?.model ?? "haiku";
-    const args = buildLlmQueryArgs(model);
+    agentFile: string,
+    model?: string,
+  ): Promise<ExecClaudeResult> {
+    const args = [
+      "--agent",
+      agentFile,
+      "--print",
+      "--dangerously-skip-permissions",
+      ...(model ? ["--model", model] : []),
+    ];
 
     if (dryRun) {
-      console.log("[dry-run] llmQuery:", prompt.slice(0, 80), "model:", model);
-      return "[dry-run] llmQuery response";
+      console.log("[dry-run] runPhaseOrchestrator:", "claude", args.join(" "));
+      console.log("[dry-run] prompt:", prompt.slice(0, 200));
+      return { stdout: "[dry-run]", stderr: "", exitCode: 0 };
     }
 
-    if (mockResponses) {
-      return "[mock] llmQuery response";
-    }
-
-    const result = await execClaude(args, projectRoot, prompt);
-    return result.stdout;
+    return execClaude(args, projectRoot, prompt, ORCHESTRATOR_TIMEOUT);
   }
 
-  async function launchOrchestrator(
-    orchestratorConfig: OrchestratorLaunchConfig,
-  ): Promise<OrchestratorHandle> {
-    const firstArgs = buildOrchestratorArgs(orchestratorConfig);
-
-    if (dryRun) {
-      console.log("[dry-run] launchOrchestrator:", "claude", firstArgs.join(" "));
-      return createDryRunHandle();
-    }
-
-    // Use sequential one-shot calls with --continue for multi-turn.
-    // Turn 1: claude --print --agent ... <phaseContext>
-    // Turn 2+: claude --print --continue ... <input>
-    const continueArgs = buildOrchestratorContinueArgs(orchestratorConfig);
-    return createSequentialHandle(
-      firstArgs,
-      continueArgs,
-      projectRoot,
-      orchestratorConfig.phaseContext,
-    );
-  }
-
-  return { dispatchSubAgent, llmQuery, launchOrchestrator };
-}
-
-/**
- * Creates a mock OrchestratorHandle for dryRun mode.
- */
-function createDryRunHandle(): OrchestratorHandle {
-  let alive = true;
-
-  return {
-    async send(input: string): Promise<string> {
-      console.log("[dry-run] orchestrator.send:", input.slice(0, 80));
-      return "[dry-run] orchestrator response";
-    },
-    isAlive(): boolean {
-      return alive;
-    },
-    kill(): void {
-      alive = false;
-    },
-  };
-}
-
-/**
- * Creates an OrchestratorHandle using sequential one-shot claude calls.
- *
- * Turn 1 uses the full args (--agent, etc.) with the phaseContext as stdin.
- * Subsequent turns use --continue to resume the session.
- * Each turn spawns a fresh claude process via execClaude().
- */
-function createSequentialHandle(
-  firstArgs: string[],
-  continueArgs: string[],
-  projectRoot: string,
-  phaseContext: string,
-): OrchestratorHandle {
-  let turnCount = 0;
-  let alive = true;
-  let lastError: string | null = null;
-
-  return {
-    async send(input: string): Promise<string> {
-      if (!alive) {
-        throw new Error(
-          `Orchestrator has been killed${lastError ? `: ${lastError}` : ""}`,
-        );
-      }
-
-      turnCount++;
-      const isFirstTurn = turnCount === 1;
-      const args = isFirstTurn ? firstArgs : continueArgs;
-      const prompt = isFirstTurn ? phaseContext + "\n\n" + input : input;
-
-      const result = await execClaude(args, projectRoot, prompt);
-
-      if (result.exitCode !== 0) {
-        lastError = result.stderr || `exit code ${result.exitCode}`;
-        throw new Error(`Orchestrator turn failed: ${lastError}`);
-      }
-
-      return result.stdout;
-    },
-
-    isAlive(): boolean {
-      return alive;
-    },
-
-    kill(): void {
-      alive = false;
-    },
-  };
+  return { dispatchSubAgent, runPhaseOrchestrator };
 }

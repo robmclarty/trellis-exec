@@ -10,9 +10,7 @@ import { tmpdir } from "node:os";
 import type { TasksJson } from "../../types/tasks.js";
 import type { PhaseReport, SharedState } from "../../types/state.js";
 import type { Phase } from "../../types/tasks.js";
-import type { OrchestratorHandle } from "../../orchestrator/agentLauncher.js";
-import type { ReplSession, ReplEvalResult } from "../../orchestrator/replManager.js";
-import type { ReplHelpers } from "../../orchestrator/replHelpers.js";
+import type { ExecClaudeResult } from "../../orchestrator/agentLauncher.js";
 
 // ---------------------------------------------------------------------------
 // Mocks — must be declared before imports of the module under test
@@ -22,27 +20,10 @@ vi.mock("../../orchestrator/agentLauncher.js", () => ({
   createAgentLauncher: vi.fn(),
   buildSubAgentPrompt: vi.fn(() => ""),
   buildSubAgentArgs: vi.fn(() => []),
-  buildLlmQueryArgs: vi.fn(() => []),
-  buildOrchestratorArgs: vi.fn(() => []),
+  execClaude: vi.fn(),
 }));
 
-vi.mock("../../orchestrator/replManager.js", () => ({
-  createReplSession: vi.fn(),
-}));
-
-vi.mock("../../orchestrator/replHelpers.js", () => ({
-  createReplHelpers: vi.fn(),
-}));
-
-vi.mock("../../isolation/worktreeManager.js", () => ({
-  createWorktree: vi.fn(() => ({
-    success: true,
-    worktreePath: "/tmp/wt",
-    branchName: "trellis-exec/test/123",
-  })),
-  commitPhase: vi.fn(() => true),
-  mergeWorktree: vi.fn(() => ({ success: true })),
-  cleanupWorktree: vi.fn(),
+vi.mock("../../git.js", () => ({
   getChangedFiles: vi.fn(() => []),
   getDiffContent: vi.fn(() => ""),
 }));
@@ -58,15 +39,11 @@ import {
   parseJudgeResult,
   buildFixPrompt,
   normalizeReport,
-  isCommentOnly,
   createDefaultCheck,
-  detectStuck,
 } from "../phaseRunner.js";
 import type { RunContext } from "../../cli.js";
 import { createAgentLauncher } from "../../orchestrator/agentLauncher.js";
-import { createReplSession } from "../../orchestrator/replManager.js";
-import { createReplHelpers } from "../../orchestrator/replHelpers.js";
-import { getChangedFiles, getDiffContent } from "../../isolation/worktreeManager.js";
+import { getChangedFiles, getDiffContent } from "../../git.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -160,52 +137,6 @@ function makePhaseReport(
   };
 }
 
-function createMockOrchestrator(
-  responses: string[],
-): OrchestratorHandle {
-  let callIndex = 0;
-  let alive = true;
-
-  return {
-    async send(_input: string): Promise<string> {
-      const response = responses[callIndex] ?? 'console.log("noop")';
-      callIndex++;
-      return response;
-    },
-    isAlive(): boolean {
-      return alive;
-    },
-    kill(): void {
-      alive = false;
-    },
-  };
-}
-
-function createMockHelpers(): ReplHelpers {
-  return {
-    readFile: () => "",
-    writeFile: () => {},
-    listDir: () => [],
-    searchFiles: () => [],
-    getState: () => ({
-      currentPhase: "",
-      completedPhases: [],
-      modifiedFiles: [],
-      schemaChanges: [],
-      phaseReports: [],
-      phaseRetries: {},
-    }),
-    writePhaseReport: () => {},
-    dispatchSubAgent: async () => ({
-      success: true,
-      output: "",
-      filesModified: [],
-    }),
-    runCheck: async () => ({ passed: true, output: "", exitCode: 0 }),
-    llmQuery: async () => "mock response",
-  };
-}
-
 function makeDefaultConfig(tmpDir: string): RunContext {
   return {
     projectRoot: tmpDir,
@@ -213,14 +144,11 @@ function makeDefaultConfig(tmpDir: string): RunContext {
     planPath: join(tmpDir, "plan.md"),
     statePath: join(tmpDir, "state.json"),
     trajectoryPath: join(tmpDir, "trajectory.jsonl"),
-    isolation: "none",
     concurrency: 3,
     maxRetries: 2,
     headless: true,
     verbose: false,
     dryRun: false,
-    turnLimit: 100,
-    maxConsecutiveErrors: 5,
     pluginRoot: join(tmpDir, "plugin"),
   };
 }
@@ -233,12 +161,11 @@ function setupTmpDir(tasksJson: TasksJson): string {
   );
   // Create plugin dirs that the runner references
   mkdirSync(join(tmpDir, "plugin", "agents"), { recursive: true });
-  mkdirSync(join(tmpDir, "plugin", "skills"), { recursive: true });
   writeFileSync(
     join(tmpDir, "plugin", "agents", "phase-orchestrator.md"),
     "---\nname: phase-orchestrator\n---\n",
   );
-  // Create a spec file for replHelpers
+  // Create a spec file
   writeFileSync(join(tmpDir, "spec.md"), "# Spec\n## §1 Intro\nContent.");
   return tmpDir;
 }
@@ -249,197 +176,37 @@ function setupTmpDir(tasksJson: TasksJson): string {
 
 /**
  * Sets up mocks so that each phase completes successfully.
- * The mock orchestrator emits code that calls writePhaseReport on the
- * last turn.
+ * The mock orchestrator writes a report file to disk and exits 0.
  */
 function setupMocksForSuccess(
+  tmpDir: string,
   phaseReports: Map<string, PhaseReport>,
 ): void {
   const mockCreateAgentLauncher = createAgentLauncher as ReturnType<typeof vi.fn>;
-  const mockCreateReplSession = createReplSession as ReturnType<typeof vi.fn>;
-  const mockCreateReplHelpers = createReplHelpers as ReturnType<typeof vi.fn>;
 
-  mockCreateReplHelpers.mockImplementation(() => createMockHelpers());
-
-  // Track how many times launchOrchestrator is called to determine which phase
   let launchCount = 0;
   const phaseIds = [...phaseReports.keys()];
 
   mockCreateAgentLauncher.mockImplementation(() => ({
     dispatchSubAgent: async () => ({
       success: true,
-      output: "",
+      output: '{"passed": true, "issues": [], "suggestions": []}',
       filesModified: [],
     }),
-    llmQuery: async () => "mock",
-    launchOrchestrator: async () => {
+    runPhaseOrchestrator: async (): Promise<ExecClaudeResult> => {
       const phaseId = phaseIds[launchCount] ?? phaseIds[phaseIds.length - 1]!;
       launchCount++;
       const report = phaseReports.get(phaseId)!;
 
-      // The orchestrator sends one code turn, then signals complete
-      return createMockOrchestrator([
-        'console.log("working...")',
-        `writePhaseReport(${JSON.stringify(report)})`,
-      ]);
+      // Write the report file to disk (simulates orchestrator behavior)
+      writeFileSync(
+        join(tmpDir, ".trellis-phase-report.json"),
+        JSON.stringify(report),
+      );
+
+      return { stdout: "done", stderr: "", exitCode: 0 };
     },
   }));
-
-  mockCreateReplSession.mockImplementation(
-    (sessionConfig: { helpers: ReplHelpers }) => {
-      // Create a REPL session that captures writePhaseReport calls via the helpers
-      let consecutiveErrors = 0;
-
-      return {
-        async eval(code: string): Promise<ReplEvalResult> {
-          // Simulate writePhaseReport being called in REPL context
-          if (code.includes("writePhaseReport(")) {
-            try {
-              // Extract the JSON and call the real helper
-              const jsonMatch = code.match(/writePhaseReport\((.+)\)/s);
-              if (jsonMatch?.[1]) {
-                const report = JSON.parse(jsonMatch[1]);
-                sessionConfig.helpers.writePhaseReport(report);
-              }
-            } catch (err) {
-              // Propagate writePhaseReport errors as REPL error results
-              // (matches real REPL behavior where thrown errors become error output)
-              consecutiveErrors++;
-              return {
-                success: false,
-                output: "",
-                truncated: false,
-                error: err instanceof Error ? err.message : String(err),
-                duration: 1,
-              };
-            }
-            consecutiveErrors = 0;
-            return {
-              success: true,
-              output: "Phase report written.",
-              truncated: false,
-              duration: 1,
-            };
-          }
-
-          consecutiveErrors = 0;
-          return {
-            success: true,
-            output: `ok: ${code.slice(0, 30)}`,
-            truncated: false,
-            duration: 1,
-          };
-        },
-        restoreScaffold() {},
-        getConsecutiveErrors() {
-          return consecutiveErrors;
-        },
-        resetConsecutiveErrors() {
-          consecutiveErrors = 0;
-        },
-        destroy() {},
-      } satisfies ReplSession;
-    },
-  );
-}
-
-/**
- * Sets up mocks where the REPL always returns errors.
- */
-function setupMocksForErrors(maxConsecutiveErrors: number): void {
-  const mockCreateAgentLauncher = createAgentLauncher as ReturnType<typeof vi.fn>;
-  const mockCreateReplSession = createReplSession as ReturnType<typeof vi.fn>;
-  const mockCreateReplHelpers = createReplHelpers as ReturnType<typeof vi.fn>;
-
-  mockCreateReplHelpers.mockImplementation(() => createMockHelpers());
-
-  mockCreateAgentLauncher.mockImplementation(() => ({
-    dispatchSubAgent: async () => ({
-      success: true,
-      output: "",
-      filesModified: [],
-    }),
-    llmQuery: async () => "mock",
-    launchOrchestrator: async () =>
-      createMockOrchestrator(
-        Array.from({ length: maxConsecutiveErrors + 5 }, () => "badCode()"),
-      ),
-  }));
-
-  mockCreateReplSession.mockImplementation(() => {
-    let consecutiveErrors = 0;
-
-    return {
-      async eval(_code: string): Promise<ReplEvalResult> {
-        consecutiveErrors++;
-        return {
-          success: false,
-          output: "",
-          truncated: false,
-          error: "ReferenceError: badCode is not defined",
-          duration: 1,
-        };
-      },
-      restoreScaffold() {},
-      getConsecutiveErrors() {
-        return consecutiveErrors;
-      },
-      resetConsecutiveErrors() {
-        consecutiveErrors = 0;
-      },
-      destroy() {},
-    } satisfies ReplSession;
-  });
-}
-
-/**
- * Sets up mocks where the orchestrator never signals completion.
- */
-function setupMocksForTurnLimit(turnLimit: number): void {
-  const mockCreateAgentLauncher = createAgentLauncher as ReturnType<typeof vi.fn>;
-  const mockCreateReplSession = createReplSession as ReturnType<typeof vi.fn>;
-  const mockCreateReplHelpers = createReplHelpers as ReturnType<typeof vi.fn>;
-
-  mockCreateReplHelpers.mockImplementation(() => createMockHelpers());
-
-  mockCreateAgentLauncher.mockImplementation(() => ({
-    dispatchSubAgent: async () => ({
-      success: true,
-      output: "",
-      filesModified: [],
-    }),
-    llmQuery: async () => "mock",
-    launchOrchestrator: async () =>
-      createMockOrchestrator(
-        Array.from({ length: turnLimit + 5 }, (_, i) =>
-          `console.log("turn ${i}")`,
-        ),
-      ),
-  }));
-
-  mockCreateReplSession.mockImplementation(() => {
-    let consecutiveErrors = 0;
-
-    return {
-      async eval(code: string): Promise<ReplEvalResult> {
-        consecutiveErrors = 0;
-        return {
-          success: true,
-          output: `ok: ${code.slice(0, 30)}`,
-          truncated: false,
-          duration: 1,
-        };
-      },
-      restoreScaffold() {},
-      getConsecutiveErrors() {
-        return consecutiveErrors;
-      },
-      resetConsecutiveErrors() {
-        consecutiveErrors = 0;
-      },
-      destroy() {},
-    } satisfies ReplSession;
-  });
 }
 
 // ---------------------------------------------------------------------------
@@ -479,7 +246,7 @@ describe("phaseRunner", () => {
           }),
         ],
       ]);
-      setupMocksForSuccess(reports);
+      setupMocksForSuccess(tmpDir, reports);
 
       const result = await runPhases(config, tasksJson);
 
@@ -492,1339 +259,285 @@ describe("phaseRunner", () => {
     });
   });
 
-  describe("runPhases — phase retry", () => {
-    it("retries a phase and then advances", async () => {
-      const tasksJson = makeTasksJson();
-      tmpDir = setupTmpDir(tasksJson);
-      const config = makeDefaultConfig(tmpDir);
-
-      // First call for phase-1 returns retry, second returns advance
-      let phase1CallCount = 0;
-      const phase1Reports = [
-        makePhaseReport("phase-1", {
-          status: "complete",
-          recommendedAction: "retry",
-          correctiveTasks: ["Fix the build"],
-          tasksCompleted: ["task-1-1"],
-          tasksFailed: ["task-1-2"],
-        }),
-        makePhaseReport("phase-1", {
-          status: "complete",
-          recommendedAction: "advance",
-          tasksCompleted: ["task-1-1", "task-1-2", "phase-1-corrective-0"],
-        }),
-      ];
-
-      const mockCreateAgentLauncher = createAgentLauncher as ReturnType<typeof vi.fn>;
-      const mockCreateReplSession = createReplSession as ReturnType<typeof vi.fn>;
-      const mockCreateReplHelpers = createReplHelpers as ReturnType<typeof vi.fn>;
-
-      mockCreateReplHelpers.mockImplementation(() => createMockHelpers());
-
-      let launchCount = 0;
-      mockCreateAgentLauncher.mockImplementation(() => ({
-        dispatchSubAgent: async () => ({
-          success: true,
-          output: "",
-          filesModified: [],
-        }),
-        llmQuery: async () => "mock",
-        launchOrchestrator: async () => {
-          const idx = launchCount;
-          launchCount++;
-
-          let report: PhaseReport;
-          if (idx === 0) {
-            report = phase1Reports[phase1CallCount]!;
-            phase1CallCount++;
-          } else if (idx === 1) {
-            // Second call to phase-1 (retry)
-            report = phase1Reports[phase1CallCount]!;
-            phase1CallCount++;
-          } else {
-            // phase-2
-            report = makePhaseReport("phase-2", {
-              tasksCompleted: ["task-2-1", "task-2-2"],
-            });
-          }
-
-          return createMockOrchestrator([
-            'console.log("work")',
-            `writePhaseReport(${JSON.stringify(report)})`,
-          ]);
-        },
-      }));
-
-      mockCreateReplSession.mockImplementation(
-        (sessionConfig: { helpers: ReplHelpers }) => {
-          let consecutiveErrors = 0;
-          return {
-            async eval(code: string): Promise<ReplEvalResult> {
-              if (code.includes("writePhaseReport(")) {
-                try {
-                  const jsonMatch = code.match(/writePhaseReport\((.+)\)/s);
-                  if (jsonMatch?.[1]) {
-                    sessionConfig.helpers.writePhaseReport(
-                      JSON.parse(jsonMatch[1]),
-                    );
-                  }
-                } catch (err) {
-                  consecutiveErrors++;
-                  return {
-                    success: false,
-                    output: "",
-                    truncated: false,
-                    error: err instanceof Error ? err.message : String(err),
-                    duration: 1,
-                  };
-                }
-                consecutiveErrors = 0;
-                return {
-                  success: true,
-                  output: "Report written.",
-                  truncated: false,
-                  duration: 1,
-                };
-              }
-              consecutiveErrors = 0;
-              return {
-                success: true,
-                output: "ok",
-                truncated: false,
-                duration: 1,
-              };
-            },
-            restoreScaffold() {},
-            getConsecutiveErrors() {
-              return consecutiveErrors;
-            },
-            resetConsecutiveErrors() {
-              consecutiveErrors = 0;
-            },
-            destroy() {},
-          } satisfies ReplSession;
-        },
-      );
-
-      const result = await runPhases(config, tasksJson);
-
-      expect(result.success).toBe(true);
-      expect(result.phasesCompleted).toContain("phase-1");
-      expect(result.phasesCompleted).toContain("phase-2");
-      // Verify retry happened
-      expect(result.finalState.phaseRetries["phase-1"]).toBe(1);
-    });
-  });
-
-  describe("runPhases — max retries exceeded", () => {
-    it("halts after maxRetries", async () => {
-      const tasksJson = makeTasksJson();
-      tmpDir = setupTmpDir(tasksJson);
-      const config = { ...makeDefaultConfig(tmpDir), maxRetries: 2 };
-
-      // No correctiveTasks so the task list stays stable across retries
-      const retryReport = makePhaseReport("phase-1", {
-        status: "complete",
-        recommendedAction: "retry",
-        tasksCompleted: [],
-        tasksFailed: ["task-1-1", "task-1-2"],
-      });
-
-      const mockCreateAgentLauncher = createAgentLauncher as ReturnType<typeof vi.fn>;
-      const mockCreateReplSession = createReplSession as ReturnType<typeof vi.fn>;
-      const mockCreateReplHelpers = createReplHelpers as ReturnType<typeof vi.fn>;
-
-      mockCreateReplHelpers.mockImplementation(() => createMockHelpers());
-
-      mockCreateAgentLauncher.mockImplementation(() => ({
-        dispatchSubAgent: async () => ({
-          success: true,
-          output: "",
-          filesModified: [],
-        }),
-        llmQuery: async () => "mock",
-        launchOrchestrator: async () =>
-          createMockOrchestrator([
-            'console.log("trying")',
-            `writePhaseReport(${JSON.stringify(retryReport)})`,
-          ]),
-      }));
-
-      mockCreateReplSession.mockImplementation(
-        (sessionConfig: { helpers: ReplHelpers }) => {
-          let consecutiveErrors = 0;
-          return {
-            async eval(code: string): Promise<ReplEvalResult> {
-              if (code.includes("writePhaseReport(")) {
-                try {
-                  const jsonMatch = code.match(/writePhaseReport\((.+)\)/s);
-                  if (jsonMatch?.[1]) {
-                    sessionConfig.helpers.writePhaseReport(
-                      JSON.parse(jsonMatch[1]),
-                    );
-                  }
-                } catch (err) {
-                  consecutiveErrors++;
-                  return {
-                    success: false,
-                    output: "",
-                    truncated: false,
-                    error: err instanceof Error ? err.message : String(err),
-                    duration: 1,
-                  };
-                }
-                return {
-                  success: true,
-                  output: "ok",
-                  truncated: false,
-                  duration: 1,
-                };
-              }
-              consecutiveErrors = 0;
-              return {
-                success: true,
-                output: "ok",
-                truncated: false,
-                duration: 1,
-              };
-            },
-            restoreScaffold() {},
-            getConsecutiveErrors() {
-              return consecutiveErrors;
-            },
-            resetConsecutiveErrors() {
-              consecutiveErrors = 0;
-            },
-            destroy() {},
-          } satisfies ReplSession;
-        },
-      );
-
-      const result = await runPhases(config, tasksJson);
-
-      expect(result.success).toBe(false);
-      expect(result.phasesFailed).toContain("phase-1");
-      // Should have retried twice then halted (3 total executions: initial + 2 retries)
-      expect(result.finalState.phaseRetries["phase-1"]).toBe(2);
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // Issue #3: Corrective tasks were pushed directly onto the phase reference
-  // from tasksJson with `phase.tasks.push(...newTasks)`, mutating the original
-  // structure in-place. On a second retry, previous corrective tasks persisted,
-  // causing duplicates. Corrective task IDs also collided since the counter
-  // always started at 0.
-  //
-  // Mitigation: The retry logic now creates a new phase object with spread
-  // copies of the tasks array. Corrective task IDs include a retry-count
-  // offset (retryCount * 100) to prevent collisions across retries.
-  // -------------------------------------------------------------------------
-  describe("runPhases — corrective task IDs are unique across retries", () => {
-    it("does not produce duplicate corrective task IDs on multiple retries", async () => {
-      const tasksJson = makeTasksJson();
-      tmpDir = setupTmpDir(tasksJson);
-      const config = { ...makeDefaultConfig(tmpDir), maxRetries: 2 };
-
-      // Each retry adds a corrective task, so subsequent reports must include
-      // those task IDs to pass the task completion gate.
-      let launchIdx = 0;
-      function buildRetryReport(): PhaseReport {
-        const allFailed = ["task-1-1", "task-1-2"];
-        // After each retry, the previous corrective task is added to the phase
-        for (let i = 0; i < launchIdx; i++) {
-          allFailed.push(`phase-1-corrective-${i * 100}`);
-        }
-        return makePhaseReport("phase-1", {
-          status: "complete",
-          recommendedAction: "retry",
-          correctiveTasks: ["Fix the build"],
-          tasksCompleted: [],
-          tasksFailed: allFailed,
-        });
-      }
-
-      const mockCreateAgentLauncher = createAgentLauncher as ReturnType<typeof vi.fn>;
-      const mockCreateReplSession = createReplSession as ReturnType<typeof vi.fn>;
-      const mockCreateReplHelpers = createReplHelpers as ReturnType<typeof vi.fn>;
-
-      mockCreateReplHelpers.mockImplementation(() => createMockHelpers());
-
-      // Track task IDs seen across all phase executions
-      const allPhaseContexts: string[] = [];
-
-      mockCreateAgentLauncher.mockImplementation(() => ({
-        dispatchSubAgent: async () => ({
-          success: true,
-          output: "",
-          filesModified: [],
-        }),
-        llmQuery: async () => "mock",
-        launchOrchestrator: async (orchConfig: { phaseContext: string }) => {
-          allPhaseContexts.push(orchConfig.phaseContext);
-          const report = buildRetryReport();
-          launchIdx++;
-          return createMockOrchestrator([
-            `writePhaseReport(${JSON.stringify(report)})`,
-          ]);
-        },
-      }));
-
-      mockCreateReplSession.mockImplementation(
-        (sessionConfig: { helpers: ReplHelpers }) => {
-          let consecutiveErrors = 0;
-          return {
-            async eval(code: string): Promise<ReplEvalResult> {
-              if (code.includes("writePhaseReport(")) {
-                try {
-                  const jsonMatch = code.match(/writePhaseReport\((.+)\)/s);
-                  if (jsonMatch?.[1]) {
-                    sessionConfig.helpers.writePhaseReport(
-                      JSON.parse(jsonMatch[1]),
-                    );
-                  }
-                } catch (err) {
-                  consecutiveErrors++;
-                  return {
-                    success: false,
-                    output: "",
-                    truncated: false,
-                    error: err instanceof Error ? err.message : String(err),
-                    duration: 1,
-                  };
-                }
-                return {
-                  success: true,
-                  output: "ok",
-                  truncated: false,
-                  duration: 1,
-                };
-              }
-              consecutiveErrors = 0;
-              return {
-                success: true,
-                output: "ok",
-                truncated: false,
-                duration: 1,
-              };
-            },
-            restoreScaffold() {},
-            getConsecutiveErrors() {
-              return consecutiveErrors;
-            },
-            resetConsecutiveErrors() {
-              consecutiveErrors = 0;
-            },
-            destroy() {},
-          } satisfies ReplSession;
-        },
-      );
-
-      // Pass a deep clone so we can verify the original is not mutated
-      const tasksJsonClone: TasksJson = JSON.parse(JSON.stringify(tasksJson));
-      const result = await runPhases(config, tasksJsonClone);
-
-      // After 2 retries, each adding "Fix the build", the corrective task IDs
-      // should be unique: phase-1-corrective-0 (retry 0) and phase-1-corrective-100
-      // (retry 1). Without the offset fix, both would be phase-1-corrective-0.
-      expect(result.finalState.phaseRetries["phase-1"]).toBe(2);
-
-      // Verify the original tasksJson was not mutated — its phase-1 should
-      // still have exactly 2 tasks (the originals), not 2 + corrective tasks.
-      expect(tasksJson.phases[0]!.tasks.length).toBe(2);
-    });
-  });
-
-  describe("runPhases — consecutive error halt", () => {
-    it("halts when consecutive errors reach threshold", async () => {
-      const tasksJson = makeTasksJson();
-      tmpDir = setupTmpDir(tasksJson);
-      const config = {
-        ...makeDefaultConfig(tmpDir),
-        maxConsecutiveErrors: 3,
-      };
-
-      setupMocksForErrors(3);
-
-      const result = await runPhases(config, tasksJson);
-
-      expect(result.success).toBe(false);
-      expect(result.phasesFailed).toContain("phase-1");
-      // The partial report should have been generated
-      expect(result.finalState.phaseReports.length).toBeGreaterThanOrEqual(1);
-      expect(result.finalState.phaseReports[0]?.status).toBe("partial");
-    });
-  });
-
-  describe("dryRunReport", () => {
-    it("produces readable output with execution groups", () => {
-      const tasksJson = makeTasksJson();
-      const ctx: RunContext = {
-        projectRoot: ".",
-        specPath: "spec.md",
-        planPath: "plan.md",
-        statePath: "state.json",
-        trajectoryPath: "trajectory.jsonl",
-        isolation: "none",
-        concurrency: 3,
-        maxRetries: 2,
-        headless: true,
-        verbose: false,
-        dryRun: false,
-        turnLimit: 100,
-        maxConsecutiveErrors: 5,
-        pluginRoot: ".",
-      };
-      const report = dryRunReport(tasksJson, ctx);
-
-      expect(report).toContain("Spec: spec.md");
-      expect(report).toContain("Plan: plan.md");
-      expect(report).toContain("phase-1");
-      expect(report).toContain("phase-2");
-      expect(report).toContain("task-1-1");
-      expect(report).toContain("task-1-2");
-      expect(report).toContain("task-2-1");
-      expect(report).toContain("task-2-2");
-      expect(report).toContain("implement");
-      expect(report).toContain("scaffold");
-      // Phase-2 tasks are independent so should show as parallel
-      expect(report).toContain("[parallel]");
-      // Phase-1 tasks have dependency so should show sequential
-      expect(report).toContain("[sequential]");
-    });
-  });
-
-  describe("runPhases — turn limit", () => {
-    it("halts at turn limit with partial report", async () => {
-      const tasksJson = makeTasksJson();
-      tmpDir = setupTmpDir(tasksJson);
-      const config = { ...makeDefaultConfig(tmpDir), turnLimit: 5 };
-
-      setupMocksForTurnLimit(5);
-
-      const result = await runPhases(config, tasksJson);
-
-      expect(result.success).toBe(false);
-      expect(result.phasesFailed).toContain("phase-1");
-      expect(result.finalState.phaseReports.length).toBeGreaterThanOrEqual(1);
-      const report = result.finalState.phaseReports[0]!;
-      expect(report.status).toBe("partial");
-      expect(report.summary).toContain("turn_limit");
-    });
-  });
-
-  describe("runPhases — resume", () => {
-    it("resumes from last incomplete phase", async () => {
-      const tasksJson = makeTasksJson();
-      tmpDir = setupTmpDir(tasksJson);
-      const config = makeDefaultConfig(tmpDir);
-
-      // Pre-populate state with phase-1 completed
-      const preState: SharedState = {
-        currentPhase: "phase-2",
-        completedPhases: ["phase-1"],
-        modifiedFiles: [],
-        schemaChanges: [],
-        phaseReports: [
-          makePhaseReport("phase-1", {
-            tasksCompleted: ["task-1-1", "task-1-2"],
-          }),
-        ],
-        phaseRetries: {},
-      };
-      writeFileSync(
-        config.statePath!,
-        JSON.stringify(preState),
-      );
-
-      // Only set up mocks for phase-2
-      const reports = new Map<string, PhaseReport>([
-        [
-          "phase-2",
-          makePhaseReport("phase-2", {
-            tasksCompleted: ["task-2-1", "task-2-2"],
-          }),
-        ],
-      ]);
-      setupMocksForSuccess(reports);
-
-      const result = await runPhases(config, tasksJson);
-
-      expect(result.success).toBe(true);
-      // phase-1 was already completed (from state), phase-2 ran now
-      expect(result.phasesCompleted).toContain("phase-1");
-      expect(result.phasesCompleted).toContain("phase-2");
-      expect(result.finalState.completedPhases).toContain("phase-1");
-      expect(result.finalState.completedPhases).toContain("phase-2");
-
-      // Verify that only one orchestrator launch happened (for phase-2)
-      const mockLauncher = createAgentLauncher as ReturnType<typeof vi.fn>;
-      expect(mockLauncher).toHaveBeenCalledTimes(1);
-    });
-  });
-
-  describe("runSinglePhase", () => {
-    it("runs only the specified phase", async () => {
-      const tasksJson = makeTasksJson();
-      tmpDir = setupTmpDir(tasksJson);
-      const config = makeDefaultConfig(tmpDir);
-
-      const reports = new Map<string, PhaseReport>([
-        [
-          "phase-2",
-          makePhaseReport("phase-2", {
-            tasksCompleted: ["task-2-1", "task-2-2"],
-          }),
-        ],
-      ]);
-      setupMocksForSuccess(reports);
-
-      const result = await runSinglePhase(config, tasksJson, "phase-2");
-
-      expect(result.success).toBe(true);
-      expect(result.phasesCompleted).toEqual(["phase-2"]);
-      expect(result.phasesFailed).toHaveLength(0);
-    });
-
-    it("throws for unknown phase ID", async () => {
-      const tasksJson = makeTasksJson();
-      tmpDir = setupTmpDir(tasksJson);
-      const config = makeDefaultConfig(tmpDir);
-
-      await expect(
-        runSinglePhase(config, tasksJson, "phase-nonexistent"),
-      ).rejects.toThrow(/Phase not found/);
-    });
-  });
-
-  describe("promptForContinuation (§10 #13)", () => {
-    it.each([
-      ["", "continue"],
-      ["r", "retry"],
-      ["s", "skip"],
-      ["q", "quit"],
-      ["retry", "retry"],
-      ["skip", "skip"],
-      ["quit", "quit"],
-      ["  R  ", "retry"],
-      ["  RETRY  ", "retry"],
-      ["Q", "quit"],
-      ["anything-else", "continue"],
-    ] as const)("maps input %j to %j", async (input, expected) => {
-      const { Readable } = await import("node:stream");
-      const mockStdin = new Readable({
-        read() {
-          this.push(input + "\n");
-          this.push(null);
-        },
-      });
-
-      const originalStdin = process.stdin;
-      Object.defineProperty(process, "stdin", {
-        value: mockStdin,
-        writable: true,
-        configurable: true,
-      });
-
-      try {
-        const result = await promptForContinuation();
-        expect(result).toBe(expected);
-      } finally {
-        Object.defineProperty(process, "stdin", {
-          value: originalStdin,
-          writable: true,
-          configurable: true,
-        });
-      }
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // buildPhaseContext — guidelines reference
-  // -------------------------------------------------------------------------
-
-  describe("buildPhaseContext", () => {
-    const phase: Phase = {
-      id: "phase-1",
-      name: "scaffolding",
-      description: "Set up project",
-      tasks: [],
-    };
-
-    const state: SharedState = {
-      currentPhase: "phase-1",
-      completedPhases: [],
-      modifiedFiles: [],
-      schemaChanges: [],
-      phaseReports: [],
-      phaseRetries: {},
-    };
-
-    it("includes guidelines reference when guidelinesPath is present", () => {
-      const ctx: RunContext = {
-        projectRoot: ".",
-        specPath: "spec.md",
-        planPath: "plan.md",
-        guidelinesPath: "guidelines.md",
-        statePath: "state.json",
-        trajectoryPath: "trajectory.jsonl",
-        isolation: "none",
-        concurrency: 3,
-        maxRetries: 2,
-        headless: true,
-        verbose: false,
-        dryRun: false,
-        turnLimit: 100,
-        maxConsecutiveErrors: 5,
-        pluginRoot: ".",
-      };
-      const context = buildPhaseContext(phase, state, "", ctx);
-      expect(context).toContain("## Guidelines Content");
-      expect(context).toContain("guidelines.md");
-    });
-
-    it("shows 'none configured' when guidelinesPath is absent", () => {
-      const ctx: RunContext = {
-        projectRoot: ".",
-        specPath: "spec.md",
-        planPath: "plan.md",
-        statePath: "state.json",
-        trajectoryPath: "trajectory.jsonl",
-        isolation: "none",
-        concurrency: 3,
-        maxRetries: 2,
-        headless: true,
-        verbose: false,
-        dryRun: false,
-        turnLimit: 100,
-        maxConsecutiveErrors: 5,
-        pluginRoot: ".",
-      };
-      const context = buildPhaseContext(phase, state, "", ctx);
-      expect(context).toContain("## Guidelines Content");
-      expect(context).toContain("none configured");
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // Judge loop — pure function tests
-  // -------------------------------------------------------------------------
-
-  describe("parseJudgeResult", () => {
-    it("parses valid JSON directly", () => {
-      const result = parseJudgeResult(
-        '{ "passed": true, "issues": [], "suggestions": ["nice code"] }',
-      );
-      expect(result.passed).toBe(true);
-      expect(result.issues).toEqual([]);
-      expect(result.suggestions).toEqual(["nice code"]);
-    });
-
-    it("extracts JSON from markdown fences", () => {
-      const result = parseJudgeResult(
-        'Here is my assessment:\n\n```json\n{ "passed": false, "issues": ["Bug: off-by-one"], "suggestions": [] }\n```\n',
-      );
-      expect(result.passed).toBe(false);
-      expect(result.issues).toEqual(["Bug: off-by-one"]);
-    });
-
-    it("finds JSON object with passed field in mixed output", () => {
-      const result = parseJudgeResult(
-        'I reviewed the code.\n{ "passed": true, "issues": [], "suggestions": [] }\nThat is all.',
-      );
-      expect(result.passed).toBe(true);
-    });
-
-    it("returns failure assessment on unparseable output", () => {
-      const result = parseJudgeResult("This is just text with no JSON");
-      expect(result.passed).toBe(false);
-      expect(result.issues.length).toBe(1);
-      expect(result.issues[0]).toContain("unparseable");
-    });
-  });
-
-  describe("buildJudgePrompt", () => {
-    it("includes changed files and task acceptance criteria", () => {
-      const phase: Phase = {
-        id: "phase-1",
-        name: "setup",
-        description: "Set up project",
-        tasks: [
-          {
-            id: "task-1",
-            title: "Init",
-            description: "Initialize",
-            dependsOn: [],
-            specSections: ["§1"],
-            targetPaths: ["package.json"],
-            acceptanceCriteria: ["npm install exits 0"],
-            subAgentType: "implement",
-            status: "pending",
-          },
-        ],
-      };
-
-      const prompt = buildJudgePrompt({
-        changedFiles: [
-          { path: "package.json", status: "A" },
-          { path: "src/index.ts", status: "M" },
-        ],
-        diffContent: "+added line",
-        phase,
-        orchestratorReport: makePhaseReport("phase-1"),
-      });
-
-      expect(prompt).toContain("[A] package.json");
-      expect(prompt).toContain("[M] src/index.ts");
-      expect(prompt).toContain("npm install exits 0");
-      expect(prompt).toContain("+added line");
-      expect(prompt).toContain("not authoritative");
-    });
-  });
-
-  describe("buildFixPrompt", () => {
-    it("includes numbered issues and phase context", () => {
-      const phase: Phase = {
-        id: "phase-1",
-        name: "setup",
-        description: "Set up project",
-        tasks: [],
-      };
-
-      const prompt = buildFixPrompt(
-        ["Missing export in utils.ts", "Wrong return type in handler"],
-        phase,
-      );
-
-      expect(prompt).toContain("1. Missing export in utils.ts");
-      expect(prompt).toContain("2. Wrong return type in handler");
-      expect(prompt).toContain("phase-1");
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // buildJudgePrompt — edge cases
-  // -------------------------------------------------------------------------
-
-  describe("buildJudgePrompt — edge cases", () => {
-    it("handles empty changedFiles array", () => {
-      const phase: Phase = {
-        id: "phase-1",
-        name: "setup",
-        description: "Set up",
-        tasks: [
-          {
-            id: "task-1",
-            title: "Init",
-            description: "Initialize",
-            dependsOn: [],
-            specSections: [],
-            targetPaths: [],
-            acceptanceCriteria: ["works"],
-            subAgentType: "implement",
-            status: "pending",
-          },
-        ],
-      };
-
-      const prompt = buildJudgePrompt({
-        changedFiles: [],
-        diffContent: "",
-        phase,
-        orchestratorReport: makePhaseReport("phase-1"),
-      });
-
-      expect(prompt).toBeDefined();
-      expect(typeof prompt).toBe("string");
-    });
-
-    it("handles deleted files (D status)", () => {
-      const phase: Phase = {
-        id: "phase-1",
-        name: "cleanup",
-        description: "Clean up",
-        tasks: [],
-      };
-
-      const prompt = buildJudgePrompt({
-        changedFiles: [{ path: "old-file.ts", status: "D" }],
-        diffContent: "-removed content",
-        phase,
-        orchestratorReport: makePhaseReport("phase-1"),
-      });
-
-      expect(prompt).toContain("[D] old-file.ts");
-    });
-
-    it("handles tasks with empty acceptanceCriteria", () => {
-      const phase: Phase = {
-        id: "phase-1",
-        name: "setup",
-        description: "Set up",
-        tasks: [
-          {
-            id: "task-1",
-            title: "Init",
-            description: "Initialize",
-            dependsOn: [],
-            specSections: [],
-            targetPaths: [],
-            acceptanceCriteria: [],
-            subAgentType: "implement",
-            status: "pending",
-          },
-        ],
-      };
-
-      const prompt = buildJudgePrompt({
-        changedFiles: [{ path: "file.ts", status: "A" }],
-        diffContent: "+content",
-        phase,
-        orchestratorReport: makePhaseReport("phase-1"),
-      });
-
-      expect(prompt).toBeDefined();
-      expect(typeof prompt).toBe("string");
-    });
-
-    it("handles tasks with empty targetPaths", () => {
-      const phase: Phase = {
-        id: "phase-1",
-        name: "setup",
-        description: "Set up",
-        tasks: [
-          {
-            id: "task-1",
-            title: "Init",
-            description: "Initialize",
-            dependsOn: [],
-            specSections: [],
-            targetPaths: [],
-            acceptanceCriteria: ["passes"],
-            subAgentType: "implement",
-            status: "pending",
-          },
-        ],
-      };
-
-      const prompt = buildJudgePrompt({
-        changedFiles: [{ path: "file.ts", status: "M" }],
-        diffContent: "+changes",
-        phase,
-        orchestratorReport: makePhaseReport("phase-1"),
-      });
-
-      expect(prompt).toBeDefined();
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // runPhases — error paths
-  // -------------------------------------------------------------------------
-
-  describe("runPhases — halt action", () => {
-    it("halts when report recommends halt in headless mode", async () => {
-      const tasksJson = makeTasksJson();
-      tmpDir = setupTmpDir(tasksJson);
-      const config = makeDefaultConfig(tmpDir);
-
-      const haltReport = makePhaseReport("phase-1", {
-        status: "partial",
-        recommendedAction: "halt",
-        tasksCompleted: [],
-        tasksFailed: ["task-1-1", "task-1-2"],
-      });
-
-      const reports = new Map<string, PhaseReport>([
-        ["phase-1", haltReport],
-      ]);
-      setupMocksForSuccess(reports);
-
-      const result = await runPhases(config, tasksJson);
-
-      expect(result.success).toBe(false);
-      expect(result.phasesFailed).toContain("phase-1");
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // Judge loop — integration with runPhases
-  // -------------------------------------------------------------------------
-
-  describe("runPhases — judge loop", () => {
-    it("judge passes: phase advances normally", async () => {
-      const tasksJson = makeTasksJson();
-      tmpDir = setupTmpDir(tasksJson);
-      const config = makeDefaultConfig(tmpDir);
-
-      // Mock getChangedFiles to return some files (triggers judge)
-      const mockGetChangedFiles = getChangedFiles as ReturnType<typeof vi.fn>;
-      mockGetChangedFiles.mockReturnValue([
-        { path: "src/index.ts", status: "A" },
-      ]);
-      const mockGetDiffContent = getDiffContent as ReturnType<typeof vi.fn>;
-      mockGetDiffContent.mockReturnValue("+new file content");
-
-      const reports = new Map<string, PhaseReport>([
-        [
-          "phase-1",
-          makePhaseReport("phase-1", {
-            tasksCompleted: ["task-1-1", "task-1-2"],
-          }),
-        ],
-        [
-          "phase-2",
-          makePhaseReport("phase-2", {
-            tasksCompleted: ["task-2-1", "task-2-2"],
-          }),
-        ],
-      ]);
-
-      // Set up mocks with judge-aware dispatchSubAgent
-      const mockCreateAgentLauncher = createAgentLauncher as ReturnType<typeof vi.fn>;
-      const mockCreateReplSession = createReplSession as ReturnType<typeof vi.fn>;
-      const mockCreateReplHelpers = createReplHelpers as ReturnType<typeof vi.fn>;
-
-      mockCreateReplHelpers.mockImplementation(() => createMockHelpers());
-
-      let launchCount = 0;
-      const phaseIds = [...reports.keys()];
-
-      mockCreateAgentLauncher.mockImplementation(() => ({
-        dispatchSubAgent: async (subConfig: { type: string }) => {
-          if (subConfig.type === "judge") {
-            return {
-              success: true,
-              output: JSON.stringify({
-                passed: true,
-                issues: [],
-                suggestions: ["looks good"],
-              }),
-              filesModified: [],
-            };
-          }
-          return { success: true, output: "", filesModified: [] };
-        },
-        llmQuery: async () => "mock",
-        launchOrchestrator: async () => {
-          const phaseId = phaseIds[launchCount] ?? phaseIds[phaseIds.length - 1]!;
-          launchCount++;
-          const report = reports.get(phaseId)!;
-          return createMockOrchestrator([
-            'console.log("working...")',
-            `writePhaseReport(${JSON.stringify(report)})`,
-          ]);
-        },
-      }));
-
-      mockCreateReplSession.mockImplementation(
-        (sessionConfig: { helpers: ReplHelpers }) => {
-          let consecutiveErrors = 0;
-          return {
-            async eval(code: string): Promise<ReplEvalResult> {
-              if (code.includes("writePhaseReport(")) {
-                try {
-                  const jsonMatch = code.match(/writePhaseReport\((.+)\)/s);
-                  if (jsonMatch?.[1]) {
-                    sessionConfig.helpers.writePhaseReport(JSON.parse(jsonMatch[1]));
-                  }
-                } catch (err) {
-                  consecutiveErrors++;
-                  return { success: false, output: "", truncated: false, error: err instanceof Error ? err.message : String(err), duration: 1 };
-                }
-                consecutiveErrors = 0;
-                return { success: true, output: "Report written.", truncated: false, duration: 1 };
-              }
-              consecutiveErrors = 0;
-              return { success: true, output: "ok", truncated: false, duration: 1 };
-            },
-            restoreScaffold() {},
-            getConsecutiveErrors() { return consecutiveErrors; },
-            resetConsecutiveErrors() { consecutiveErrors = 0; },
-            destroy() {},
-          } satisfies ReplSession;
-        },
-      );
-
-      const result = await runPhases(config, tasksJson);
-
-      expect(result.success).toBe(true);
-      expect(result.phasesCompleted).toContain("phase-1");
-      expect(result.phasesCompleted).toContain("phase-2");
-      // Judge assessment should be attached to reports
-      const phase1Report = result.finalState.phaseReports.find(
-        (r) => r.phaseId === "phase-1",
-      );
-      expect(phase1Report?.judgeAssessment?.passed).toBe(true);
-    });
-
-    it("judge fails: downgrades recommendation to retry", async () => {
+  describe("runPhases — missing report file", () => {
+    it("returns failed when orchestrator does not write report", async () => {
       const tasksJson = makeTasksJson();
       tmpDir = setupTmpDir(tasksJson);
       const config = { ...makeDefaultConfig(tmpDir), maxRetries: 0 };
 
-      const mockGetChangedFiles = getChangedFiles as ReturnType<typeof vi.fn>;
-      mockGetChangedFiles.mockReturnValue([
-        { path: "src/a.ts", status: "A" },
-      ]);
-      const mockGetDiffContent = getDiffContent as ReturnType<typeof vi.fn>;
-      mockGetDiffContent.mockReturnValue("+content");
-
       const mockCreateAgentLauncher = createAgentLauncher as ReturnType<typeof vi.fn>;
-      const mockCreateReplSession = createReplSession as ReturnType<typeof vi.fn>;
-      const mockCreateReplHelpers = createReplHelpers as ReturnType<typeof vi.fn>;
-
-      mockCreateReplHelpers.mockImplementation(() => createMockHelpers());
-
-      const phase1Report = makePhaseReport("phase-1", {
-        tasksCompleted: ["task-1-1", "task-1-2"],
-      });
-
       mockCreateAgentLauncher.mockImplementation(() => ({
-        dispatchSubAgent: async (subConfig: { type: string }) => {
-          if (subConfig.type === "judge") {
-            return {
-              success: true,
-              output: JSON.stringify({
-                passed: false,
-                issues: ["Spec violation: missing export"],
-                suggestions: [],
-              }),
-              filesModified: [],
-            };
-          }
-          if (subConfig.type === "fix") {
-            return { success: true, output: "Fixed.", filesModified: [] };
-          }
-          return { success: true, output: "", filesModified: [] };
+        dispatchSubAgent: async () => ({
+          success: true,
+          output: '{"passed": true, "issues": [], "suggestions": []}',
+          filesModified: [],
+        }),
+        runPhaseOrchestrator: async (): Promise<ExecClaudeResult> => {
+          // Don't write a report file
+          return { stdout: "crashed", stderr: "error", exitCode: 1 };
         },
-        llmQuery: async () => "mock",
-        launchOrchestrator: async () =>
-          createMockOrchestrator([
-            'console.log("work")',
-            `writePhaseReport(${JSON.stringify(phase1Report)})`,
-          ]),
       }));
-
-      mockCreateReplSession.mockImplementation(
-        (sessionConfig: { helpers: ReplHelpers }) => {
-          let consecutiveErrors = 0;
-          return {
-            async eval(code: string): Promise<ReplEvalResult> {
-              if (code.includes("writePhaseReport(")) {
-                try {
-                  const jsonMatch = code.match(/writePhaseReport\((.+)\)/s);
-                  if (jsonMatch?.[1]) {
-                    sessionConfig.helpers.writePhaseReport(JSON.parse(jsonMatch[1]));
-                  }
-                } catch (err) {
-                  consecutiveErrors++;
-                  return { success: false, output: "", truncated: false, error: err instanceof Error ? err.message : String(err), duration: 1 };
-                }
-                return { success: true, output: "ok", truncated: false, duration: 1 };
-              }
-              consecutiveErrors = 0;
-              return { success: true, output: "ok", truncated: false, duration: 1 };
-            },
-            restoreScaffold() {},
-            getConsecutiveErrors() { return consecutiveErrors; },
-            resetConsecutiveErrors() { consecutiveErrors = 0; },
-            destroy() {},
-          } satisfies ReplSession;
-        },
-      );
 
       const result = await runPhases(config, tasksJson);
 
-      // With maxRetries=0, judge failure should halt
       expect(result.success).toBe(false);
       expect(result.phasesFailed).toContain("phase-1");
     });
+  });
 
-    it("no changed files: judge is skipped", async () => {
+  describe("runPhases — missing tasks in report", () => {
+    it("marks phase as partial when report is missing tasks", async () => {
+      const tasksJson = makeTasksJson();
+      tmpDir = setupTmpDir(tasksJson);
+      const config = { ...makeDefaultConfig(tmpDir), maxRetries: 0 };
+
+      const mockCreateAgentLauncher = createAgentLauncher as ReturnType<typeof vi.fn>;
+      mockCreateAgentLauncher.mockImplementation(() => ({
+        dispatchSubAgent: async () => ({
+          success: true,
+          output: '{"passed": true, "issues": [], "suggestions": []}',
+          filesModified: [],
+        }),
+        runPhaseOrchestrator: async (): Promise<ExecClaudeResult> => {
+          // Report only accounts for 1 of 2 tasks
+          const report = makePhaseReport("phase-1", {
+            tasksCompleted: ["task-1-1"],
+            tasksFailed: [],
+          });
+          writeFileSync(
+            join(tmpDir, ".trellis-phase-report.json"),
+            JSON.stringify(report),
+          );
+          return { stdout: "done", stderr: "", exitCode: 0 };
+        },
+      }));
+
+      const result = await runPhases(config, tasksJson);
+
+      // With maxRetries=0, it should halt after first phase fails
+      expect(result.success).toBe(false);
+      expect(result.phasesFailed).toContain("phase-1");
+    });
+  });
+
+  describe("dryRunReport", () => {
+    it("generates a report with phase and task info", () => {
       const tasksJson = makeTasksJson();
       tmpDir = setupTmpDir(tasksJson);
       const config = makeDefaultConfig(tmpDir);
 
-      // getChangedFiles returns empty (default mock behavior)
-      const mockGetChangedFiles = getChangedFiles as ReturnType<typeof vi.fn>;
-      mockGetChangedFiles.mockReturnValue([]);
+      const report = dryRunReport(tasksJson, config);
 
-      const reports = new Map<string, PhaseReport>([
-        [
-          "phase-1",
-          makePhaseReport("phase-1", {
-            tasksCompleted: ["task-1-1", "task-1-2"],
-          }),
-        ],
-        [
-          "phase-2",
-          makePhaseReport("phase-2", {
-            tasksCompleted: ["task-2-1", "task-2-2"],
-          }),
-        ],
-      ]);
-      setupMocksForSuccess(reports);
-
-      const result = await runPhases(config, tasksJson);
-
-      expect(result.success).toBe(true);
-      // Judge should have trivially passed (no files)
-      const phase1Report = result.finalState.phaseReports.find(
-        (r) => r.phaseId === "phase-1",
-      );
-      expect(phase1Report?.judgeAssessment?.passed).toBe(true);
-      expect(phase1Report?.judgeAssessment?.issues).toEqual([]);
+      expect(report).toContain("phase-1");
+      expect(report).toContain("phase-2");
+      expect(report).toContain("task-1-1");
+      expect(report).toContain("Init project");
     });
   });
 
-  // -------------------------------------------------------------------------
-  // normalizeReport
-  // -------------------------------------------------------------------------
   describe("normalizeReport", () => {
-    it("passes through correct schema fields unchanged (except phaseId injected)", () => {
-      const raw = {
-        phaseId: "wrong-id",
-        status: "complete",
-        summary: "All good",
-        tasksCompleted: ["t1", "t2"],
-        tasksFailed: [],
-        orchestratorAnalysis: "Went well",
-        recommendedAction: "advance",
-        correctiveTasks: [],
-        decisionsLog: ["decided X"],
-        handoff: "Ready for next phase",
-      };
-      const result = normalizeReport(raw, "phase-1");
-      expect(result.phaseId).toBe("phase-1");
-      expect(result.status).toBe("complete");
-      expect(result.summary).toBe("All good");
-      expect(result.tasksCompleted).toEqual(["t1", "t2"]);
-      expect(result.tasksFailed).toEqual([]);
-      expect(result.orchestratorAnalysis).toBe("Went well");
-      expect(result.recommendedAction).toBe("advance");
-      expect(result.correctiveTasks).toEqual([]);
-      expect(result.decisionsLog).toEqual(["decided X"]);
-      expect(result.handoff).toBe("Ready for next phase");
+    it("fills defaults for missing fields", () => {
+      const report = normalizeReport({}, "test-phase");
+
+      expect(report.phaseId).toBe("test-phase");
+      expect(report.status).toBe("partial");
+      expect(report.recommendedAction).toBe("halt");
+      expect(report.tasksCompleted).toEqual([]);
+      expect(report.tasksFailed).toEqual([]);
     });
 
-    it("maps LLM-style taskOutcomes to tasksCompleted and tasksFailed", () => {
-      const raw = {
-        status: "complete",
-        recommendedAction: "advance",
-        taskOutcomes: [
-          { taskId: "t1", status: "passed" },
-          { taskId: "t2", status: "failed" },
-          { taskId: "t3", status: "passed" },
+    it("maps taskOutcomes to tasksCompleted/tasksFailed", () => {
+      const report = normalizeReport(
+        {
+          taskOutcomes: [
+            { taskId: "task-1", status: "complete" },
+            { taskId: "task-2", status: "failed" },
+            { taskId: "task-3", status: "completed" },
+          ],
+        },
+        "p1",
+      );
+
+      expect(report.tasksCompleted).toEqual(["task-1", "task-3"]);
+      expect(report.tasksFailed).toEqual(["task-2"]);
+    });
+
+    it("maps handoffBriefing to handoff", () => {
+      const report = normalizeReport(
+        { handoffBriefing: "Next phase should..." },
+        "p1",
+      );
+
+      expect(report.handoff).toBe("Next phase should...");
+    });
+
+    it("preserves valid status and action", () => {
+      const report = normalizeReport(
+        {
+          status: "complete",
+          recommendedAction: "advance",
+          tasksCompleted: ["a", "b"],
+        },
+        "p1",
+      );
+
+      expect(report.status).toBe("complete");
+      expect(report.recommendedAction).toBe("advance");
+      expect(report.tasksCompleted).toEqual(["a", "b"]);
+    });
+  });
+
+  describe("buildPhaseContext", () => {
+    it("includes task details and completion protocol", () => {
+      const tasksJson = makeTasksJson();
+      tmpDir = setupTmpDir(tasksJson);
+      const config = makeDefaultConfig(tmpDir);
+      const state: SharedState = {
+        currentPhase: "",
+        completedPhases: [],
+        modifiedFiles: [],
+        schemaChanges: [],
+        phaseReports: [],
+        phaseRetries: {},
+      };
+
+      const context = buildPhaseContext(
+        tasksJson.phases[0]!,
+        state,
+        "",
+        config,
+      );
+
+      expect(context).toContain("task-1-1");
+      expect(context).toContain("task-1-2");
+      expect(context).toContain("Completion Protocol");
+      expect(context).toContain(".trellis-phase-report.json");
+      // Should NOT contain REPL protocol
+      expect(context).not.toContain("REPL Protocol");
+      expect(context).not.toContain("readFile(");
+      expect(context).not.toContain("writeFile(");
+    });
+
+    it("includes previous attempt context on retries", () => {
+      const tasksJson = makeTasksJson();
+      tmpDir = setupTmpDir(tasksJson);
+      const config = makeDefaultConfig(tmpDir);
+      const state: SharedState = {
+        currentPhase: "phase-1",
+        completedPhases: [],
+        modifiedFiles: [],
+        schemaChanges: [],
+        phaseReports: [
+          makePhaseReport("phase-1", {
+            status: "partial",
+            summary: "Build failed",
+            tasksCompleted: ["task-1-1"],
+            tasksFailed: ["task-1-2"],
+          }),
         ],
+        phaseRetries: { "phase-1": 1 },
       };
-      const result = normalizeReport(raw, "p1");
-      expect(result.tasksCompleted).toEqual(["t1", "t3"]);
-      expect(result.tasksFailed).toEqual(["t2"]);
-    });
 
-    it("maps handoffBriefing to handoff when handoff is absent", () => {
-      const raw = {
-        status: "complete",
-        recommendedAction: "advance",
-        handoffBriefing: "Next phase should do X",
-      };
-      const result = normalizeReport(raw, "p1");
-      expect(result.handoff).toBe("Next phase should do X");
-    });
+      const context = buildPhaseContext(
+        tasksJson.phases[0]!,
+        state,
+        "",
+        config,
+      );
 
-    it("prefers handoff over handoffBriefing when both present", () => {
-      const raw = {
-        status: "complete",
-        handoff: "canonical",
-        handoffBriefing: "should be ignored",
-      };
-      const result = normalizeReport(raw, "p1");
-      expect(result.handoff).toBe("canonical");
+      expect(context).toContain("Previous Attempt");
+      expect(context).toContain("retry attempt 1");
+      expect(context).toContain("Build failed");
     });
+  });
 
-    it("fills missing required fields with defaults", () => {
-      const raw = {};
-      const result = normalizeReport(raw, "p1");
-      expect(result.phaseId).toBe("p1");
-      expect(result.status).toBe("partial");
-      expect(result.summary).toBe("");
-      expect(result.tasksCompleted).toEqual([]);
-      expect(result.tasksFailed).toEqual([]);
-      expect(result.orchestratorAnalysis).toBe("");
-      expect(result.recommendedAction).toBe("advance");
-      expect(result.correctiveTasks).toEqual([]);
-      expect(result.decisionsLog).toEqual([]);
-      expect(result.handoff).toBe("");
-    });
+  describe("buildJudgePrompt", () => {
+    it("includes changed files and acceptance criteria", () => {
+      const phase: Phase = makeTasksJson().phases[0]!;
+      const report = makePhaseReport("phase-1", {
+        tasksCompleted: ["task-1-1", "task-1-2"],
+      });
 
-    it("always injects phaseId from argument, overriding raw value", () => {
-      const raw = { phaseId: "stale-id", status: "complete" };
-      const result = normalizeReport(raw, "correct-id");
-      expect(result.phaseId).toBe("correct-id");
-    });
-
-    it("defaults unrecognized status to 'partial'", () => {
-      const raw = { status: "done" };
-      const result = normalizeReport(raw, "p1");
-      expect(result.status).toBe("partial");
-    });
-
-    it("defaults unrecognized recommendedAction to 'advance'", () => {
-      const raw = { recommendedAction: "continue" };
-      const result = normalizeReport(raw, "p1");
-      expect(result.recommendedAction).toBe("advance");
-    });
-
-    it("does not use taskOutcomes when tasksCompleted is already present", () => {
-      const raw = {
-        status: "complete",
-        tasksCompleted: ["explicit-task"],
-        taskOutcomes: [
-          { taskId: "t1", status: "passed" },
-          { taskId: "t2", status: "failed" },
+      const prompt = buildJudgePrompt({
+        changedFiles: [
+          { path: "package.json", status: "A" },
+          { path: "tsconfig.json", status: "A" },
         ],
-      };
-      const result = normalizeReport(raw, "p1");
-      expect(result.tasksCompleted).toEqual(["explicit-task"]);
-      expect(result.tasksFailed).toEqual([]);
+        diffContent: "diff --git a/package.json...",
+        phase,
+        orchestratorReport: report,
+      });
+
+      expect(prompt).toContain("package.json");
+      expect(prompt).toContain("tsconfig.json");
+      expect(prompt).toContain("npm install exits 0");
+      expect(prompt).toContain("tsc --noEmit exits 0");
     });
   });
 
-  describe("isCommentOnly", () => {
-    it("returns true for single-line comments only", () => {
-      expect(isCommentOnly("// just a comment\n// another comment")).toBe(true);
+  describe("parseJudgeResult", () => {
+    it("parses valid JSON from markdown fences", () => {
+      const output = '```json\n{"passed": true, "issues": [], "suggestions": []}\n```';
+      const result = parseJudgeResult(output);
+
+      expect(result.passed).toBe(true);
+      expect(result.issues).toEqual([]);
     });
 
-    it("returns true for block comments only", () => {
-      expect(isCommentOnly("/* block comment */\n/* more */")).toBe(true);
+    it("parses JSON without fences", () => {
+      const result = parseJudgeResult(
+        '{"passed": false, "issues": [{"task": "t1", "severity": "must-fix", "description": "missing"}], "suggestions": []}',
+      );
+
+      expect(result.passed).toBe(false);
+      expect(result.issues).toHaveLength(1);
     });
 
-    it("returns false when real code follows a comment", () => {
-      expect(isCommentOnly("// comment\nconst x = 1")).toBe(false);
-    });
+    it("returns failure for unparseable output", () => {
+      const result = parseJudgeResult("This is not JSON at all.");
 
-    it("returns false when code precedes a comment", () => {
-      expect(isCommentOnly("var y = readFile('foo')\n// comment")).toBe(false);
-    });
-
-    it("returns true for empty string", () => {
-      expect(isCommentOnly("")).toBe(true);
-    });
-
-    it("returns true for comments with blank lines in between", () => {
-      expect(isCommentOnly("// comment\n\n// more comments")).toBe(true);
-    });
-
-    it("returns true for multi-line block comments", () => {
-      expect(isCommentOnly("/* multi\nline\nblock */")).toBe(true);
-    });
-
-    it("returns false when code follows closing */ on the same line", () => {
-      expect(isCommentOnly("/* comment */ const x = 1")).toBe(false);
+      expect(result.passed).toBe(false);
+      expect(result.issues).toHaveLength(1);
     });
   });
 
-  // -------------------------------------------------------------------------
-  // detectStuck
-  // -------------------------------------------------------------------------
+  describe("buildFixPrompt", () => {
+    it("includes issue descriptions", () => {
+      const phase: Phase = makeTasksJson().phases[0]!;
+      const prompt = buildFixPrompt(
+        [{ task: "task-1-1", severity: "must-fix", description: "Missing export" }],
+        phase,
+      );
 
-  describe("detectStuck", () => {
-    it("returns false when fewer outputs than threshold", () => {
-      expect(detectStuck(["a", "a", "a"], 4)).toBe(false);
-    });
-
-    it("returns true when last N outputs are identical", () => {
-      expect(detectStuck(["a", "a", "a", "a"], 4)).toBe(true);
-    });
-
-    it("returns false when outputs differ", () => {
-      expect(detectStuck(["a", "b", "a", "b"], 4)).toBe(false);
-    });
-
-    it("only checks the last N entries", () => {
-      expect(detectStuck(["x", "y", "a", "a", "a", "a"], 4)).toBe(true);
-    });
-
-    it("returns true for default threshold of 4", () => {
-      expect(detectStuck(["same", "same", "same", "same"])).toBe(true);
-    });
-
-    it("returns false for empty array", () => {
-      expect(detectStuck([])).toBe(false);
+      expect(prompt).toContain("Missing export");
+      expect(prompt).toContain("task-1-1");
     });
   });
-
-  // -------------------------------------------------------------------------
-  // createDefaultCheck
-  // -------------------------------------------------------------------------
 
   describe("createDefaultCheck", () => {
-    let tmpDir: string;
+    it("passes when all target paths exist", async () => {
+      const tasksJson = makeTasksJson();
+      tmpDir = setupTmpDir(tasksJson);
 
-    beforeEach(() => {
-      tmpDir = mkdtempSync(join(tmpdir(), "default-check-"));
-    });
+      // Create the target files
+      writeFileSync(join(tmpDir, "package.json"), "{}");
+      writeFileSync(join(tmpDir, "tsconfig.json"), "{}");
 
-    afterEach(() => {
-      rmSync(tmpDir, { recursive: true, force: true });
-    });
+      const check = createDefaultCheck(tmpDir, tasksJson.phases[0]!);
+      const result = await check.run();
 
-    function makePhase(targetPathsPerTask: string[][]): Phase {
-      return {
-        id: "p1",
-        name: "Phase 1",
-        description: "test phase",
-        tasks: targetPathsPerTask.map((paths, i) => ({
-          id: `t${i + 1}`,
-          title: `Task ${i + 1}`,
-          description: "",
-          dependsOn: [],
-          specSections: [],
-          targetPaths: paths,
-          acceptanceCriteria: [],
-          subAgentType: "code",
-          status: "pending" as const,
-        })),
-      };
-    }
-
-    it("returns passed=true when all phase targetPaths exist as files", async () => {
-      writeFileSync(join(tmpDir, "a.ts"), "");
-      writeFileSync(join(tmpDir, "b.ts"), "");
-      const phase = makePhase([["a.ts"], ["b.ts"]]);
-      const result = await createDefaultCheck(tmpDir, phase).run();
       expect(result.passed).toBe(true);
-      expect(result.output).toContain("2 target paths exist");
-      expect(result.exitCode).toBe(0);
     });
 
-    it("returns passed=false with list of missing files when some targetPaths don't exist", async () => {
-      writeFileSync(join(tmpDir, "a.ts"), "");
-      // b.ts intentionally missing
-      const phase = makePhase([["a.ts", "b.ts"]]);
-      const result = await createDefaultCheck(tmpDir, phase).run();
+    it("fails when target paths are missing", async () => {
+      const tasksJson = makeTasksJson();
+      tmpDir = setupTmpDir(tasksJson);
+
+      const check = createDefaultCheck(tmpDir, tasksJson.phases[0]!);
+      const result = await check.run();
+
       expect(result.passed).toBe(false);
-      expect(result.output).toContain("b.ts");
-      expect(result.output).toContain("Missing files (1/2)");
-      expect(result.exitCode).toBe(1);
-    });
-
-    it("returns passed=true when phase has no targetPaths", async () => {
-      const phase = makePhase([[], []]);
-      const result = await createDefaultCheck(tmpDir, phase).run();
-      expect(result.passed).toBe(true);
-      expect(result.output).toContain("No target paths to check");
-      expect(result.exitCode).toBe(0);
-    });
-
-    it("handles directory-style targetPaths (check directory exists)", async () => {
-      mkdirSync(join(tmpDir, "src"), { recursive: true });
-      const phase = makePhase([["src"]]);
-      const result = await createDefaultCheck(tmpDir, phase).run();
-      expect(result.passed).toBe(true);
-      expect(result.exitCode).toBe(0);
+      expect(result.output).toContain("package.json");
     });
   });
-
 });

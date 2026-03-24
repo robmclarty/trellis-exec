@@ -31,7 +31,7 @@ export async function compilePlan(config) {
     const parseResult = parsePlan(planContent, specRef, planRef, config.projectRoot);
     let tasksJson;
     if (parseResult.success && parseResult.tasksJson) {
-        const enricher = (prompt) => config.agentLauncher.llmQuery(prompt);
+        const enricher = config.query;
         tasksJson = await enrichPlan(parseResult, enricher);
         if (guidelinesRef) {
             tasksJson = { ...tasksJson, guidelinesRef };
@@ -43,7 +43,7 @@ export async function compilePlan(config) {
             ? readFileSync(config.guidelinesPath, "utf-8")
             : undefined;
         const decomposePrompt = buildDecomposePrompt(planContent, specContent, specRef, planRef, config.projectRoot, guidelinesContent, guidelinesRef);
-        const raw = await config.agentLauncher.llmQuery(decomposePrompt);
+        const raw = await config.query(decomposePrompt);
         const parsed = JSON.parse(stripCodeFences(raw));
         const validation = TasksJsonSchema.safeParse(parsed);
         if (!validation.success) {

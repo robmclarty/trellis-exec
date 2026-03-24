@@ -8,15 +8,12 @@ export type RunContext = {
     statePath: string;
     trajectoryPath: string;
     checkCommand?: string;
-    isolation: "worktree" | "none";
     concurrency: number;
     model?: string;
     maxRetries: number;
     headless: boolean;
     verbose: boolean;
     dryRun: boolean;
-    turnLimit: number;
-    maxConsecutiveErrors: number;
     pluginRoot: string;
 };
 export declare function buildRunContext(args: string[], env?: Record<string, string | undefined>): {

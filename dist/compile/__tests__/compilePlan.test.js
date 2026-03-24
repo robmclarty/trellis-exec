@@ -109,17 +109,13 @@ describe("compilePlan", () => {
             const tj = makeValidTasksJson();
             mockParsePlan.mockReturnValue(makeSuccessParseResult(tj));
             mockEnrichPlan.mockResolvedValue(tj);
-            const mockLauncher = {
-                llmQuery: vi.fn(),
-                dispatchSubAgent: vi.fn(),
-                launchOrchestrator: vi.fn(),
-            };
+            const mockQuery = vi.fn();
             const result = await compilePlan({
                 planPath: join(tmpDir, "plan.md"),
                 specPath: join(tmpDir, "spec.md"),
                 projectRoot: tmpDir,
                 outputPath: join(tmpDir, "output", "tasks.json"),
-                agentLauncher: mockLauncher,
+                query: mockQuery,
             });
             expect(result.phases).toHaveLength(1);
             // Verify file was written
@@ -137,11 +133,7 @@ describe("compilePlan", () => {
                 guidelinesPath: join(tmpDir, "guidelines.md"),
                 projectRoot: tmpDir,
                 outputPath: join(tmpDir, "output", "tasks.json"),
-                agentLauncher: {
-                    llmQuery: vi.fn(),
-                    dispatchSubAgent: vi.fn(),
-                    launchOrchestrator: vi.fn(),
-                },
+                query: vi.fn(),
             });
             expect(result.guidelinesRef).toBeDefined();
         });
@@ -154,11 +146,7 @@ describe("compilePlan", () => {
                 specPath: join(tmpDir, "spec.md"),
                 projectRoot: tmpDir,
                 outputPath: join(tmpDir, "output", "tasks.json"),
-                agentLauncher: {
-                    llmQuery: vi.fn(),
-                    dispatchSubAgent: vi.fn(),
-                    launchOrchestrator: vi.fn(),
-                },
+                query: vi.fn(),
             })).rejects.toThrow("Final TasksJson validation failed");
         });
     });
@@ -169,68 +157,52 @@ describe("compilePlan", () => {
         it("falls back to LLM decomposition when parser fails", async () => {
             mockParsePlan.mockReturnValue(makeFailedParseResult());
             const tj = makeValidTasksJson();
-            const mockLauncher = {
-                llmQuery: vi.fn().mockResolvedValue(JSON.stringify(tj)),
-                dispatchSubAgent: vi.fn(),
-                launchOrchestrator: vi.fn(),
-            };
+            const mockQuery = vi.fn().mockResolvedValue(JSON.stringify(tj));
             const result = await compilePlan({
                 planPath: join(tmpDir, "plan.md"),
                 specPath: join(tmpDir, "spec.md"),
                 projectRoot: tmpDir,
                 outputPath: join(tmpDir, "output", "tasks.json"),
-                agentLauncher: mockLauncher,
+                query: mockQuery,
             });
-            expect(mockLauncher.llmQuery).toHaveBeenCalled();
+            expect(mockQuery).toHaveBeenCalled();
             expect(result.phases).toHaveLength(1);
         });
         it("strips code fences from LLM JSON response", async () => {
             mockParsePlan.mockReturnValue(makeFailedParseResult());
             const tj = makeValidTasksJson();
             const fencedResponse = "```json\n" + JSON.stringify(tj) + "\n```";
-            const mockLauncher = {
-                llmQuery: vi.fn().mockResolvedValue(fencedResponse),
-                dispatchSubAgent: vi.fn(),
-                launchOrchestrator: vi.fn(),
-            };
+            const mockQuery = vi.fn().mockResolvedValue(fencedResponse);
             const result = await compilePlan({
                 planPath: join(tmpDir, "plan.md"),
                 specPath: join(tmpDir, "spec.md"),
                 projectRoot: tmpDir,
                 outputPath: join(tmpDir, "output", "tasks.json"),
-                agentLauncher: mockLauncher,
+                query: mockQuery,
             });
             expect(result.phases).toHaveLength(1);
         });
         it("throws on invalid LLM JSON output", async () => {
             mockParsePlan.mockReturnValue(makeFailedParseResult());
-            const mockLauncher = {
-                llmQuery: vi.fn().mockResolvedValue('{"invalid": true}'),
-                dispatchSubAgent: vi.fn(),
-                launchOrchestrator: vi.fn(),
-            };
+            const mockQuery = vi.fn().mockResolvedValue('{"invalid": true}');
             await expect(compilePlan({
                 planPath: join(tmpDir, "plan.md"),
                 specPath: join(tmpDir, "spec.md"),
                 projectRoot: tmpDir,
                 outputPath: join(tmpDir, "output", "tasks.json"),
-                agentLauncher: mockLauncher,
+                query: mockQuery,
             })).rejects.toThrow("LLM decomposition produced invalid TasksJson");
         });
         it("writes output file to correct path", async () => {
             mockParsePlan.mockReturnValue(makeFailedParseResult());
             const tj = makeValidTasksJson();
-            const mockLauncher = {
-                llmQuery: vi.fn().mockResolvedValue(JSON.stringify(tj)),
-                dispatchSubAgent: vi.fn(),
-                launchOrchestrator: vi.fn(),
-            };
+            const mockQuery = vi.fn().mockResolvedValue(JSON.stringify(tj));
             await compilePlan({
                 planPath: join(tmpDir, "plan.md"),
                 specPath: join(tmpDir, "spec.md"),
                 projectRoot: tmpDir,
                 outputPath: join(tmpDir, "output", "tasks.json"),
-                agentLauncher: mockLauncher,
+                query: mockQuery,
             });
             const written = readFileSync(join(tmpDir, "output", "tasks.json"), "utf-8");
             expect(JSON.parse(written)).toHaveProperty("phases");

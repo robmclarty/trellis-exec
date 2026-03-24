@@ -1,7 +1,7 @@
 import type { TasksJson, Phase } from "../types/tasks.js";
 import type { SharedState, PhaseReport, JudgeAssessment, JudgeIssue, CheckResult } from "../types/state.js";
 import type { RunContext } from "../cli.js";
-import type { ChangedFile } from "../isolation/worktreeManager.js";
+import type { ChangedFile } from "../git.js";
 export type PhaseRunnerResult = {
     success: boolean;
     phasesCompleted: string[];
@@ -21,25 +21,6 @@ export declare function promptForContinuation(options?: {
     retryCount?: number;
     maxRetries?: number;
 }): Promise<"continue" | "retry" | "skip" | "quit">;
-/**
- * Extracts executable JS code from an orchestrator response.
- *
- * The orchestrator may wrap code in markdown fences (```js ... ```) or
- * include explanatory text alongside code. This function extracts the
- * code blocks, falling back to the raw response if no fences are found.
- * If the response is clearly natural language (not JS), returns empty string.
- */
-export declare function extractCode(response: string): string;
-/**
- * Returns true if every non-empty line in the string is a comment
- * (single-line `//` or block `/* ... *​/`). An empty string returns true.
- */
-export declare function isCommentOnly(code: string): boolean;
-/**
- * Returns true if the last `threshold` entries in `recentOutputs` are identical,
- * indicating the orchestrator is stuck repeating the same action.
- */
-export declare function detectStuck(recentOutputs: string[], threshold?: number): boolean;
 export declare function buildJudgePrompt(config: {
     changedFiles: ChangedFile[];
     diffContent: string;

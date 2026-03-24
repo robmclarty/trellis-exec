@@ -17,7 +17,7 @@ export const SubAgentResultSchema = z.object({
 });
 
 export const TrajectoryEventTypeSchema = z.enum([
-  "repl_exec",
+  "phase_exec",
   "sub_agent_dispatch",
   "check_run",
   "judge_invoke",

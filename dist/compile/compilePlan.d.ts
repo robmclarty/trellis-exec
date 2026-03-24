@@ -1,12 +1,11 @@
 import type { TasksJson } from "../types/tasks.js";
-import type { AgentLauncher } from "../orchestrator/agentLauncher.js";
 export type CompileConfig = {
     planPath: string;
     specPath: string;
     guidelinesPath?: string;
     projectRoot: string;
     outputPath: string;
-    agentLauncher: AgentLauncher;
+    query: (prompt: string) => Promise<string>;
 };
 /**
  * Strips markdown code fences from a JSON response if present.

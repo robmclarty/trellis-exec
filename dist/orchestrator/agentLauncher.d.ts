@@ -1,27 +1,17 @@
 import type { SubAgentConfig, SubAgentResult } from "../types/agents.js";
+export type ExecClaudeResult = {
+    stdout: string;
+    stderr: string;
+    exitCode: number;
+};
 export type AgentLauncherConfig = {
     pluginRoot: string;
     projectRoot: string;
     dryRun?: boolean;
-    mockResponses?: Map<string, SubAgentResult>;
-};
-export type OrchestratorLaunchConfig = {
-    agentFile: string;
-    skillsDir: string;
-    phaseContext: string;
-    model?: string;
-};
-export type OrchestratorHandle = {
-    send(input: string): Promise<string>;
-    isAlive(): boolean;
-    kill(): void;
 };
 export type AgentLauncher = {
     dispatchSubAgent(config: SubAgentConfig): Promise<SubAgentResult>;
-    llmQuery(prompt: string, options?: {
-        model?: string;
-    }): Promise<string>;
-    launchOrchestrator(config: OrchestratorLaunchConfig): Promise<OrchestratorHandle>;
+    runPhaseOrchestrator(prompt: string, agentFile: string, model?: string): Promise<ExecClaudeResult>;
 };
 /**
  * Assembles the sub-agent prompt following the §5 input contract.
@@ -38,26 +28,17 @@ export declare function buildSubAgentPrompt(config: SubAgentConfig): string;
  */
 export declare function buildSubAgentArgs(agentFile: string, model: string): string[];
 /**
- * Builds the CLI args array for an llmQuery call.
+ * Spawns a `claude` CLI subprocess, optionally pipes stdin, and collects
+ * stdout/stderr. Rejects on timeout.
  */
-export declare function buildLlmQueryArgs(model: string): string[];
-/**
- * Builds the CLI args for the first orchestrator turn.
- * Subsequent turns use --continue to resume the session.
- */
-export declare function buildOrchestratorArgs(config: OrchestratorLaunchConfig): string[];
-/**
- * Builds the CLI args for continuing an orchestrator session (turn 2+).
- */
-export declare function buildOrchestratorContinueArgs(config: OrchestratorLaunchConfig): string[];
+export declare function execClaude(args: string[], cwd: string, stdin?: string, timeout?: number): Promise<ExecClaudeResult>;
 /**
  * Creates an AgentLauncher that manages claude CLI subprocesses for sub-agent
- * dispatch, LLM queries, and long-running orchestrator sessions.
+ * dispatch and phase orchestration.
  *
- * Supports three modes:
+ * Supports two modes:
  * - **real**: spawns actual `claude` CLI processes
  * - **dryRun**: logs commands without executing, returns mock results
- * - **mock**: returns pre-configured responses from `mockResponses` map
  */
 export declare function createAgentLauncher(config: AgentLauncherConfig): AgentLauncher;
 //# sourceMappingURL=agentLauncher.d.ts.map

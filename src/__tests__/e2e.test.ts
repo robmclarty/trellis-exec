@@ -14,9 +14,7 @@ import { execSync } from "node:child_process";
 import { TasksJsonSchema } from "../types/tasks.js";
 import type { TasksJson, Task } from "../types/tasks.js";
 import type { PhaseReport, SharedState } from "../types/state.js";
-import type { OrchestratorHandle } from "../orchestrator/agentLauncher.js";
-import type { ReplSession, ReplEvalResult } from "../orchestrator/replManager.js";
-import type { ReplHelpers } from "../orchestrator/replHelpers.js";
+import type { ExecClaudeResult } from "../orchestrator/agentLauncher.js";
 
 // ---------------------------------------------------------------------------
 // Constants — fixture paths
@@ -38,27 +36,10 @@ vi.mock("../orchestrator/agentLauncher.js", () => ({
   createAgentLauncher: vi.fn(),
   buildSubAgentPrompt: vi.fn(() => ""),
   buildSubAgentArgs: vi.fn(() => []),
-  buildLlmQueryArgs: vi.fn(() => []),
-  buildOrchestratorArgs: vi.fn(() => []),
+  execClaude: vi.fn(),
 }));
 
-vi.mock("../orchestrator/replManager.js", () => ({
-  createReplSession: vi.fn(),
-}));
-
-vi.mock("../orchestrator/replHelpers.js", () => ({
-  createReplHelpers: vi.fn(),
-}));
-
-vi.mock("../isolation/worktreeManager.js", () => ({
-  createWorktree: vi.fn(() => ({
-    success: true,
-    worktreePath: "/tmp/wt",
-    branchName: "trellis-exec/test/123",
-  })),
-  commitPhase: vi.fn(() => true),
-  mergeWorktree: vi.fn(() => ({ success: true })),
-  cleanupWorktree: vi.fn(),
+vi.mock("../git.js", () => ({
   getChangedFiles: vi.fn(() => []),
   getDiffContent: vi.fn(() => ""),
 }));
@@ -73,8 +54,6 @@ import {
   detectTargetPathOverlaps,
 } from "../runner/scheduler.js";
 import { createAgentLauncher } from "../orchestrator/agentLauncher.js";
-import { createReplSession } from "../orchestrator/replManager.js";
-import { createReplHelpers } from "../orchestrator/replHelpers.js";
 
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -99,50 +78,6 @@ function makePhaseReport(
   };
 }
 
-function createMockOrchestrator(responses: string[]): OrchestratorHandle {
-  let callIndex = 0;
-  let alive = true;
-
-  return {
-    async send(_input: string): Promise<string> {
-      const response = responses[callIndex] ?? 'console.log("noop")';
-      callIndex++;
-      return response;
-    },
-    isAlive(): boolean {
-      return alive;
-    },
-    kill(): void {
-      alive = false;
-    },
-  };
-}
-
-function createMockHelpers(): ReplHelpers {
-  return {
-    readFile: () => "",
-    writeFile: () => {},
-    listDir: () => [],
-    searchFiles: () => [],
-    getState: () => ({
-      currentPhase: "",
-      completedPhases: [],
-      modifiedFiles: [],
-      schemaChanges: [],
-      phaseReports: [],
-      phaseRetries: {},
-    }),
-    writePhaseReport: () => {},
-    dispatchSubAgent: async () => ({
-      success: true,
-      output: "",
-      filesModified: [],
-    }),
-    runCheck: async () => ({ passed: true, output: "", exitCode: 0 }),
-    llmQuery: async () => "mock response",
-  };
-}
-
 function makeDefaultConfig(tmpDir: string): RunContext {
   return {
     projectRoot: tmpDir,
@@ -150,14 +85,11 @@ function makeDefaultConfig(tmpDir: string): RunContext {
     planPath: join(tmpDir, "sample-plan.md"),
     statePath: join(tmpDir, "state.json"),
     trajectoryPath: join(tmpDir, "trajectory.jsonl"),
-    isolation: "none",
     concurrency: 3,
     maxRetries: 2,
     headless: true,
     verbose: false,
     dryRun: false,
-    turnLimit: 100,
-    maxConsecutiveErrors: 5,
     pluginRoot: join(tmpDir, "plugin"),
   };
 }
@@ -166,7 +98,6 @@ function setupTmpDir(tasksJson: TasksJson): string {
   const tmpDir = mkdtempSync(join(tmpdir(), "e2e-test-"));
   writeFileSync(join(tmpDir, "tasks.json"), JSON.stringify(tasksJson));
   mkdirSync(join(tmpDir, "plugin", "agents"), { recursive: true });
-  mkdirSync(join(tmpDir, "plugin", "skills"), { recursive: true });
   writeFileSync(
     join(tmpDir, "plugin", "agents", "phase-orchestrator.md"),
     "---\nname: phase-orchestrator\n---\n",
@@ -192,16 +123,14 @@ async function compileSamplePlan(): Promise<TasksJson> {
 }
 
 /**
- * Sets up mocks so that each phase completes successfully via writePhaseReport.
+ * Sets up mocks so that each phase completes successfully.
+ * The mock orchestrator writes a report file to disk and exits 0.
  */
 function setupMocksForSuccess(
+  tmpDir: string,
   phaseReports: Map<string, PhaseReport>,
 ): void {
   const mockCreateAgentLauncher = createAgentLauncher as ReturnType<typeof vi.fn>;
-  const mockCreateReplSession = createReplSession as ReturnType<typeof vi.fn>;
-  const mockCreateReplHelpers = createReplHelpers as ReturnType<typeof vi.fn>;
-
-  mockCreateReplHelpers.mockImplementation(() => createMockHelpers());
 
   let launchCount = 0;
   const phaseIds = [...phaseReports.keys()];
@@ -209,65 +138,23 @@ function setupMocksForSuccess(
   mockCreateAgentLauncher.mockImplementation(() => ({
     dispatchSubAgent: async () => ({
       success: true,
-      output: "",
+      output: '{"passed": true, "issues": [], "suggestions": []}',
       filesModified: [],
     }),
-    llmQuery: async () => "mock",
-    launchOrchestrator: async () => {
+    runPhaseOrchestrator: async (): Promise<ExecClaudeResult> => {
       const phaseId = phaseIds[launchCount] ?? phaseIds[phaseIds.length - 1]!;
       launchCount++;
       const report = phaseReports.get(phaseId)!;
 
-      return createMockOrchestrator([
-        'console.log("working...")',
-        `writePhaseReport(${JSON.stringify(report)})`,
-      ]);
+      // Write the report file to disk (simulates orchestrator behavior)
+      writeFileSync(
+        join(tmpDir, ".trellis-phase-report.json"),
+        JSON.stringify(report),
+      );
+
+      return { stdout: "done", stderr: "", exitCode: 0 };
     },
   }));
-
-  mockCreateReplSession.mockImplementation(
-    (sessionConfig: { helpers: ReplHelpers }) => {
-      let consecutiveErrors = 0;
-
-      return {
-        async eval(code: string): Promise<ReplEvalResult> {
-          if (code.includes("writePhaseReport(")) {
-            try {
-              const jsonMatch = code.match(/writePhaseReport\((.+)\)/s);
-              if (jsonMatch?.[1]) {
-                const report = JSON.parse(jsonMatch[1]);
-                sessionConfig.helpers.writePhaseReport(report);
-              }
-            } catch {
-              // parse failure — ignore
-            }
-            consecutiveErrors = 0;
-            return {
-              success: true,
-              output: "Phase report written.",
-              truncated: false,
-              duration: 1,
-            };
-          }
-          consecutiveErrors = 0;
-          return {
-            success: true,
-            output: `ok: ${code.slice(0, 30)}`,
-            truncated: false,
-            duration: 1,
-          };
-        },
-        restoreScaffold() {},
-        getConsecutiveErrors() {
-          return consecutiveErrors;
-        },
-        resetConsecutiveErrors() {
-          consecutiveErrors = 0;
-        },
-        destroy() {},
-      } satisfies ReplSession;
-    },
-  );
 }
 
 function hasClaude(): boolean {
@@ -348,14 +235,11 @@ describe("e2e integration tests", () => {
         planPath: "./sample-plan.md",
         statePath: "state.json",
         trajectoryPath: "trajectory.jsonl",
-        isolation: "none",
         concurrency: 3,
         maxRetries: 2,
         headless: true,
         verbose: false,
         dryRun: true,
-        turnLimit: 100,
-        maxConsecutiveErrors: 5,
         pluginRoot: ".",
       };
       const report = dryRunReport(tasksJson, ctx);
@@ -383,78 +267,37 @@ describe("e2e integration tests", () => {
       const tasksJson = await compileSamplePlan();
       tmpDir = setupTmpDir(tasksJson);
 
-      // --- Run phase 1 only ---
-      // Set up mocks that only advance phase-1, then halt on phase-2
+      // --- Run phase 1 only (phase 2 halts) ---
       const phase1Report = makePhaseReport("phase-1", {
         tasksCompleted: [tasksJson.phases[0]!.tasks[0]!.id],
         handoff: "# Phase 1 → Phase 2 Handoff\n\ngreet.ts created.",
       });
 
-      // For phase 1: advance. For phase 2: halt (by returning halt action).
+      const haltReport = makePhaseReport("phase-2", {
+        status: "failed",
+        recommendedAction: "halt",
+        tasksCompleted: [],
+        tasksFailed: [tasksJson.phases[1]!.tasks[0]!.id],
+      });
+
       const mockCreateAgentLauncher = createAgentLauncher as ReturnType<typeof vi.fn>;
-      const mockCreateReplSession = createReplSession as ReturnType<typeof vi.fn>;
-      const mockCreateReplHelpers = createReplHelpers as ReturnType<typeof vi.fn>;
-
-      mockCreateReplHelpers.mockImplementation(() => createMockHelpers());
-
       let launchCount = 0;
       mockCreateAgentLauncher.mockImplementation(() => ({
         dispatchSubAgent: async () => ({
           success: true,
-          output: "",
+          output: '{"passed": true, "issues": [], "suggestions": []}',
           filesModified: [],
         }),
-        llmQuery: async () => "mock",
-        launchOrchestrator: async () => {
+        runPhaseOrchestrator: async (): Promise<ExecClaudeResult> => {
           launchCount++;
-          if (launchCount === 1) {
-            // Phase 1: succeed
-            return createMockOrchestrator([
-              'console.log("phase 1")',
-              `writePhaseReport(${JSON.stringify(phase1Report)})`,
-            ]);
-          }
-          // Phase 2: halt (return halt report)
-          const haltReport = makePhaseReport("phase-2", {
-            status: "failed",
-            recommendedAction: "halt",
-            tasksCompleted: [],
-            tasksFailed: [tasksJson.phases[1]!.tasks[0]!.id],
-          });
-          return createMockOrchestrator([
-            'console.log("phase 2 fail")',
-            `writePhaseReport(${JSON.stringify(haltReport)})`,
-          ]);
+          const report = launchCount === 1 ? phase1Report : haltReport;
+          writeFileSync(
+            join(tmpDir, ".trellis-phase-report.json"),
+            JSON.stringify(report),
+          );
+          return { stdout: "done", stderr: "", exitCode: 0 };
         },
       }));
-
-      mockCreateReplSession.mockImplementation(
-        (sessionConfig: { helpers: ReplHelpers }) => {
-          let consecutiveErrors = 0;
-          return {
-            async eval(code: string): Promise<ReplEvalResult> {
-              if (code.includes("writePhaseReport(")) {
-                try {
-                  const jsonMatch = code.match(/writePhaseReport\((.+)\)/s);
-                  if (jsonMatch?.[1]) {
-                    sessionConfig.helpers.writePhaseReport(JSON.parse(jsonMatch[1]));
-                  }
-                } catch (err) {
-                  consecutiveErrors++;
-                  return { success: false, output: "", truncated: false, error: err instanceof Error ? err.message : String(err), duration: 1 };
-                }
-                return { success: true, output: "ok", truncated: false, duration: 1 };
-              }
-              consecutiveErrors = 0;
-              return { success: true, output: "ok", truncated: false, duration: 1 };
-            },
-            restoreScaffold() {},
-            getConsecutiveErrors() { return consecutiveErrors; },
-            resetConsecutiveErrors() { consecutiveErrors = 0; },
-            destroy() {},
-          } satisfies ReplSession;
-        },
-      );
 
       const config = makeDefaultConfig(tmpDir);
       const result1 = await runPhases(config, tasksJson);
@@ -468,7 +311,6 @@ describe("e2e integration tests", () => {
       const state: SharedState = JSON.parse(stateRaw);
       expect(state.completedPhases).toContain("phase-1");
       expect(state.phaseReports.length).toBeGreaterThanOrEqual(1);
-      // Handoff should be present
       const phase1ReportFromState = state.phaseReports.find(
         (r) => r.phaseId === "phase-1",
       );
@@ -495,7 +337,7 @@ describe("e2e integration tests", () => {
       const reports = new Map<string, PhaseReport>([
         ["phase-2", phase2Report],
       ]);
-      setupMocksForSuccess(reports);
+      setupMocksForSuccess(tmpDir, reports);
 
       const result2 = await runPhases(config, tasksJson);
 
@@ -587,7 +429,6 @@ describe("e2e integration tests", () => {
       const successReport = makePhaseReport("phase-1", {
         status: "complete",
         recommendedAction: "advance",
-        // Include both the original task and the corrective task from the retry
         tasksCompleted: [tasksJson.phases[0]!.tasks[0]!.id, "phase-1-corrective-0"],
       });
 
@@ -596,20 +437,14 @@ describe("e2e integration tests", () => {
       });
 
       const mockCreateAgentLauncher = createAgentLauncher as ReturnType<typeof vi.fn>;
-      const mockCreateReplSession = createReplSession as ReturnType<typeof vi.fn>;
-      const mockCreateReplHelpers = createReplHelpers as ReturnType<typeof vi.fn>;
-
-      mockCreateReplHelpers.mockImplementation(() => createMockHelpers());
-
       let launchCount = 0;
       mockCreateAgentLauncher.mockImplementation(() => ({
         dispatchSubAgent: async () => ({
           success: true,
-          output: "",
+          output: '{"passed": true, "issues": [], "suggestions": []}',
           filesModified: [],
         }),
-        llmQuery: async () => "mock",
-        launchOrchestrator: async () => {
+        runPhaseOrchestrator: async (): Promise<ExecClaudeResult> => {
           const idx = launchCount;
           launchCount++;
 
@@ -622,40 +457,13 @@ describe("e2e integration tests", () => {
             report = phase2Report;
           }
 
-          return createMockOrchestrator([
-            'console.log("work")',
-            `writePhaseReport(${JSON.stringify(report)})`,
-          ]);
+          writeFileSync(
+            join(tmpDir, ".trellis-phase-report.json"),
+            JSON.stringify(report),
+          );
+          return { stdout: "done", stderr: "", exitCode: 0 };
         },
       }));
-
-      mockCreateReplSession.mockImplementation(
-        (sessionConfig: { helpers: ReplHelpers }) => {
-          let consecutiveErrors = 0;
-          return {
-            async eval(code: string): Promise<ReplEvalResult> {
-              if (code.includes("writePhaseReport(")) {
-                try {
-                  const jsonMatch = code.match(/writePhaseReport\((.+)\)/s);
-                  if (jsonMatch?.[1]) {
-                    sessionConfig.helpers.writePhaseReport(JSON.parse(jsonMatch[1]));
-                  }
-                } catch (err) {
-                  consecutiveErrors++;
-                  return { success: false, output: "", truncated: false, error: err instanceof Error ? err.message : String(err), duration: 1 };
-                }
-                return { success: true, output: "ok", truncated: false, duration: 1 };
-              }
-              consecutiveErrors = 0;
-              return { success: true, output: "ok", truncated: false, duration: 1 };
-            },
-            restoreScaffold() {},
-            getConsecutiveErrors() { return consecutiveErrors; },
-            resetConsecutiveErrors() { consecutiveErrors = 0; },
-            destroy() {},
-          } satisfies ReplSession;
-        },
-      );
 
       const result = await runPhases(config, tasksJson);
 
@@ -694,7 +502,7 @@ describe("e2e integration tests", () => {
           }),
         ],
       ]);
-      setupMocksForSuccess(reports);
+      setupMocksForSuccess(tmpDir, reports);
 
       const config = makeDefaultConfig(tmpDir);
       const result = await runPhases(config, tasksJson);
@@ -712,43 +520,7 @@ describe("e2e integration tests", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Test 7: REPL output truncation (§10 criteria #5)
-  // -----------------------------------------------------------------------
-
-  describe("REPL output truncation", () => {
-    it("truncates output exceeding 8192 chars with marker", async () => {
-      // Use the REAL createReplSession (not mocked) for this test.
-      // We need to import it dynamically to bypass the vi.mock.
-      const { createReplSession: realCreateReplSession } = await vi.importActual<
-        typeof import("../orchestrator/replManager.js")
-      >("../orchestrator/replManager.js");
-
-      const helpers = createMockHelpers();
-      const session = realCreateReplSession({
-        projectRoot: tmpdir(),
-        outputLimit: 8192,
-        timeout: 10_000,
-        helpers,
-      });
-
-      try {
-        // Generate output larger than 8192 chars
-        const result = await session.eval(
-          'console.log("x".repeat(10000))',
-        );
-
-        expect(result.success).toBe(true);
-        expect(result.truncated).toBe(true);
-        expect(result.output).toContain("[TRUNCATED");
-        expect(result.output).toContain("10000 total");
-      } finally {
-        session.destroy();
-      }
-    });
-  });
-
-  // -----------------------------------------------------------------------
-  // Test 8: Architectural validation
+  // Test 7: Architectural validation
   // -----------------------------------------------------------------------
 
   describe("architectural validation", () => {
@@ -765,15 +537,27 @@ describe("e2e integration tests", () => {
 
       // No import should reference 'claude' as a module (direct LLM dependency)
       for (const line of importLines) {
-        // Allow type imports from agentLauncher (interface only)
         if (line.includes("agentLauncher")) {
-          // Should import via the factory function or types, not direct claude SDK
           expect(line).not.toMatch(/from\s+["']claude/);
         }
         // No direct anthropic/claude SDK imports
         expect(line).not.toMatch(/from\s+["']@anthropic/);
         expect(line).not.toMatch(/from\s+["']anthropic/);
       }
+    });
+
+    it("phaseRunner.ts has no REPL or worktree references", () => {
+      const phaseRunnerSource = readFileSync(
+        resolve(import.meta.dirname ?? ".", "../runner/phaseRunner.ts"),
+        "utf-8",
+      );
+
+      expect(phaseRunnerSource).not.toContain("replManager");
+      expect(phaseRunnerSource).not.toContain("replHelpers");
+      expect(phaseRunnerSource).not.toContain("worktreeManager");
+      expect(phaseRunnerSource).not.toContain("ReplSession");
+      expect(phaseRunnerSource).not.toContain("OrchestratorHandle");
+      expect(phaseRunnerSource).not.toContain("disallowedTools");
     });
 
     it("trajectory.jsonl is written after a phase run", async () => {
@@ -794,7 +578,7 @@ describe("e2e integration tests", () => {
           }),
         ],
       ]);
-      setupMocksForSuccess(reports);
+      setupMocksForSuccess(tmpDir, reports);
 
       const config = makeDefaultConfig(tmpDir);
       await runPhases(config, tasksJson);
@@ -880,7 +664,7 @@ describe("e2e integration tests", () => {
         }
 
         execSync(
-          `node ${cliPath} run ${tasksJsonPath} --headless --isolation none`,
+          `node ${cliPath} run ${tasksJsonPath} --headless`,
           {
             cwd: projectDir,
             timeout: 300_000,

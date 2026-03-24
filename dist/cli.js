@@ -7,7 +7,7 @@ import { TasksJsonSchema } from "./types/tasks.js";
 import { loadState } from "./runner/stateManager.js";
 import { parsePlan } from "./compile/planParser.js";
 import { compilePlan } from "./compile/compilePlan.js";
-import { createAgentLauncher } from "./orchestrator/agentLauncher.js";
+import { execClaude } from "./orchestrator/agentLauncher.js";
 import { runPhases, runSinglePhase, dryRunReport, } from "./runner/phaseRunner.js";
 import { startSpinner } from "./ui/spinner.js";
 // ---------------------------------------------------------------------------
@@ -25,7 +25,6 @@ Run options:
   --dry-run              Print execution plan without running
   --resume               Resume from last incomplete task
   --check <command>      Override check command
-  --isolation <mode>     "worktree" | "none" (default: "worktree")
   --concurrency <n>      Max parallel sub-agents (default: 3)
   --model <model>        Override orchestrator model
   --max-retries <n>      Max phase retries (default: 2)
@@ -34,7 +33,7 @@ Run options:
   --plan <path>          Override plan path from tasks.json
   --guidelines <path>    Override guidelines path from tasks.json
   --headless             Disable interactive prompts
-  --verbose              Print REPL interactions
+  --verbose              Print debug output
 
 Compile options:
   --spec <spec.md>       Path to the spec (required)
@@ -45,11 +44,8 @@ Compile options:
 
 Environment variables:
   TRELLIS_EXEC_MODEL                Override orchestrator model
-  TRELLIS_EXEC_TURN_LIMIT           Max REPL turns per phase
-  TRELLIS_EXEC_REPL_OUTPUT_LIMIT    Max chars per REPL turn
   TRELLIS_EXEC_MAX_RETRIES          Max phase retries
   TRELLIS_EXEC_CONCURRENCY          Max parallel sub-agents
-  TRELLIS_EXEC_MAX_CONSECUTIVE_ERRORS  Consecutive errors before halt
 `;
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -74,7 +70,6 @@ export function buildRunContext(args, env = process.env) {
             "dry-run": { type: "boolean", default: false },
             resume: { type: "boolean", default: false },
             check: { type: "string" },
-            isolation: { type: "string" },
             concurrency: { type: "string" },
             model: { type: "string" },
             "max-retries": { type: "string" },
@@ -121,15 +116,9 @@ export function buildRunContext(args, env = process.env) {
     const maxRetries = (values["max-retries"] !== undefined ? Number(values["max-retries"]) : undefined) ??
         (env.TRELLIS_EXEC_MAX_RETRIES !== undefined ? Number(env.TRELLIS_EXEC_MAX_RETRIES) : undefined) ??
         2;
-    const turnLimit = (env.TRELLIS_EXEC_TURN_LIMIT !== undefined ? Number(env.TRELLIS_EXEC_TURN_LIMIT) : undefined) ??
-        200;
-    const maxConsecutiveErrors = (env.TRELLIS_EXEC_MAX_CONSECUTIVE_ERRORS !== undefined
-        ? Number(env.TRELLIS_EXEC_MAX_CONSECUTIVE_ERRORS)
-        : undefined) ?? 5;
     const model = values.model ??
         env.TRELLIS_EXEC_MODEL ??
         undefined;
-    const isolation = (values.isolation ?? "worktree");
     const context = {
         projectRoot,
         specPath,
@@ -138,15 +127,12 @@ export function buildRunContext(args, env = process.env) {
         statePath,
         trajectoryPath,
         ...(values.check !== undefined ? { checkCommand: values.check } : {}),
-        isolation,
         concurrency,
         ...(model !== undefined ? { model } : {}),
         maxRetries,
         headless: values.headless ?? false,
         verbose: values.verbose ?? false,
         dryRun: values["dry-run"] ?? false,
-        turnLimit,
-        maxConsecutiveErrors,
         pluginRoot: env.CLAUDE_PLUGIN_ROOT ?? process.cwd(),
     };
     return {
@@ -269,11 +255,11 @@ async function handleCompile(args) {
         if (needsDecompose) {
             console.log("Decomposing plan into tasks via LLM...");
         }
-        const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT ?? process.cwd();
-        const launcher = createAgentLauncher({
-            pluginRoot,
-            projectRoot: dirname(resolve(planPath)),
-        });
+        const cwd = dirname(resolve(planPath));
+        const query = async (prompt) => {
+            const result = await execClaude(["--print", "--model", "haiku"], cwd, prompt);
+            return result.stdout;
+        };
         const spinner = startSpinner("Compiling");
         const tasksJson = await compilePlan({
             planPath,
@@ -281,7 +267,7 @@ async function handleCompile(args) {
             ...(guidelinesPath ? { guidelinesPath } : {}),
             projectRoot,
             outputPath,
-            agentLauncher: launcher,
+            query,
         });
         spinner.stop();
         const taskCount = tasksJson.phases.reduce((sum, phase) => sum + phase.tasks.length, 0);
