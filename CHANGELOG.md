@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.2
+
+- Remove unused imports in phaseRunner test to fix lint warnings
+
 ## 0.5.1
 
 - Fix executable bit on dist/cli.js lost during tsc rebuild, causing npx entrypoint to fail with "Permission denied"
