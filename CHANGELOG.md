@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.0
+
+- Replace REPL-mediated orchestrator with single `claude --print` invocation per phase using native tools (Read, Write, Edit, Bash, Glob, Grep)
+- Orchestrator signals completion by writing `.trellis-phase-report.json` to disk instead of calling a REPL helper
+- Remove worktree isolation (`--isolation` flag) — phases run directly in project root
+- Remove `turnLimit` and `maxConsecutiveErrors` CLI options (no longer applicable without REPL turn loop)
+- Add previous-attempt context to phase prompt for retries (last report, judge issues, corrective tasks)
+- Extract git-diff helpers into standalone `src/git.ts` module
+- Replace `AgentLauncher` dependency in `compilePlan` with simple `query` callback
+- Delete replManager, replHelpers, worktreeManager and all associated tests (~8,700 lines removed)
+
 ## 0.4.10
 
 - Add input validation to dispatchSubAgent() — returns descriptive error instead of crashing on wrong argument format
