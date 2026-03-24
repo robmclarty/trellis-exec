@@ -31,9 +31,7 @@ vi.mock("../../git.js", () => ({
 // Import module under test and mocked modules AFTER vi.mock declarations
 import {
   runPhases,
-  runSinglePhase,
   dryRunReport,
-  promptForContinuation,
   buildPhaseContext,
   buildJudgePrompt,
   parseJudgeResult,
@@ -43,7 +41,6 @@ import {
 } from "../phaseRunner.js";
 import type { RunContext } from "../../cli.js";
 import { createAgentLauncher } from "../../orchestrator/agentLauncher.js";
-import { getChangedFiles, getDiffContent } from "../../git.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures

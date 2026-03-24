@@ -16,9 +16,8 @@ vi.mock("../../git.js", () => ({
     getDiffContent: vi.fn(() => ""),
 }));
 // Import module under test and mocked modules AFTER vi.mock declarations
-import { runPhases, runSinglePhase, dryRunReport, promptForContinuation, buildPhaseContext, buildJudgePrompt, parseJudgeResult, buildFixPrompt, normalizeReport, createDefaultCheck, } from "../phaseRunner.js";
+import { runPhases, dryRunReport, buildPhaseContext, buildJudgePrompt, parseJudgeResult, buildFixPrompt, normalizeReport, createDefaultCheck, } from "../phaseRunner.js";
 import { createAgentLauncher } from "../../orchestrator/agentLauncher.js";
-import { getChangedFiles, getDiffContent } from "../../git.js";
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
