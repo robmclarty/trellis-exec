@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.9
+
+- Fix spinner leak: stop spinner in executePhase catch block so process exits after orchestrator timeout
+- Add cross-phase learnings: surface `decisionsLog` entries from prior phases in orchestrator context
+- Cap accumulated learnings at 20 entries with phase ID prefix for provenance
+- Update phase-orchestrator agent to reference learnings and write forward-looking decisionsLog entries
+
 ## 0.5.8
 
 - Add test coverage for streamParser, agentLauncher, and spinner (3 new test files)
