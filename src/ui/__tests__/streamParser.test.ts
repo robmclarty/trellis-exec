@@ -4,7 +4,6 @@ import {
   extractResultText,
   createStreamHandler,
 } from "../streamParser.js";
-import type { StreamEvent } from "../streamParser.js";
 
 describe("parseStreamLine", () => {
   it("parses a valid assistant event with text content", () => {

@@ -71,7 +71,7 @@ describe("startSpinner", () => {
 
     expect(writeSpy).toHaveBeenCalled();
     const output = writeSpy.mock.calls
-      .map((c) => String(c[0]))
+      .map((c: unknown[]) => String(c[0]))
       .join("");
     expect(output).toContain("Working");
   });
