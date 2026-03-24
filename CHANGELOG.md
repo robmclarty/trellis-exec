@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.9
+
+- Fix REPL async IIFE wrapper silently dropping sub-agent return values, causing orchestrator to skip tasks and prematurely complete phases
+- Wrap dispatchSubAgent and runCheck in sandbox with auto-reporting via capturedConsole so results always appear in REPL output
+- Fix statement-form IIFE to return the last `var` declaration's value
+
 ## 0.4.8
 
 - Add adaptive REPL timeout: 30s for sync expressions, 5min for long-running helpers (dispatchSubAgent, runCheck, llmQuery) so sub-agents aren't killed prematurely
