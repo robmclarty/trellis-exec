@@ -1,5 +1,5 @@
-import { readFileSync, readdirSync, statSync, realpathSync } from "node:fs";
-import { resolve, relative, join } from "node:path";
+import { readFileSync, writeFileSync, readdirSync, statSync, realpathSync, mkdirSync } from "node:fs";
+import { resolve, relative, join, dirname, basename } from "node:path";
 import { SharedStateSchema } from "../types/state.js";
 import type { SharedState, PhaseReport, CheckResult } from "../types/state.js";
 import type { SubAgentConfig, SubAgentResult } from "../types/agents.js";
@@ -14,6 +14,7 @@ export type ReplHelpersConfig = {
 
 export type ReplHelpers = {
   readFile(path: string): string;
+  writeFile(path: string, content: string): void;
   listDir(
     path: string,
   ): Array<{ name: string; type: "file" | "dir"; size: number }>;
@@ -68,13 +69,26 @@ function globToRegex(glob: string): RegExp {
 function safePath(projectRoot: string, userPath: string): string {
   const resolved = resolve(projectRoot, userPath);
   const realRoot = realpathSync(projectRoot);
-  // Use realpath on the resolved path only if it exists; otherwise check the
-  // resolved string prefix (covers paths that don't exist yet).
+  // Use realpath on the resolved path only if it exists; otherwise resolve
+  // the nearest existing ancestor to handle symlinked tmpdir paths (e.g.,
+  // macOS /var → /private/var).
   let realResolved: string;
   try {
     realResolved = realpathSync(resolved);
   } catch {
-    realResolved = resolved;
+    // Walk up to find the nearest existing ancestor and resolve through it
+    let ancestor = dirname(resolved);
+    let tail = basename(resolved);
+    while (ancestor !== dirname(ancestor)) {
+      try {
+        realResolved = join(realpathSync(ancestor), tail);
+        break;
+      } catch {
+        tail = join(basename(ancestor), tail);
+        ancestor = dirname(ancestor);
+      }
+    }
+    realResolved ??= resolved;
   }
   if (!realResolved.startsWith(realRoot + "/") && realResolved !== realRoot) {
     throw new Error("Path is outside project root: " + userPath);
@@ -99,6 +113,19 @@ export function createReplHelpers(config: ReplHelpersConfig): ReplHelpers {
   function readFile(path: string): string {
     const resolved = safePath(projectRoot, path);
     return readFileSync(resolved, "utf-8");
+  }
+
+  /**
+   * Writes content to a file in the project directory. Creates parent
+   * directories automatically. Paths are resolved relative to projectRoot;
+   * traversal outside the root throws.
+   * @param path - Relative or absolute path to the file
+   * @param content - The content to write as UTF-8 text
+   */
+  function writeFile(path: string, content: string): void {
+    const resolved = safePath(projectRoot, path);
+    mkdirSync(dirname(resolved), { recursive: true });
+    writeFileSync(resolved, content, "utf-8");
   }
 
   /**
@@ -234,6 +261,30 @@ export function createReplHelpers(config: ReplHelpersConfig): ReplHelpers {
   async function dispatchSubAgent(
     subAgentConfig: SubAgentConfig,
   ): Promise<SubAgentResult> {
+    // Validate input — the orchestrator sometimes passes strings instead of objects
+    if (typeof subAgentConfig !== "object" || subAgentConfig === null) {
+      return {
+        success: false,
+        output: "",
+        filesModified: [],
+        error:
+          `dispatchSubAgent() requires an object argument: { type, taskId, instructions, filePaths, outputPaths }. ` +
+          `You passed a ${typeof subAgentConfig}. Example: await dispatchSubAgent({ type: "implement", taskId: "phase-1-task-1", instructions: "...", filePaths: [], outputPaths: ["src/file.js"] })`,
+      };
+    }
+    const requiredFields = ["type", "taskId", "instructions", "filePaths", "outputPaths"] as const;
+    const missing = requiredFields.filter((f) => !(f in subAgentConfig));
+    if (missing.length > 0) {
+      return {
+        success: false,
+        output: "",
+        filesModified: [],
+        error:
+          `dispatchSubAgent() missing required fields: ${missing.join(", ")}. ` +
+          `Required signature: { type: string, taskId: string, instructions: string, filePaths: string[], outputPaths: string[] }`,
+      };
+    }
+
     if (agentLauncher) {
       return agentLauncher(subAgentConfig);
     }
@@ -268,6 +319,7 @@ export function createReplHelpers(config: ReplHelpersConfig): ReplHelpers {
 
   return {
     readFile,
+    writeFile,
     listDir,
     searchFiles,
     getState,

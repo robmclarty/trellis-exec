@@ -60,6 +60,7 @@ import {
   normalizeReport,
   isCommentOnly,
   createDefaultCheck,
+  detectStuck,
 } from "../phaseRunner.js";
 import type { RunContext } from "../../cli.js";
 import { createAgentLauncher } from "../../orchestrator/agentLauncher.js";
@@ -183,6 +184,7 @@ function createMockOrchestrator(
 function createMockHelpers(): ReplHelpers {
   return {
     readFile: () => "",
+    writeFile: () => {},
     listDir: () => [],
     searchFiles: () => [],
     getState: () => ({
@@ -299,8 +301,17 @@ function setupMocksForSuccess(
                 const report = JSON.parse(jsonMatch[1]);
                 sessionConfig.helpers.writePhaseReport(report);
               }
-            } catch {
-              // If parse fails, just call with a generic report
+            } catch (err) {
+              // Propagate writePhaseReport errors as REPL error results
+              // (matches real REPL behavior where thrown errors become error output)
+              consecutiveErrors++;
+              return {
+                success: false,
+                output: "",
+                truncated: false,
+                error: err instanceof Error ? err.message : String(err),
+                duration: 1,
+              };
             }
             consecutiveErrors = 0;
             return {
@@ -500,7 +511,7 @@ describe("phaseRunner", () => {
         makePhaseReport("phase-1", {
           status: "complete",
           recommendedAction: "advance",
-          tasksCompleted: ["task-1-1", "task-1-2"],
+          tasksCompleted: ["task-1-1", "task-1-2", "phase-1-corrective-0"],
         }),
       ];
 
@@ -557,7 +568,16 @@ describe("phaseRunner", () => {
                       JSON.parse(jsonMatch[1]),
                     );
                   }
-                } catch {}
+                } catch (err) {
+                  consecutiveErrors++;
+                  return {
+                    success: false,
+                    output: "",
+                    truncated: false,
+                    error: err instanceof Error ? err.message : String(err),
+                    duration: 1,
+                  };
+                }
                 consecutiveErrors = 0;
                 return {
                   success: true,
@@ -602,12 +622,12 @@ describe("phaseRunner", () => {
       tmpDir = setupTmpDir(tasksJson);
       const config = { ...makeDefaultConfig(tmpDir), maxRetries: 2 };
 
+      // No correctiveTasks so the task list stays stable across retries
       const retryReport = makePhaseReport("phase-1", {
         status: "complete",
         recommendedAction: "retry",
-        correctiveTasks: ["Fix it"],
         tasksCompleted: [],
-        tasksFailed: ["task-1-1"],
+        tasksFailed: ["task-1-1", "task-1-2"],
       });
 
       const mockCreateAgentLauncher = createAgentLauncher as ReturnType<typeof vi.fn>;
@@ -643,7 +663,16 @@ describe("phaseRunner", () => {
                       JSON.parse(jsonMatch[1]),
                     );
                   }
-                } catch {}
+                } catch (err) {
+                  consecutiveErrors++;
+                  return {
+                    success: false,
+                    output: "",
+                    truncated: false,
+                    error: err instanceof Error ? err.message : String(err),
+                    duration: 1,
+                  };
+                }
                 return {
                   success: true,
                   output: "ok",
@@ -697,13 +726,23 @@ describe("phaseRunner", () => {
       tmpDir = setupTmpDir(tasksJson);
       const config = { ...makeDefaultConfig(tmpDir), maxRetries: 2 };
 
-      const retryReport = makePhaseReport("phase-1", {
-        status: "complete",
-        recommendedAction: "retry",
-        correctiveTasks: ["Fix the build"],
-        tasksCompleted: [],
-        tasksFailed: ["task-1-1"],
-      });
+      // Each retry adds a corrective task, so subsequent reports must include
+      // those task IDs to pass the task completion gate.
+      let launchIdx = 0;
+      function buildRetryReport(): PhaseReport {
+        const allFailed = ["task-1-1", "task-1-2"];
+        // After each retry, the previous corrective task is added to the phase
+        for (let i = 0; i < launchIdx; i++) {
+          allFailed.push(`phase-1-corrective-${i * 100}`);
+        }
+        return makePhaseReport("phase-1", {
+          status: "complete",
+          recommendedAction: "retry",
+          correctiveTasks: ["Fix the build"],
+          tasksCompleted: [],
+          tasksFailed: allFailed,
+        });
+      }
 
       const mockCreateAgentLauncher = createAgentLauncher as ReturnType<typeof vi.fn>;
       const mockCreateReplSession = createReplSession as ReturnType<typeof vi.fn>;
@@ -723,8 +762,10 @@ describe("phaseRunner", () => {
         llmQuery: async () => "mock",
         launchOrchestrator: async (orchConfig: { phaseContext: string }) => {
           allPhaseContexts.push(orchConfig.phaseContext);
+          const report = buildRetryReport();
+          launchIdx++;
           return createMockOrchestrator([
-            `writePhaseReport(${JSON.stringify(retryReport)})`,
+            `writePhaseReport(${JSON.stringify(report)})`,
           ]);
         },
       }));
@@ -742,7 +783,16 @@ describe("phaseRunner", () => {
                       JSON.parse(jsonMatch[1]),
                     );
                   }
-                } catch {}
+                } catch (err) {
+                  consecutiveErrors++;
+                  return {
+                    success: false,
+                    output: "",
+                    truncated: false,
+                    error: err instanceof Error ? err.message : String(err),
+                    duration: 1,
+                  };
+                }
                 return {
                   success: true,
                   output: "ok",
@@ -1282,7 +1332,7 @@ describe("phaseRunner", () => {
         status: "partial",
         recommendedAction: "halt",
         tasksCompleted: [],
-        tasksFailed: ["task-1-1"],
+        tasksFailed: ["task-1-1", "task-1-2"],
       });
 
       const reports = new Map<string, PhaseReport>([
@@ -1378,7 +1428,10 @@ describe("phaseRunner", () => {
                   if (jsonMatch?.[1]) {
                     sessionConfig.helpers.writePhaseReport(JSON.parse(jsonMatch[1]));
                   }
-                } catch {}
+                } catch (err) {
+                  consecutiveErrors++;
+                  return { success: false, output: "", truncated: false, error: err instanceof Error ? err.message : String(err), duration: 1 };
+                }
                 consecutiveErrors = 0;
                 return { success: true, output: "Report written.", truncated: false, duration: 1 };
               }
@@ -1464,7 +1517,10 @@ describe("phaseRunner", () => {
                   if (jsonMatch?.[1]) {
                     sessionConfig.helpers.writePhaseReport(JSON.parse(jsonMatch[1]));
                   }
-                } catch {}
+                } catch (err) {
+                  consecutiveErrors++;
+                  return { success: false, output: "", truncated: false, error: err instanceof Error ? err.message : String(err), duration: 1 };
+                }
                 return { success: true, output: "ok", truncated: false, duration: 1 };
               }
               consecutiveErrors = 0;
@@ -1666,6 +1722,36 @@ describe("phaseRunner", () => {
 
     it("returns false when code follows closing */ on the same line", () => {
       expect(isCommentOnly("/* comment */ const x = 1")).toBe(false);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // detectStuck
+  // -------------------------------------------------------------------------
+
+  describe("detectStuck", () => {
+    it("returns false when fewer outputs than threshold", () => {
+      expect(detectStuck(["a", "a", "a"], 4)).toBe(false);
+    });
+
+    it("returns true when last N outputs are identical", () => {
+      expect(detectStuck(["a", "a", "a", "a"], 4)).toBe(true);
+    });
+
+    it("returns false when outputs differ", () => {
+      expect(detectStuck(["a", "b", "a", "b"], 4)).toBe(false);
+    });
+
+    it("only checks the last N entries", () => {
+      expect(detectStuck(["x", "y", "a", "a", "a", "a"], 4)).toBe(true);
+    });
+
+    it("returns true for default threshold of 4", () => {
+      expect(detectStuck(["same", "same", "same", "same"])).toBe(true);
+    });
+
+    it("returns false for empty array", () => {
+      expect(detectStuck([])).toBe(false);
     });
   });
 

@@ -8,6 +8,7 @@ export type ReplHelpersConfig = {
 };
 export type ReplHelpers = {
     readFile(path: string): string;
+    writeFile(path: string, content: string): void;
     listDir(path: string): Array<{
         name: string;
         type: "file" | "dir";

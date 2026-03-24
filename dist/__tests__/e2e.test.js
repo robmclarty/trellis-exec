@@ -85,6 +85,7 @@ function createMockOrchestrator(responses) {
 function createMockHelpers() {
     return {
         readFile: () => "",
+        writeFile: () => { },
         listDir: () => [],
         searchFiles: () => [],
         getState: () => ({
@@ -366,7 +367,10 @@ describe("e2e integration tests", () => {
                                     sessionConfig.helpers.writePhaseReport(JSON.parse(jsonMatch[1]));
                                 }
                             }
-                            catch { }
+                            catch (err) {
+                                consecutiveErrors++;
+                                return { success: false, output: "", truncated: false, error: err instanceof Error ? err.message : String(err), duration: 1 };
+                            }
                             return { success: true, output: "ok", truncated: false, duration: 1 };
                         }
                         consecutiveErrors = 0;
@@ -484,7 +488,8 @@ describe("e2e integration tests", () => {
             const successReport = makePhaseReport("phase-1", {
                 status: "complete",
                 recommendedAction: "advance",
-                tasksCompleted: [tasksJson.phases[0].tasks[0].id],
+                // Include both the original task and the corrective task from the retry
+                tasksCompleted: [tasksJson.phases[0].tasks[0].id, "phase-1-corrective-0"],
             });
             const phase2Report = makePhaseReport("phase-2", {
                 tasksCompleted: [tasksJson.phases[1].tasks[0].id],
@@ -531,7 +536,10 @@ describe("e2e integration tests", () => {
                                     sessionConfig.helpers.writePhaseReport(JSON.parse(jsonMatch[1]));
                                 }
                             }
-                            catch { }
+                            catch (err) {
+                                consecutiveErrors++;
+                                return { success: false, output: "", truncated: false, error: err instanceof Error ? err.message : String(err), duration: 1 };
+                            }
                             return { success: true, output: "ok", truncated: false, duration: 1 };
                         }
                         consecutiveErrors = 0;

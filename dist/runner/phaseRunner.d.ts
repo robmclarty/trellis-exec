@@ -35,6 +35,11 @@ export declare function extractCode(response: string): string;
  * (single-line `//` or block `/* ... *​/`). An empty string returns true.
  */
 export declare function isCommentOnly(code: string): boolean;
+/**
+ * Returns true if the last `threshold` entries in `recentOutputs` are identical,
+ * indicating the orchestrator is stuck repeating the same action.
+ */
+export declare function detectStuck(recentOutputs: string[], threshold?: number): boolean;
 export declare function buildJudgePrompt(config: {
     changedFiles: ChangedFile[];
     diffContent: string;

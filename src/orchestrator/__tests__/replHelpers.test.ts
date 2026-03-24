@@ -3,6 +3,7 @@ import {
   mkdtempSync,
   rmSync,
   writeFileSync,
+  readFileSync,
   mkdirSync,
 } from "node:fs";
 import { join } from "node:path";
@@ -80,6 +81,40 @@ describe("createReplHelpers", () => {
 
     it("throws when file does not exist", () => {
       expect(() => helpers.readFile("nonexistent.txt")).toThrow();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // writeFile
+  // -------------------------------------------------------------------------
+
+  describe("writeFile", () => {
+    it("writes a file and reads it back", () => {
+      helpers.writeFile("output.txt", "hello world");
+      expect(readFileSync(join(tmpDir, "output.txt"), "utf-8")).toBe("hello world");
+    });
+
+    it("creates parent directories automatically", () => {
+      helpers.writeFile("deep/nested/dir/file.txt", "nested content");
+      expect(readFileSync(join(tmpDir, "deep/nested/dir/file.txt"), "utf-8")).toBe("nested content");
+    });
+
+    it("overwrites existing file", () => {
+      writeFileSync(join(tmpDir, "existing.txt"), "old content");
+      helpers.writeFile("existing.txt", "new content");
+      expect(readFileSync(join(tmpDir, "existing.txt"), "utf-8")).toBe("new content");
+    });
+
+    it("throws on path traversal with ../", () => {
+      expect(() => helpers.writeFile("../../../tmp/escape.txt", "bad")).toThrow(
+        "Path is outside project root",
+      );
+    });
+
+    it("throws on absolute path outside project root", () => {
+      expect(() => helpers.writeFile("/tmp/escape.txt", "bad")).toThrow(
+        "Path is outside project root",
+      );
     });
   });
 
@@ -281,6 +316,33 @@ describe("createReplHelpers", () => {
       const h = makeHelpers(tmpDir, { agentLauncher: mockLauncher });
       await h.dispatchSubAgent(stubConfig);
       expect(receivedConfig).toEqual(stubConfig);
+    });
+
+    it("returns error when passed a string instead of object", async () => {
+      const result = await helpers.dispatchSubAgent(
+        "implement" as unknown as SubAgentConfig,
+      );
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("requires an object");
+      expect(result.error).toContain("string");
+    });
+
+    it("returns error when required fields are missing", async () => {
+      const result = await helpers.dispatchSubAgent(
+        { type: "implement" } as unknown as SubAgentConfig,
+      );
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("missing required fields");
+      expect(result.error).toContain("taskId");
+      expect(result.error).toContain("instructions");
+    });
+
+    it("returns error when passed null", async () => {
+      const result = await helpers.dispatchSubAgent(
+        null as unknown as SubAgentConfig,
+      );
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("requires an object");
     });
   });
 

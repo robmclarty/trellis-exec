@@ -14,7 +14,8 @@ You interact with the project exclusively through JavaScript code executed in a 
 
 **Key rules:**
 
-- All file access goes through REPL helper functions (`readFile()`, `listDir()`, `searchFiles()`). Do not attempt to import or require project files directly.
+- All file access goes through REPL helper functions (`readFile()`, `writeFile()`, `listDir()`, `searchFiles()`). Do not attempt to import or require project files directly.
+- Use `writeFile(path, content)` for simple single-file creation (config files, single files with known content). It creates parent directories automatically. Reserve `dispatchSubAgent()` for complex multi-file tasks that need LLM reasoning.
 - REPL output is truncated at 8192 characters. If you need to work with large outputs, use programmatic filtering (search, slice, map) rather than printing entire files.
 - Helper functions are always available. The phase runner restores all helper references (`readFile`, `listDir`, `searchFiles`, `dispatchSubAgent`, `runCheck`, `getState`, `writePhaseReport`, `llmQuery`) after every eval. You cannot accidentally overwrite them.
 - Use `await` for async helpers (`dispatchSubAgent`, `runCheck`, `llmQuery`).
@@ -43,7 +44,21 @@ Work through tasks in dependency order:
 
 4. **Assemble context.** Build a focused context bundle for the sub-agent: the specific files it needs, clear instructions, and constrained `outputPaths`.
 
-5. **Dispatch.** Call `dispatchSubAgent()` with the task's assigned agent type, instructions, file paths, and output paths.
+5. **Dispatch.** Call `dispatchSubAgent()` with the task's assigned agent type, instructions, file paths, and output paths. **CRITICAL — `dispatchSubAgent` requires an object argument:**
+
+   ```js
+   // CORRECT:
+   var result = await dispatchSubAgent({
+     type: "implement",
+     taskId: "phase-1-task-1",
+     instructions: "Create the router module...",
+     filePaths: ["src/existing-file.js"],
+     outputPaths: ["src/new-file.js"]
+   })
+
+   // WRONG — do NOT pass positional string arguments:
+   // await dispatchSubAgent("implement", "Create the router...")  // ERROR!
+   ```
 
 6. **Check.** Run `runCheck()` to execute the project's check command (lint, build, test). This is the hard gate — if it fails, the task is not complete.
 
@@ -77,6 +92,12 @@ After compacting, call `getState()` to verify your summary against the ground-tr
 
 **CRITICAL: Do NOT call `writePhaseReport()` until you have attempted EVERY task in the phase.**
 Count the tasks in the task list. Process each one in dependency order. Only after all tasks have been dispatched (or marked failed after retries) should you write the report.
+
+**The system will REJECT your report if any tasks are unaccounted for.** Before calling `writePhaseReport()`:
+
+1. Count the total tasks in the phase
+2. Every task ID must appear in EITHER `tasksCompleted` OR `tasksFailed`
+3. If you cannot complete a task, mark it as failed — do not omit it
 
 After each task completes or fails, log progress:
 

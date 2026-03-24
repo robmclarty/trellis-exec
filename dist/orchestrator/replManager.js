@@ -1,6 +1,7 @@
 import { createContext, runInContext, Script } from "node:vm";
 const HELPER_NAMES = [
     "readFile",
+    "writeFile",
     "listDir",
     "searchFiles",
     "getState",

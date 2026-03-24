@@ -56,9 +56,12 @@ const REPL_SYSTEM_PROMPT = "CRITICAL: You are communicating through a JavaScript
     "Your ENTIRE response must be valid JavaScript code. " +
     "Do NOT include any natural language, markdown, or explanations. " +
     "Output ONLY plain JavaScript (no TypeScript, no export/import, no module.exports). " +
-    "Use REPL helpers: readFile(), listDir(), searchFiles(), dispatchSubAgent(), " +
+    "Use REPL helpers: readFile(), writeFile(), listDir(), searchFiles(), dispatchSubAgent(), " +
     "runCheck(), writePhaseReport(), llmQuery(), getState(). " +
+    "Use writeFile(path, content) for simple file creation. " +
+    "dispatchSubAgent() MUST receive an object: { type, taskId, instructions, filePaths, outputPaths }. " +
     "You MUST complete ALL tasks in the phase before calling writePhaseReport(). " +
+    "Every task must appear in tasksCompleted or tasksFailed — the system will REJECT incomplete reports. " +
     "Process tasks one by one: dispatchSubAgent() → runCheck() → next task. " +
     "Only call writePhaseReport() after every task has been attempted.";
 /**

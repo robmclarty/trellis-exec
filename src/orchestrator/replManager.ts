@@ -28,6 +28,7 @@ export type ReplSession = {
 
 const HELPER_NAMES: ReadonlyArray<keyof ReplHelpers> = [
   "readFile",
+  "writeFile",
   "listDir",
   "searchFiles",
   "getState",

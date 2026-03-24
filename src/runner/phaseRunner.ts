@@ -169,6 +169,7 @@ export function buildPhaseContext(
   lines.push("");
   lines.push("Available REPL helper functions:");
   lines.push("- readFile(path) — read a file, returns string");
+  lines.push("- writeFile(path, content) — write a file to disk (creates parent directories automatically). Use for simple single-file creation instead of dispatchSubAgent().");
   lines.push("- listDir(path) — list directory contents");
   lines.push(
     "- searchFiles(pattern, glob?) — search file contents by regex, optionally filtered by glob. " +
@@ -180,11 +181,17 @@ export function buildPhaseContext(
   lines.push("- await runCheck() — run the project check command");
   lines.push("- getState() — get current shared state");
   lines.push(
-    "- await writePhaseReport({ status, recommendedAction, ... }) — write the phase report (signals completion)",
+    "- await writePhaseReport({ status, recommendedAction, ... }) — write the phase report (signals completion). " +
+      "IMPORTANT: Every task in the phase must appear in tasksCompleted or tasksFailed, or the report will be rejected.",
   );
   lines.push(
     "- await llmQuery(prompt, options?) — quick LLM query for analysis",
   );
+  lines.push("");
+  lines.push("**dispatchSubAgent MUST receive an object, not positional arguments:**");
+  lines.push('```js');
+  lines.push('await dispatchSubAgent({ type: "implement", taskId: "phase-1-task-1", instructions: "...", filePaths: [], outputPaths: ["src/file.js"] })');
+  lines.push('```');
 
   return lines.join("\n");
 }
@@ -493,6 +500,22 @@ export function isCommentOnly(code: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// Stuck-loop detection
+// ---------------------------------------------------------------------------
+
+const STUCK_FINGERPRINT_LENGTH = 200;
+
+/**
+ * Returns true if the last `threshold` entries in `recentOutputs` are identical,
+ * indicating the orchestrator is stuck repeating the same action.
+ */
+export function detectStuck(recentOutputs: string[], threshold: number = 4): boolean {
+  if (recentOutputs.length < threshold) return false;
+  const last = recentOutputs.slice(-threshold);
+  return last.every((o) => o === last[0]);
+}
+
+// ---------------------------------------------------------------------------
 // REPL turn loop
 // ---------------------------------------------------------------------------
 
@@ -501,12 +524,14 @@ async function replTurnLoop(
   repl: ReplSession,
   logger: TrajectoryLogger,
   phaseId: string,
+  phase: Phase,
   turnLimit: number,
   maxConsecutiveErrors: number,
   verbose: boolean,
   isCaptured: () => boolean,
 ): Promise<TurnLoopResult> {
   let previousOutput = "Begin phase execution.";
+  const recentOutputs: string[] = [];
 
   for (let turnNumber = 1; turnNumber <= turnLimit; turnNumber++) {
     if (!orchestrator.isAlive()) {
@@ -592,6 +617,23 @@ async function replTurnLoop(
 
     // Ensure we never send an empty string (claude --print requires input)
     previousOutput = (rawOutput.trim() || "(no output)") + timeoutSuffix;
+
+    // Track recent outputs for stuck-loop detection
+    recentOutputs.push(previousOutput.slice(0, STUCK_FINGERPRINT_LENGTH));
+    if (recentOutputs.length > 6) recentOutputs.shift();
+
+    if (detectStuck(recentOutputs)) {
+      const taskIds = phase.tasks.map((t) => t.id);
+      previousOutput =
+        `REPL SYSTEM: You appear stuck in a loop — the last ${4} outputs were identical. ` +
+        `You MUST change your approach. Phase tasks: ${taskIds.join(", ")}.\n` +
+        `Options:\n` +
+        `1. Fix the argument format — dispatchSubAgent() requires an object: { type, taskId, instructions, filePaths, outputPaths }\n` +
+        `2. Use writeFile(path, content) for simple file creation instead of dispatchSubAgent()\n` +
+        `3. Mark stuck tasks as failed and call writePhaseReport() with ALL tasks accounted for\n` +
+        `Output JavaScript code only.`;
+      recentOutputs.length = 0; // reset so intervention isn't immediately re-triggered
+    }
 
     // Check if writePhaseReport was called inside the eval'd code
     if (isCaptured()) {
@@ -1041,7 +1083,18 @@ async function executePhase(
   const helpers: ReplHelpers = {
     ...baseHelpers,
     writePhaseReport: (report: PhaseReport) => {
-      capturedReport = normalizeReport(report as unknown as Record<string, unknown>, phase.id);
+      const normalized = normalizeReport(report as unknown as Record<string, unknown>, phase.id);
+      const allTaskIds = phase.tasks.map((t) => t.id);
+      const accountedFor = new Set([...normalized.tasksCompleted, ...normalized.tasksFailed]);
+      const missing = allTaskIds.filter((id) => !accountedFor.has(id));
+      if (missing.length > 0) {
+        throw new Error(
+          `writePhaseReport() REJECTED: ${missing.length} task(s) not accounted for: ${missing.join(", ")}. ` +
+          `Every task must appear in tasksCompleted or tasksFailed. ` +
+          `Process the missing tasks first (dispatch or mark failed), then call writePhaseReport() again.`,
+        );
+      }
+      capturedReport = normalized;
     },
     runCheck: checkRunner
       ? () => checkRunner.run()
@@ -1087,6 +1140,7 @@ async function executePhase(
       repl,
       logger,
       phase.id,
+      phase,
       ctx.turnLimit,
       ctx.maxConsecutiveErrors,
       ctx.verbose,

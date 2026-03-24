@@ -10,6 +10,7 @@ const FIXTURES_DIR = join(import.meta.dirname, "../../../test/fixtures/repl-test
 function makeHelpers(overrides?: Partial<ReplHelpers>): ReplHelpers {
   return {
     readFile: () => "",
+    writeFile: () => {},
     listDir: () => [],
     searchFiles: () => [],
     getState: () => ({
@@ -210,7 +211,7 @@ describe("replManager", () => {
       makeConfig({ helpers }),
     );
     const result = await session.eval(
-      'await dispatchSubAgent({ type: "coder", taskId: "t1", instructions: "test" })',
+      'await dispatchSubAgent({ type: "coder", taskId: "t1", instructions: "test", filePaths: [], outputPaths: [] })',
     );
     expect(result.success).toBe(true);
     expect(result.output).toContain("[dispatchSubAgent:t1]");
