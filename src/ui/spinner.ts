@@ -31,7 +31,7 @@ export interface Spinner {
  * The spinner writes to stderr so it never contaminates captured stdout.
  * Calling `stop()` clears the line and restores the cursor.
  */
-function formatElapsed(ms: number): string {
+export function formatElapsed(ms: number): string {
   const totalSeconds = Math.floor(ms / 1000);
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;

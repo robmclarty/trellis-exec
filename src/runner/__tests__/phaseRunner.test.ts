@@ -48,10 +48,14 @@ import {
 } from "../phaseRunner.js";
 import type { RunContext } from "../../cli.js";
 import { createAgentLauncher } from "../../orchestrator/agentLauncher.js";
-import { getChangedFiles, commitAll } from "../../git.js";
+import { getChangedFiles, commitAll, getChangedFilesRange, getDiffContentRange, ensureInitialCommit, getCurrentSha } from "../../git.js";
 
 const mockedGetChangedFiles = vi.mocked(getChangedFiles);
 const mockedCommitAll = vi.mocked(commitAll);
+const mockedGetChangedFilesRange = vi.mocked(getChangedFilesRange);
+const mockedGetDiffContentRange = vi.mocked(getDiffContentRange);
+const mockedEnsureInitialCommit = vi.mocked(ensureInitialCommit);
+const mockedGetCurrentSha = vi.mocked(getCurrentSha);
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -720,6 +724,90 @@ describe("phaseRunner", () => {
       expect(context).toContain("## Git Commit Protocol");
       expect(context).toContain("conventional commit format");
       expect(context).toContain(".trellis-phase-report.json");
+    });
+  });
+
+  describe("runPhases — range-based judging", () => {
+    it("uses getChangedFilesRange with startSha during judge phase", async () => {
+      const tasksJson = makeTasksJson();
+      tmpDir = setupTmpDir(tasksJson);
+      const config = makeDefaultConfig(tmpDir);
+
+      // ensureInitialCommit returns the baseline SHA
+      mockedEnsureInitialCommit.mockReturnValue("baseline-sha-000");
+      // Range-based functions return some files so judge runs
+      mockedGetChangedFilesRange.mockReturnValue([
+        { path: "package.json", status: "A" },
+      ]);
+      mockedGetDiffContentRange.mockReturnValue("diff --git a/package.json");
+      mockedGetCurrentSha.mockReturnValue("final-sha-999");
+      mockedCommitAll.mockReturnValue("commit-sha-111");
+
+      const reports = new Map<string, PhaseReport>([
+        [
+          "phase-1",
+          makePhaseReport("phase-1", {
+            tasksCompleted: ["task-1-1", "task-1-2"],
+          }),
+        ],
+        [
+          "phase-2",
+          makePhaseReport("phase-2", {
+            tasksCompleted: ["task-2-1", "task-2-2"],
+          }),
+        ],
+      ]);
+      setupMocksForSuccess(tmpDir, reports);
+
+      await runPhases(config, tasksJson);
+
+      // Verify range-based git functions were called with the baseline SHA
+      expect(mockedGetChangedFilesRange).toHaveBeenCalledWith(
+        tmpDir,
+        "baseline-sha-000",
+      );
+      expect(mockedGetDiffContentRange).toHaveBeenCalledWith(
+        tmpDir,
+        "baseline-sha-000",
+      );
+    });
+
+    it("tracks startSha and endSha in phase reports", async () => {
+      const tasksJson = makeTasksJson();
+      tmpDir = setupTmpDir(tasksJson);
+      const config = makeDefaultConfig(tmpDir);
+
+      mockedEnsureInitialCommit.mockReturnValue("start-sha-aaa");
+      mockedGetChangedFilesRange.mockReturnValue([
+        { path: "file.ts", status: "A" },
+      ]);
+      mockedGetDiffContentRange.mockReturnValue("some diff");
+      mockedGetCurrentSha.mockReturnValue("end-sha-bbb");
+      mockedCommitAll.mockReturnValue("commit-sha-ccc");
+
+      const reports = new Map<string, PhaseReport>([
+        [
+          "phase-1",
+          makePhaseReport("phase-1", {
+            tasksCompleted: ["task-1-1", "task-1-2"],
+          }),
+        ],
+        [
+          "phase-2",
+          makePhaseReport("phase-2", {
+            tasksCompleted: ["task-2-1", "task-2-2"],
+          }),
+        ],
+      ]);
+      setupMocksForSuccess(tmpDir, reports);
+
+      const result = await runPhases(config, tasksJson);
+
+      // Phase reports should include SHA tracking
+      const phaseReport = result.finalState.phaseReports.find(
+        (r) => r.phaseId === "phase-1",
+      );
+      expect(phaseReport?.startSha).toBe("start-sha-aaa");
     });
   });
 });

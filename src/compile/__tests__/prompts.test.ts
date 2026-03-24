@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { buildDecomposePrompt } from "../prompts.js";
+import { buildDecomposePrompt, buildEnrichmentPrompt } from "../prompts.js";
+import type { EnrichmentFlag } from "../../types/compile.js";
+import type { Task } from "../../types/tasks.js";
 
 describe("buildDecomposePrompt", () => {
   const planContent = "## S1 — Architecture\nSome architecture details.";
@@ -71,5 +73,97 @@ describe("buildDecomposePrompt", () => {
     expect(prompt).toContain("dependsOn");
     expect(prompt).toContain("targetPaths");
     expect(prompt).toContain("acceptanceCriteria");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildEnrichmentPrompt
+// ---------------------------------------------------------------------------
+
+function makeTask(overrides?: Partial<Task>): Task {
+  return {
+    id: "task-1",
+    title: "Build feature",
+    description: "Implement the feature",
+    dependsOn: [],
+    specSections: ["§1"],
+    targetPaths: ["src/feature.ts"],
+    acceptanceCriteria: ["tests pass"],
+    subAgentType: "implement",
+    status: "pending",
+    ...overrides,
+  };
+}
+
+function makeFlag(overrides?: Partial<EnrichmentFlag>): EnrichmentFlag {
+  return {
+    taskId: "task-1",
+    field: "dependsOn",
+    context: "references task-2 which exists",
+    reason: "could not resolve dependency",
+    ...overrides,
+  };
+}
+
+describe("buildEnrichmentPrompt", () => {
+  it("includes flag details and matching task context", () => {
+    const tasks = [makeTask()];
+    const flags = [makeFlag()];
+
+    const prompt = buildEnrichmentPrompt(flags, tasks);
+    expect(prompt).toContain("task-1");
+    expect(prompt).toContain("dependsOn");
+    expect(prompt).toContain("could not resolve dependency");
+    expect(prompt).toContain("references task-2 which exists");
+    expect(prompt).toContain("Build feature");
+    expect(prompt).toContain("Implement the feature");
+  });
+
+  it("includes multiple flags", () => {
+    const tasks = [
+      makeTask({ id: "task-1", title: "Feature A" }),
+      makeTask({ id: "task-2", title: "Feature B" }),
+    ];
+    const flags = [
+      makeFlag({ taskId: "task-1", field: "dependsOn" }),
+      makeFlag({ taskId: "task-2", field: "subAgentType" }),
+    ];
+
+    const prompt = buildEnrichmentPrompt(flags, tasks);
+    expect(prompt).toContain("Feature A");
+    expect(prompt).toContain("Feature B");
+    expect(prompt).toContain("subAgentType");
+  });
+
+  it("shows (task not found) for flags referencing missing tasks", () => {
+    const tasks = [makeTask({ id: "task-1" })];
+    const flags = [makeFlag({ taskId: "task-999" })];
+
+    const prompt = buildEnrichmentPrompt(flags, tasks);
+    expect(prompt).toContain("task-999");
+    expect(prompt).toContain("(task not found)");
+  });
+
+  it("lists all available task IDs", () => {
+    const tasks = [
+      makeTask({ id: "task-1" }),
+      makeTask({ id: "task-2" }),
+      makeTask({ id: "task-3" }),
+    ];
+    const flags = [makeFlag()];
+
+    const prompt = buildEnrichmentPrompt(flags, tasks);
+    expect(prompt).toContain(JSON.stringify(["task-1", "task-2", "task-3"]));
+  });
+
+  it("includes field type guidance", () => {
+    const prompt = buildEnrichmentPrompt([makeFlag()], [makeTask()]);
+    expect(prompt).toContain('"dependsOn"');
+    expect(prompt).toContain('"subAgentType"');
+    expect(prompt).toContain('"acceptanceCriteria"');
+    expect(prompt).toContain("implement");
+    expect(prompt).toContain("test-writer");
+    expect(prompt).toContain("scaffold");
+    expect(prompt).toContain("judge");
   });
 });
