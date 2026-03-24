@@ -1,4 +1,4 @@
-target = "claude-code"
+tools = ["claude-code"]
 strict = false
 max_files = 10000
 locale = "en"

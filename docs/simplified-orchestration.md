@@ -16,7 +16,7 @@ The REPL layer, worktree isolation, and multi-turn orchestrator handle are remov
 
 ## Files to delete
 
-```
+```text
 src/orchestrator/replManager.ts      # entire file
 src/orchestrator/replHelpers.ts      # entire file
 src/isolation/worktreeManager.ts     # entire file
@@ -549,11 +549,13 @@ When using the Task tool for sub-agents, provide:
 - The acceptance criteria from the task definition
 
 Example:
-```
+
+```text
 Task: Implement the authentication middleware.
 Read src/middleware/auth.ts for the existing structure.
 Create src/middleware/jwt.ts with the JWT validation logic.
 Acceptance criteria:
+
 - Exports a validateToken function
 - Returns 401 for invalid tokens
 - Passes the user object to req.user
@@ -581,7 +583,6 @@ scratch. Instead:
 - If the check command is configured, run it after each task completes
 - Write the report file as your final action
 - The report MUST account for every task ID in the phase
-```
 
 ---
 
@@ -663,7 +664,7 @@ There are two correction loops. They're nested but independent.
 
 ### Loop 1: Judge → Fix → Re-judge (post-orchestrator, same attempt)
 
-```
+```text
 Orchestrator exits
   → Runner reads git diff
   → Judge agent evaluates diff against acceptance criteria
@@ -682,7 +683,7 @@ diff. The orchestrator is not involved.
 
 ### Loop 2: Phase-level retry (new orchestrator)
 
-```
+```text
 Runner receives judge assessment with passed=false
   → Runner downgrades report to recommendedAction="retry"
   → Runner appends corrective tasks (from judge issues) to phase definition
@@ -722,6 +723,7 @@ the filesystem.
 ## Migration summary
 
 ### Delete entirely
+
 | File | Lines | Reason |
 |------|-------|--------|
 | `src/orchestrator/replManager.ts` | 330 | vm sandbox no longer needed |
@@ -729,17 +731,20 @@ the filesystem.
 | `src/isolation/worktreeManager.ts` | 266 | worktree isolation removed |
 
 ### Extract and simplify
+
 | File | Current lines | Estimated lines | What changes |
 |------|--------------|-----------------|--------------|
 | `src/orchestrator/agentLauncher.ts` | 395 | ~130 | Remove orchestrator handle, REPL prompt, --disallowedTools, --continue. Add `runPhaseOrchestrator`. |
 | `src/runner/phaseRunner.ts` | 1590 | ~700 | Delete replTurnLoop, extractCode, isCommentOnly, detectStuck, REPL protocol in buildPhaseContext. Simplify executePhase to spawn-and-read-report. buildPhaseContext grows with retry context. |
 
 ### New file
+
 | File | Estimated lines | Purpose |
 |------|----------------|---------|
 | `src/git.ts` | ~60 | `getChangedFiles` + `getDiffContent` extracted from worktreeManager |
 
 ### Unchanged
+
 | File | Lines |
 |------|-------|
 | `src/runner/stateManager.ts` | 111 |

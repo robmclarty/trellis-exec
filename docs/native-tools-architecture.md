@@ -22,7 +22,7 @@ Each of these was a layer of indirection between what the LLM wanted to do and w
 
 Each phase is a single `claude --agent agents/phase-orchestrator.md --print --dangerously-skip-permissions` invocation. The phase context (tasks, state, spec, guidelines) is piped via stdin. The orchestrator runs to completion using Claude's native tools, then exits.
 
-```
+```text
 phaseRunner.ts
   └─ launcher.runPhaseOrchestrator(context, agentFile, model)
        └─ spawns: claude --agent phase-orchestrator.md --print --dangerously-skip-permissions
