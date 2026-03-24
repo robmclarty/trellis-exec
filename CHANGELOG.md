@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.7
+
+- Add per-task git commits via orchestrator prompt (conventional commit format with scope and bullet summary)
+- Add per-phase git commit in runner after judge passes, summarizing all completed tasks
+- Track `startSha`/`endSha` per phase in PhaseReport for commit range tracking
+- Fix judge silently auto-passing by using range-based diffs (`startSha..HEAD`) instead of working tree vs HEAD
+- Add git helpers: `getCurrentSha`, `ensureInitialCommit`, `commitAll`, `getChangedFilesRange`, `getDiffContentRange`
+- Add `getPhaseCommitRange` convenience function to state manager
+
 ## 0.5.6
 
 - Use absolute path for phase report file in completion protocol so subagents resolve the correct location
