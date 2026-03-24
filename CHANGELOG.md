@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.4
+
+- Stream orchestrator stdout/stderr in real-time with `--verbose` flag
+- Show actual recommendation (retry/halt/advance) in interactive prompt instead of misleading "continue" label
+- Run judge even when phase fails if files were changed, preventing silent skip of judge/fix loop
+- Default to "retry" instead of "halt" for transient failures like missing report files
+- Store current phase report in `state.json` (`phaseReport` field) and clean up temp file after reading
+- Auto-detect new test files after each phase and set check command from `package.json` or test runner configs
+- Refactor `execClaude` to use options object instead of positional params
+
 ## 0.5.3
 
 - Use Opus instead of Haiku for plan decomposition to handle ambiguous, architectural inputs
