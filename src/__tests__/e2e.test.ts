@@ -326,6 +326,7 @@ describe("e2e integration tests", () => {
         schemaChanges: [],
         phaseReports: [phase1Report],
         phaseRetries: {},
+        phaseReport: null,
       };
       writeFileSync(join(tmpDir, "state.json"), JSON.stringify(resumeState));
 

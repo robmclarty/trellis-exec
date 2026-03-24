@@ -307,6 +307,7 @@ describe("phaseRunner", () => {
                 schemaChanges: [],
                 phaseReports: [],
                 phaseRetries: {},
+                phaseReport: null,
             };
             const context = buildPhaseContext(tasksJson.phases[0], state, "", config);
             expect(context).toContain("task-1-1");
@@ -336,6 +337,7 @@ describe("phaseRunner", () => {
                     }),
                 ],
                 phaseRetries: { "phase-1": 1 },
+                phaseReport: null,
             };
             const context = buildPhaseContext(tasksJson.phases[0], state, "", config);
             expect(context).toContain("Previous Attempt");

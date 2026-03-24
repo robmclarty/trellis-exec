@@ -18,12 +18,18 @@ export type AgentLauncherConfig = {
   dryRun?: boolean;
 };
 
+export type OrchestratorOptions = {
+  onStdout?: (chunk: string) => void;
+  onStderr?: (chunk: string) => void;
+};
+
 export type AgentLauncher = {
   dispatchSubAgent(config: SubAgentConfig): Promise<SubAgentResult>;
   runPhaseOrchestrator(
     prompt: string,
     agentFile: string,
     model?: string,
+    options?: OrchestratorOptions,
   ): Promise<ExecClaudeResult>;
 };
 
@@ -88,13 +94,24 @@ export function buildSubAgentArgs(
  * Spawns a `claude` CLI subprocess, optionally pipes stdin, and collects
  * stdout/stderr. Rejects on timeout.
  */
+export type ExecClaudeOptions = {
+  stdin?: string;
+  timeout?: number;
+  onStderr?: ((chunk: string) => void) | undefined;
+  onStdout?: ((chunk: string) => void) | undefined;
+};
+
 export function execClaude(
   args: string[],
   cwd: string,
-  stdin?: string,
-  timeout: number = DEFAULT_TIMEOUT,
-  onStderr?: (chunk: string) => void,
+  options: ExecClaudeOptions = {},
 ): Promise<ExecClaudeResult> {
+  const {
+    stdin,
+    timeout = DEFAULT_TIMEOUT,
+    onStderr,
+    onStdout,
+  } = options;
   return new Promise((resolvePromise, reject) => {
     const child = spawn("claude", args, {
       cwd,
@@ -104,7 +121,10 @@ export function execClaude(
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
 
-    child.stdout.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdoutChunks.push(chunk);
+      if (onStdout) onStdout(chunk.toString("utf-8"));
+    });
     child.stderr.on("data", (chunk: Buffer) => {
       stderrChunks.push(chunk);
       if (onStderr) onStderr(chunk.toString("utf-8"));
@@ -163,7 +183,7 @@ export function createAgentLauncher(config: AgentLauncherConfig): AgentLauncher 
 
     let result: ExecClaudeResult;
     try {
-      result = await execClaude(args, projectRoot, prompt);
+      result = await execClaude(args, projectRoot, { stdin: prompt });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       return {
@@ -196,6 +216,7 @@ export function createAgentLauncher(config: AgentLauncherConfig): AgentLauncher 
     prompt: string,
     agentFile: string,
     model?: string,
+    options?: OrchestratorOptions,
   ): Promise<ExecClaudeResult> {
     const args = [
       "--agent",
@@ -211,7 +232,12 @@ export function createAgentLauncher(config: AgentLauncherConfig): AgentLauncher 
       return { stdout: "[dry-run]", stderr: "", exitCode: 0 };
     }
 
-    return execClaude(args, projectRoot, prompt, ORCHESTRATOR_TIMEOUT);
+    return execClaude(args, projectRoot, {
+      stdin: prompt,
+      timeout: ORCHESTRATOR_TIMEOUT,
+      onStdout: options?.onStdout,
+      onStderr: options?.onStderr,
+    });
   }
 
   return { dispatchSubAgent, runPhaseOrchestrator };

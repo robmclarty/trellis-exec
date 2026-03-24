@@ -20,6 +20,7 @@ export function initState(tasksJson: TasksJson): SharedState {
     schemaChanges: [],
     phaseReports: [],
     phaseRetries: {},
+    phaseReport: null,
   };
 }
 
@@ -74,6 +75,7 @@ export function updateStateAfterPhase(
     completedPhases: [...state.completedPhases, state.currentPhase],
     phaseReports: [...state.phaseReports, report],
     currentPhase: nextPhase?.id ?? "",
+    phaseReport: null,
   };
 }
 

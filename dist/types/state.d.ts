@@ -127,6 +127,39 @@ export declare const SharedStateSchema: z.ZodObject<{
         handoff: z.ZodString;
     }, z.core.$strip>>;
     phaseRetries: z.ZodRecord<z.ZodString, z.ZodNumber>;
+    phaseReport: z.ZodDefault<z.ZodNullable<z.ZodObject<{
+        phaseId: z.ZodString;
+        status: z.ZodEnum<{
+            complete: "complete";
+            failed: "failed";
+            partial: "partial";
+        }>;
+        summary: z.ZodString;
+        tasksCompleted: z.ZodArray<z.ZodString>;
+        tasksFailed: z.ZodArray<z.ZodString>;
+        judgeAssessment: z.ZodOptional<z.ZodObject<{
+            passed: z.ZodBoolean;
+            issues: z.ZodArray<z.ZodUnion<readonly [z.ZodString, z.ZodObject<{
+                task: z.ZodOptional<z.ZodString>;
+                severity: z.ZodOptional<z.ZodString>;
+                description: z.ZodString;
+            }, z.core.$strip>]>>;
+            suggestions: z.ZodArray<z.ZodUnion<readonly [z.ZodString, z.ZodObject<{
+                task: z.ZodOptional<z.ZodString>;
+                severity: z.ZodOptional<z.ZodString>;
+                description: z.ZodString;
+            }, z.core.$strip>]>>;
+        }, z.core.$strip>>;
+        orchestratorAnalysis: z.ZodString;
+        recommendedAction: z.ZodEnum<{
+            advance: "advance";
+            retry: "retry";
+            halt: "halt";
+        }>;
+        correctiveTasks: z.ZodArray<z.ZodString>;
+        decisionsLog: z.ZodArray<z.ZodString>;
+        handoff: z.ZodString;
+    }, z.core.$strip>>>;
 }, z.core.$strip>;
 export type CheckResult = z.infer<typeof CheckResultSchema>;
 export type ModifiedFile = z.infer<typeof ModifiedFileSchema>;

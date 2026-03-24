@@ -47,5 +47,6 @@ export const SharedStateSchema = z.object({
     schemaChanges: z.array(SchemaChangeSchema),
     phaseReports: z.array(PhaseReportSchema),
     phaseRetries: z.record(z.string(), z.number()),
+    phaseReport: PhaseReportSchema.nullable().default(null),
 });
 //# sourceMappingURL=state.js.map

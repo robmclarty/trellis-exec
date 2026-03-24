@@ -264,15 +264,15 @@ async function handleCompile(args) {
         const cwd = dirname(resolve(planPath));
         // Haiku for lightweight enrichment, Opus for full decomposition
         const enrichQuery = async (prompt) => {
-            const result = await execClaude(["--print", "--model", "haiku"], cwd, prompt, compileTimeout);
+            const result = await execClaude(["--print", "--model", "haiku"], cwd, { stdin: prompt, timeout: compileTimeout });
             return result.stdout;
         };
         const decomposeQuery = async (prompt) => {
             console.log("Decomposing plan via LLM (this may take a few minutes)...");
             const spinner = startSpinner("Decomposing");
-            const result = await execClaude(["--print", "--model", "opus"], cwd, prompt, compileTimeout, (chunk) => {
-                // Stderr from claude CLI contains progress info; log in verbose scenarios
-                // For now we let the spinner + elapsed time handle UX
+            const result = await execClaude(["--print", "--model", "opus"], cwd, {
+                stdin: prompt,
+                timeout: compileTimeout,
             });
             spinner.stop();
             return result.stdout;

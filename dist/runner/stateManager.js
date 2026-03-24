@@ -16,6 +16,7 @@ export function initState(tasksJson) {
         schemaChanges: [],
         phaseReports: [],
         phaseRetries: {},
+        phaseReport: null,
     };
 }
 /**
@@ -62,6 +63,7 @@ export function updateStateAfterPhase(state, report, phases) {
         completedPhases: [...state.completedPhases, state.currentPhase],
         phaseReports: [...state.phaseReports, report],
         currentPhase: nextPhase?.id ?? "",
+        phaseReport: null,
     };
 }
 /**

@@ -10,9 +10,13 @@ export type AgentLauncherConfig = {
     projectRoot: string;
     dryRun?: boolean;
 };
+export type OrchestratorOptions = {
+    onStdout?: (chunk: string) => void;
+    onStderr?: (chunk: string) => void;
+};
 export type AgentLauncher = {
     dispatchSubAgent(config: SubAgentConfig): Promise<SubAgentResult>;
-    runPhaseOrchestrator(prompt: string, agentFile: string, model?: string): Promise<ExecClaudeResult>;
+    runPhaseOrchestrator(prompt: string, agentFile: string, model?: string, options?: OrchestratorOptions): Promise<ExecClaudeResult>;
 };
 /**
  * Assembles the sub-agent prompt following the §5 input contract.
@@ -32,7 +36,13 @@ export declare function buildSubAgentArgs(agentFile: string, model: string): str
  * Spawns a `claude` CLI subprocess, optionally pipes stdin, and collects
  * stdout/stderr. Rejects on timeout.
  */
-export declare function execClaude(args: string[], cwd: string, stdin?: string, timeout?: number, onStderr?: (chunk: string) => void): Promise<ExecClaudeResult>;
+export type ExecClaudeOptions = {
+    stdin?: string;
+    timeout?: number;
+    onStderr?: ((chunk: string) => void) | undefined;
+    onStdout?: ((chunk: string) => void) | undefined;
+};
+export declare function execClaude(args: string[], cwd: string, options?: ExecClaudeOptions): Promise<ExecClaudeResult>;
 /**
  * Creates an AgentLauncher that manages claude CLI subprocesses for sub-agent
  * dispatch and phase orchestration.

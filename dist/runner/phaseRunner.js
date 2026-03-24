@@ -171,8 +171,8 @@ function buildPartialReport(phaseId, phase, reason) {
         summary: `Phase halted: ${reason}`,
         tasksCompleted,
         tasksFailed,
-        orchestratorAnalysis: `Phase terminated due to ${reason}. Manual intervention required.`,
-        recommendedAction: "halt",
+        orchestratorAnalysis: `Phase terminated due to ${reason}.`,
+        recommendedAction: "retry",
         correctiveTasks: [],
         decisionsLog: [],
         handoff: "",
@@ -285,6 +285,61 @@ export function dryRunReport(tasksJson, ctx) {
     return lines.join("\n");
 }
 // ---------------------------------------------------------------------------
+// Test auto-detection
+// ---------------------------------------------------------------------------
+const TEST_FILE_PATTERNS = [
+    /\.test\.[jt]sx?$/,
+    /\.spec\.[jt]sx?$/,
+    /__tests__\//,
+    /\.test\.\w+$/,
+];
+/**
+ * Returns true if any newly added files look like test files.
+ */
+export function hasNewTestFiles(projectRoot) {
+    const changed = getChangedFiles(projectRoot);
+    return changed.some((f) => (f.status === "A" || f.status === "?") &&
+        TEST_FILE_PATTERNS.some((re) => re.test(f.path)));
+}
+/**
+ * Attempts to detect a test command from the project.
+ * Returns null if no test runner can be identified.
+ */
+export function detectTestCommand(projectRoot) {
+    // Check package.json test script
+    const pkgPath = join(projectRoot, "package.json");
+    if (existsSync(pkgPath)) {
+        try {
+            const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
+            const testScript = pkg?.scripts?.test;
+            if (typeof testScript === "string" &&
+                testScript.length > 0 &&
+                !testScript.includes("no test specified")) {
+                return "npm test";
+            }
+        }
+        catch {
+            // ignore parse errors
+        }
+    }
+    // Check for common test runner configs
+    const configs = [
+        { file: "vitest.config.ts", command: "npx vitest run" },
+        { file: "vitest.config.js", command: "npx vitest run" },
+        { file: "vitest.config.mts", command: "npx vitest run" },
+        { file: "jest.config.ts", command: "npx jest" },
+        { file: "jest.config.js", command: "npx jest" },
+        { file: "jest.config.cjs", command: "npx jest" },
+        { file: "jest.config.mjs", command: "npx jest" },
+    ];
+    for (const { file, command } of configs) {
+        if (existsSync(join(projectRoot, file))) {
+            return command;
+        }
+    }
+    return null;
+}
+// ---------------------------------------------------------------------------
 // Interactive prompt
 // ---------------------------------------------------------------------------
 export async function promptForContinuation(options) {
@@ -292,12 +347,19 @@ export async function promptForContinuation(options) {
         input: process.stdin,
         output: process.stdout,
     });
-    let header = "";
+    const lines = [];
     if (options?.phaseId && options.retryCount !== undefined && options.maxRetries !== undefined) {
-        header = `\n[${options.phaseId}] retries used: ${options.retryCount}/${options.maxRetries}`;
+        lines.push(`[${options.phaseId}] retries used: ${options.retryCount}/${options.maxRetries}`);
     }
+    if (options?.recommendedAction && options.recommendedAction !== "advance") {
+        const reasonSuffix = options.reason ? ` — ${options.reason}` : "";
+        lines.push(`Recommendation: ${options.recommendedAction}${reasonSuffix}`);
+    }
+    const rec = options?.recommendedAction ?? "advance";
+    const enterLabel = rec === "advance" ? "advance" : rec;
+    lines.push(`[Enter] ${enterLabel}  [r] retry  [s] skip  [q] quit`);
     return new Promise((resolvePromise) => {
-        rl.question(`${header}\n[Enter] continue  [r] retry  [s] skip  [q] quit\n> `, (answer) => {
+        rl.question(`\n${lines.join("\n")}\n> `, (answer) => {
             rl.close();
             const trimmed = answer.trim().toLowerCase();
             if (trimmed === "r" || trimmed === "retry")
@@ -618,7 +680,12 @@ async function executePhase(ctx, phase, state, projectRoot, logger) {
         console.log("Launching orchestrator…");
         const spinner = startSpinner("Orchestrator");
         const startTime = Date.now();
-        const result = await launcher.runPhaseOrchestrator(phaseContext, agentFile, ctx.model);
+        const result = await launcher.runPhaseOrchestrator(phaseContext, agentFile, ctx.model, ctx.verbose
+            ? {
+                onStdout: (chunk) => process.stdout.write(chunk),
+                onStderr: (chunk) => process.stderr.write(chunk),
+            }
+            : undefined);
         const duration = Date.now() - startTime;
         spinner.stop();
         logger.append({
@@ -640,6 +707,7 @@ async function executePhase(ctx, phase, state, projectRoot, logger) {
             const reason = result.exitCode !== 0
                 ? `orchestrator exited with code ${result.exitCode}`
                 : "orchestrator did not write report file";
+            console.log(`Warning: ${reason}`);
             return {
                 status: "failed",
                 report: buildPartialReport(phase.id, phase, reason),
@@ -656,6 +724,11 @@ async function executePhase(ctx, phase, state, projectRoot, logger) {
             };
         }
         const report = normalizeReport(rawReport, phase.id);
+        // Clean up temp report file — data is now stored in state.phaseReport
+        try {
+            unlinkSync(reportPath);
+        }
+        catch { /* ignore */ }
         // Validate all task IDs are accounted for
         const allTaskIds = phase.tasks.map((t) => t.id);
         const accountedFor = new Set([...report.tasksCompleted, ...report.tasksFailed]);
@@ -735,13 +808,16 @@ export async function runPhases(ctx, tasksJson) {
                 phaseIndex++;
                 continue;
             }
-            state = { ...state, currentPhase: phase.id };
+            state = { ...state, currentPhase: phase.id, phaseReport: null };
             const taskCount = phase.tasks.length;
             console.log(`\nStarting phase "${phase.id}" (${taskCount} task${taskCount === 1 ? "" : "s"})…`);
             const phaseResult = await executePhase(ctx, phase, state, projectRoot, logger);
             let report = phaseResult.report;
-            // Judge loop: always runs unless phase outright failed
-            if (phaseResult.status !== "failed") {
+            state = { ...state, phaseReport: report };
+            saveState(ctx.statePath, state);
+            // Judge loop: runs unless phase failed with no changed files
+            const hasChanges = getChangedFiles(projectRoot).length > 0;
+            if (phaseResult.status !== "failed" || hasChanges) {
                 console.log(`Judging phase "${phase.id}"…`);
                 const judgeResult = await judgePhase({
                     phase,
@@ -764,6 +840,14 @@ export async function runPhases(ctx, tasksJson) {
                     };
                 }
             }
+            // Auto-detect test suites if no --check was provided
+            if (!ctx.checkCommand && hasNewTestFiles(projectRoot)) {
+                const detected = detectTestCommand(projectRoot);
+                if (detected) {
+                    console.log(`Detected new test files. Setting check command: ${detected}`);
+                    ctx.checkCommand = detected;
+                }
+            }
             // Determine action: combine report recommendation with user input
             let action = report.recommendedAction === "advance"
                 ? "advance"
@@ -776,6 +860,8 @@ export async function runPhases(ctx, tasksJson) {
                     phaseId: phase.id,
                     retryCount,
                     maxRetries: ctx.maxRetries,
+                    recommendedAction: report.recommendedAction,
+                    reason: report.summary,
                 });
                 if (userChoice === "quit") {
                     // Save report to state before exiting

@@ -366,7 +366,7 @@ async function handleCompile(args: string[]): Promise<void> {
 
     // Haiku for lightweight enrichment, Opus for full decomposition
     const enrichQuery = async (prompt: string) => {
-      const result = await execClaude(["--print", "--model", "haiku"], cwd, prompt, compileTimeout);
+      const result = await execClaude(["--print", "--model", "haiku"], cwd, { stdin: prompt, timeout: compileTimeout });
       return result.stdout;
     };
     const decomposeQuery = async (prompt: string) => {
@@ -375,11 +375,9 @@ async function handleCompile(args: string[]): Promise<void> {
       const result = await execClaude(
         ["--print", "--model", "opus"],
         cwd,
-        prompt,
-        compileTimeout,
-        (chunk) => {
-          // Stderr from claude CLI contains progress info; log in verbose scenarios
-          // For now we let the spinner + elapsed time handle UX
+        {
+          stdin: prompt,
+          timeout: compileTimeout,
         },
       );
       spinner.stop();

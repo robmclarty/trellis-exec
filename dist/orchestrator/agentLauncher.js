@@ -48,11 +48,8 @@ export function buildSubAgentArgs(agentFile, model) {
         model,
     ];
 }
-/**
- * Spawns a `claude` CLI subprocess, optionally pipes stdin, and collects
- * stdout/stderr. Rejects on timeout.
- */
-export function execClaude(args, cwd, stdin, timeout = DEFAULT_TIMEOUT, onStderr) {
+export function execClaude(args, cwd, options = {}) {
+    const { stdin, timeout = DEFAULT_TIMEOUT, onStderr, onStdout, } = options;
     return new Promise((resolvePromise, reject) => {
         const child = spawn("claude", args, {
             cwd,
@@ -60,7 +57,11 @@ export function execClaude(args, cwd, stdin, timeout = DEFAULT_TIMEOUT, onStderr
         });
         const stdoutChunks = [];
         const stderrChunks = [];
-        child.stdout.on("data", (chunk) => stdoutChunks.push(chunk));
+        child.stdout.on("data", (chunk) => {
+            stdoutChunks.push(chunk);
+            if (onStdout)
+                onStdout(chunk.toString("utf-8"));
+        });
         child.stderr.on("data", (chunk) => {
             stderrChunks.push(chunk);
             if (onStderr)
@@ -110,7 +111,7 @@ export function createAgentLauncher(config) {
         }
         let result;
         try {
-            result = await execClaude(args, projectRoot, prompt);
+            result = await execClaude(args, projectRoot, { stdin: prompt });
         }
         catch (err) {
             const message = err instanceof Error ? err.message : String(err);
@@ -136,7 +137,7 @@ export function createAgentLauncher(config) {
             filesModified: [],
         };
     }
-    async function runPhaseOrchestrator(prompt, agentFile, model) {
+    async function runPhaseOrchestrator(prompt, agentFile, model, options) {
         const args = [
             "--agent",
             agentFile,
@@ -149,7 +150,12 @@ export function createAgentLauncher(config) {
             console.log("[dry-run] prompt:", prompt.slice(0, 200));
             return { stdout: "[dry-run]", stderr: "", exitCode: 0 };
         }
-        return execClaude(args, projectRoot, prompt, ORCHESTRATOR_TIMEOUT);
+        return execClaude(args, projectRoot, {
+            stdin: prompt,
+            timeout: ORCHESTRATOR_TIMEOUT,
+            onStdout: options?.onStdout,
+            onStderr: options?.onStderr,
+        });
     }
     return { dispatchSubAgent, runPhaseOrchestrator };
 }

@@ -396,6 +396,7 @@ describe("phaseRunner", () => {
         schemaChanges: [],
         phaseReports: [],
         phaseRetries: {},
+        phaseReport: null,
       };
 
       const context = buildPhaseContext(
@@ -433,6 +434,7 @@ describe("phaseRunner", () => {
           }),
         ],
         phaseRetries: { "phase-1": 1 },
+        phaseReport: null,
       };
 
       const context = buildPhaseContext(
