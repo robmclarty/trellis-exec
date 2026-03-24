@@ -19,7 +19,7 @@ const DEFAULT_INTERVAL_MS = 120;
  * The spinner writes to stderr so it never contaminates captured stdout.
  * Calling `stop()` clears the line and restores the cursor.
  */
-function formatElapsed(ms) {
+export function formatElapsed(ms) {
     const totalSeconds = Math.floor(ms / 1000);
     const minutes = Math.floor(totalSeconds / 60);
     const seconds = totalSeconds % 60;
