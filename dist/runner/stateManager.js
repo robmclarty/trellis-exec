@@ -85,4 +85,14 @@ export function updateTaskStatus(tasksJson, phaseId, taskId, status) {
     const updatedPhases = tasksJson.phases.map((p, i) => i === phaseIndex ? { ...p, tasks: updatedTasks } : p);
     return { ...tasksJson, phases: updatedPhases };
 }
+/**
+ * Returns the commit range (startSha..endSha) for a completed phase,
+ * or null if the phase has no recorded SHAs.
+ */
+export function getPhaseCommitRange(state, phaseId) {
+    const report = state.phaseReports.find((r) => r.phaseId === phaseId);
+    if (!report?.startSha || !report?.endSha)
+        return null;
+    return { startSha: report.startSha, endSha: report.endSha };
+}
 //# sourceMappingURL=stateManager.js.map

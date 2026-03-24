@@ -7,7 +7,7 @@ import { validateDependencies, resolveExecutionOrder, detectTargetPathOverlaps, 
 import { createTrajectoryLogger } from "../logging/trajectoryLogger.js";
 import { startSpinner } from "../ui/spinner.js";
 import { createStreamHandler, extractResultText } from "../ui/streamParser.js";
-import { getChangedFiles, getDiffContent } from "../git.js";
+import { getChangedFiles, getDiffContent, getCurrentSha, ensureInitialCommit, commitAll, getChangedFilesRange, getDiffContentRange, } from "../git.js";
 import { createCheckRunner } from "../verification/checkRunner.js";
 import { createAgentLauncher } from "../orchestrator/agentLauncher.js";
 // ---------------------------------------------------------------------------
@@ -87,6 +87,21 @@ export function buildPhaseContext(phase, state, handoff, ctx) {
     else {
         lines.push("none configured");
     }
+    // Git commit protocol
+    lines.push("");
+    lines.push("## Git Commit Protocol");
+    lines.push("After each task passes the check command, commit all changes:");
+    lines.push("```bash");
+    lines.push('git add -A && git commit -m "<type>(<scope>): <summary>');
+    lines.push("");
+    lines.push("- <change 1>");
+    lines.push("- <change 2>");
+    lines.push('- <change 3>"');
+    lines.push("```");
+    lines.push("Use conventional commit format (feat, fix, refactor, test, docs, chore).");
+    lines.push("The scope should be the main module/area affected. The body should list 3-5 significant changes.");
+    lines.push("If `git commit` fails (nothing to commit), continue to the next task.");
+    lines.push("Do NOT commit the `.trellis-phase-report.json` file.");
     // Completion protocol
     lines.push("");
     lines.push("## Completion Protocol");
@@ -537,8 +552,10 @@ export function buildFixPrompt(issues, phase) {
 }
 async function judgePhase(config) {
     const maxCorrections = config.maxCorrections ?? 2;
-    const { phase, report, projectRoot, ctx, logger } = config;
-    let changedFiles = getChangedFiles(projectRoot);
+    const { phase, report, projectRoot, ctx, logger, startSha } = config;
+    let changedFiles = startSha
+        ? getChangedFilesRange(projectRoot, startSha)
+        : getChangedFiles(projectRoot);
     if (changedFiles.length === 0) {
         return {
             assessment: { passed: true, issues: [], suggestions: [] },
@@ -552,7 +569,9 @@ async function judgePhase(config) {
     });
     let assessment = { passed: true, issues: [], suggestions: [] };
     for (let attempt = 0; attempt <= maxCorrections; attempt++) {
-        const diffContent = getDiffContent(projectRoot);
+        const diffContent = startSha
+            ? getDiffContentRange(projectRoot, startSha)
+            : getDiffContent(projectRoot);
         const prompt = buildJudgePrompt({
             changedFiles,
             diffContent,
@@ -621,7 +640,9 @@ async function judgePhase(config) {
             }
         }
         // Refresh changed files for next judge pass
-        changedFiles = getChangedFiles(projectRoot);
+        changedFiles = startSha
+            ? getChangedFilesRange(projectRoot, startSha)
+            : getChangedFiles(projectRoot);
     }
     return { assessment, correctionAttempts: maxCorrections };
 }
@@ -661,6 +682,8 @@ export function createDefaultCheck(projectRoot, phase) {
 // ---------------------------------------------------------------------------
 async function executePhase(ctx, phase, state, projectRoot, logger) {
     const handoff = getHandoffFromState(state);
+    // Capture the baseline SHA before orchestrator runs so we can diff the phase's changes
+    const startSha = ensureInitialCommit(projectRoot);
     const launcher = createAgentLauncher({
         pluginRoot: ctx.pluginRoot,
         projectRoot,
@@ -724,7 +747,7 @@ async function executePhase(ctx, phase, state, projectRoot, logger) {
             console.log(`Warning: ${reason}`);
             return {
                 status: "failed",
-                report: buildPartialReport(phase.id, phase, reason),
+                report: { ...buildPartialReport(phase.id, phase, reason), startSha },
             };
         }
         let rawReport;
@@ -734,7 +757,7 @@ async function executePhase(ctx, phase, state, projectRoot, logger) {
         catch {
             return {
                 status: "failed",
-                report: buildPartialReport(phase.id, phase, "report file contained invalid JSON"),
+                report: { ...buildPartialReport(phase.id, phase, "report file contained invalid JSON"), startSha },
             };
         }
         const report = normalizeReport(rawReport, phase.id);
@@ -753,6 +776,7 @@ async function executePhase(ctx, phase, state, projectRoot, logger) {
                 status: "partial",
                 report: {
                     ...report,
+                    startSha,
                     status: "partial",
                     recommendedAction: "retry",
                     tasksFailed: [...report.tasksFailed, ...missing],
@@ -765,7 +789,7 @@ async function executePhase(ctx, phase, state, projectRoot, logger) {
         }
         return {
             status: report.status === "complete" ? "complete" : report.status,
-            report,
+            report: { ...report, startSha },
         };
     }
     catch (err) {
@@ -775,9 +799,52 @@ async function executePhase(ctx, phase, state, projectRoot, logger) {
         }
         return {
             status: "failed",
-            report: buildPartialReport(phase.id, phase, reason),
+            report: { ...buildPartialReport(phase.id, phase, reason), startSha },
         };
     }
+}
+// ---------------------------------------------------------------------------
+// Phase commit helpers
+// ---------------------------------------------------------------------------
+/**
+ * Extracts scope names from completed tasks' targetPaths.
+ * E.g., ["src/auth/login.tsx", "src/db/schema.ts"] → ["auth", "db"]
+ */
+export function extractScopes(phase, report) {
+    const scopes = new Set();
+    for (const taskId of report.tasksCompleted) {
+        const task = phase.tasks.find((t) => t.id === taskId);
+        if (!task)
+            continue;
+        for (const targetPath of task.targetPaths) {
+            const parts = targetPath.split("/").filter(Boolean);
+            // Skip generic top-level dirs like "src", "lib", "app" to find meaningful scope
+            const skipDirs = new Set(["src", "lib", "app", "packages", "public", "static", "assets"]);
+            const scope = parts.find((p) => !skipDirs.has(p) && !p.includes("."));
+            if (scope)
+                scopes.add(scope);
+        }
+    }
+    return [...scopes];
+}
+/**
+ * Commits any remaining uncommitted changes as a phase-level summary commit.
+ * Returns the new SHA, or null if nothing to commit.
+ */
+export function makePhaseCommit(projectRoot, phase, report) {
+    const changedFiles = getChangedFiles(projectRoot);
+    if (changedFiles.length === 0)
+        return null;
+    const scopes = extractScopes(phase, report);
+    const scopeStr = scopes.length > 0 ? `(${scopes.join(",")})` : "";
+    const taskBullets = report.tasksCompleted
+        .map((taskId) => {
+        const task = phase.tasks.find((t) => t.id === taskId);
+        return task ? `- ${task.title}` : `- ${taskId}`;
+    })
+        .join("\n");
+    const message = `feat${scopeStr}: [trellis ${phase.id}] ${report.summary}\n\n${taskBullets}`;
+    return commitAll(projectRoot, message);
 }
 // ---------------------------------------------------------------------------
 // Main loop
@@ -830,7 +897,9 @@ export async function runPhases(ctx, tasksJson) {
             state = { ...state, phaseReport: report };
             saveState(ctx.statePath, state);
             // Judge loop: runs unless phase failed with no changed files
-            const hasChanges = getChangedFiles(projectRoot).length > 0;
+            const hasChanges = report.startSha
+                ? getChangedFilesRange(projectRoot, report.startSha).length > 0
+                : getChangedFiles(projectRoot).length > 0;
             if (phaseResult.status !== "failed" || hasChanges) {
                 console.log(`Judging phase "${phase.id}"…`);
                 const judgeResult = await judgePhase({
@@ -839,6 +908,7 @@ export async function runPhases(ctx, tasksJson) {
                     projectRoot,
                     ctx,
                     logger,
+                    ...(report.startSha ? { startSha: report.startSha } : {}),
                 });
                 report = { ...report, judgeAssessment: judgeResult.assessment };
                 if (!judgeResult.assessment.passed &&
@@ -953,6 +1023,9 @@ export async function runPhases(ctx, tasksJson) {
                 break;
             }
             // action === "advance"
+            // Commit any remaining uncommitted changes as a phase-level commit
+            makePhaseCommit(projectRoot, phase, report);
+            report = { ...report, endSha: getCurrentSha(projectRoot) ?? report.startSha };
             phasesCompleted.push(phase.id);
             state = updateStateAfterPhase(state, report, tasksJson.phases);
             saveState(ctx.statePath, state);
@@ -1010,6 +1083,7 @@ export async function runSinglePhase(ctx, tasksJson, phaseId) {
                 projectRoot,
                 ctx,
                 logger,
+                ...(report.startSha ? { startSha: report.startSha } : {}),
             });
             report = { ...report, judgeAssessment: judgeResult.assessment };
             if (!judgeResult.assessment.passed &&
@@ -1027,6 +1101,8 @@ export async function runSinglePhase(ctx, tasksJson, phaseId) {
             }
         }
         if (report.status === "complete" && report.recommendedAction === "advance") {
+            makePhaseCommit(projectRoot, phase, report);
+            report = { ...report, endSha: getCurrentSha(projectRoot) ?? report.startSha };
             phasesCompleted.push(phase.id);
             state = updateStateAfterPhase(state, report, tasksJson.phases);
         }

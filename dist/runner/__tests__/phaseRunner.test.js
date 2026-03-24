@@ -14,10 +14,18 @@ vi.mock("../../orchestrator/agentLauncher.js", () => ({
 vi.mock("../../git.js", () => ({
     getChangedFiles: vi.fn(() => []),
     getDiffContent: vi.fn(() => ""),
+    getCurrentSha: vi.fn(() => "abc123"),
+    ensureInitialCommit: vi.fn(() => "abc123"),
+    commitAll: vi.fn(() => null),
+    getChangedFilesRange: vi.fn(() => []),
+    getDiffContentRange: vi.fn(() => ""),
 }));
 // Import module under test and mocked modules AFTER vi.mock declarations
-import { runPhases, dryRunReport, buildPhaseContext, buildJudgePrompt, parseJudgeResult, buildFixPrompt, normalizeReport, createDefaultCheck, } from "../phaseRunner.js";
+import { runPhases, dryRunReport, buildPhaseContext, buildJudgePrompt, parseJudgeResult, buildFixPrompt, normalizeReport, createDefaultCheck, extractScopes, makePhaseCommit, } from "../phaseRunner.js";
 import { createAgentLauncher } from "../../orchestrator/agentLauncher.js";
+import { getChangedFiles, commitAll } from "../../git.js";
+const mockedGetChangedFiles = vi.mocked(getChangedFiles);
+const mockedCommitAll = vi.mocked(commitAll);
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
@@ -410,6 +418,147 @@ describe("phaseRunner", () => {
             const result = await check.run();
             expect(result.passed).toBe(false);
             expect(result.output).toContain("package.json");
+        });
+    });
+    describe("extractScopes", () => {
+        it("extracts meaningful directory names from targetPaths", () => {
+            const tasks = makeTasksJson();
+            const phase = {
+                ...tasks.phases[1],
+                tasks: [
+                    { ...tasks.phases[1].tasks[0], targetPaths: ["src/auth/login.tsx", "src/auth/schema.ts"] },
+                    { ...tasks.phases[1].tasks[1], targetPaths: ["src/db/migrations/001.sql"] },
+                ],
+            };
+            const report = makePhaseReport("phase-2", {
+                tasksCompleted: ["task-2-1", "task-2-2"],
+            });
+            const scopes = extractScopes(phase, report);
+            expect(scopes).toContain("auth");
+            expect(scopes).toContain("db");
+            expect(scopes).not.toContain("src");
+        });
+        it("skips generic top-level dirs like src, lib, app", () => {
+            const tasks = makeTasksJson();
+            const phase = {
+                ...tasks.phases[0],
+                tasks: [
+                    { ...tasks.phases[0].tasks[0], targetPaths: ["src/components/Button.tsx"] },
+                ],
+            };
+            const report = makePhaseReport("phase-1", {
+                tasksCompleted: ["task-1-1"],
+            });
+            const scopes = extractScopes(phase, report);
+            expect(scopes).toContain("components");
+            expect(scopes).not.toContain("src");
+        });
+        it("deduplicates scopes", () => {
+            const tasks = makeTasksJson();
+            const phase = {
+                ...tasks.phases[1],
+                tasks: [
+                    { ...tasks.phases[1].tasks[0], targetPaths: ["src/auth/login.tsx"] },
+                    { ...tasks.phases[1].tasks[1], targetPaths: ["src/auth/register.tsx"] },
+                ],
+            };
+            const report = makePhaseReport("phase-2", {
+                tasksCompleted: ["task-2-1", "task-2-2"],
+            });
+            const scopes = extractScopes(phase, report);
+            expect(scopes).toEqual(["auth"]);
+        });
+        it("returns empty array when no targetPaths have meaningful dirs", () => {
+            const tasks = makeTasksJson();
+            const phase = {
+                ...tasks.phases[0],
+                tasks: [
+                    { ...tasks.phases[0].tasks[0], targetPaths: ["package.json"] },
+                ],
+            };
+            const report = makePhaseReport("phase-1", {
+                tasksCompleted: ["task-1-1"],
+            });
+            const scopes = extractScopes(phase, report);
+            expect(scopes).toEqual([]);
+        });
+        it("only considers completed tasks", () => {
+            const tasks = makeTasksJson();
+            const phase = tasks.phases[1];
+            const report = makePhaseReport("phase-2", {
+                tasksCompleted: ["task-2-1"],
+                tasksFailed: ["task-2-2"],
+            });
+            const scopes = extractScopes(phase, report);
+            // task-2-1 has targetPaths: ["src/a.ts"] → "a" would be the scope
+            // task-2-2 has targetPaths: ["src/b.ts"] → should be excluded
+            expect(scopes).toContain("a");
+            expect(scopes).not.toContain("b");
+        });
+    });
+    describe("makePhaseCommit", () => {
+        it("returns null when there are no uncommitted changes", () => {
+            // getChangedFiles mock already returns [] by default
+            const tasks = makeTasksJson();
+            const phase = tasks.phases[0];
+            const report = makePhaseReport("phase-1", {
+                tasksCompleted: ["task-1-1", "task-1-2"],
+            });
+            const result = makePhaseCommit("/tmp/project", phase, report);
+            expect(result).toBeNull();
+            expect(mockedCommitAll).not.toHaveBeenCalled();
+        });
+        it("commits with conventional format when changes exist", () => {
+            mockedGetChangedFiles.mockReturnValueOnce([
+                { path: "leftover.txt", status: "?" },
+            ]);
+            mockedCommitAll.mockReturnValueOnce("def456");
+            const tasks = makeTasksJson();
+            const phase = tasks.phases[0];
+            const report = makePhaseReport("phase-1", {
+                tasksCompleted: ["task-1-1", "task-1-2"],
+                summary: "Set up project scaffolding",
+            });
+            const result = makePhaseCommit("/tmp/project", phase, report);
+            expect(result).toBe("def456");
+            expect(mockedCommitAll).toHaveBeenCalledWith("/tmp/project", expect.stringContaining("[trellis phase-1]"));
+            expect(mockedCommitAll).toHaveBeenCalledWith("/tmp/project", expect.stringContaining("Set up project scaffolding"));
+        });
+        it("includes task titles in commit body", () => {
+            mockedGetChangedFiles.mockReturnValueOnce([
+                { path: "file.txt", status: "M" },
+            ]);
+            mockedCommitAll.mockReturnValueOnce("sha123");
+            const tasks = makeTasksJson();
+            const phase = tasks.phases[0];
+            const report = makePhaseReport("phase-1", {
+                tasksCompleted: ["task-1-1", "task-1-2"],
+                summary: "Done",
+            });
+            makePhaseCommit("/tmp/project", phase, report);
+            const commitMsg = mockedCommitAll.mock.calls[0][1];
+            expect(commitMsg).toContain("- Init project");
+            expect(commitMsg).toContain("- Add config");
+        });
+    });
+    describe("buildPhaseContext — git commit protocol", () => {
+        it("includes git commit protocol section in phase context", () => {
+            const tasks = makeTasksJson();
+            const state = {
+                currentPhase: "phase-1",
+                completedPhases: [],
+                modifiedFiles: [],
+                schemaChanges: [],
+                phaseReports: [],
+                phaseRetries: {},
+                phaseReport: null,
+            };
+            tmpDir = setupTmpDir(tasks);
+            const ctx = makeDefaultConfig(tmpDir);
+            const context = buildPhaseContext(tasks.phases[0], state, "", ctx);
+            expect(context).toContain("## Git Commit Protocol");
+            expect(context).toContain("conventional commit format");
+            expect(context).toContain(".trellis-phase-report.json");
         });
     });
 });

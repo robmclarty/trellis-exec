@@ -57,12 +57,40 @@ Work through tasks in dependency order:
 
 6. **Verify (optional).** Read created files to confirm expected content, run a specific test, or grep for expected patterns.
 
-7. **Handle failures.** If check or verify fails:
+7. **Commit.** After a task passes the check command (or verify step), stage and commit all changes with a conventional commit message:
+
+   ```bash
+   git add -A && git commit -m "<type>(<scope>): <summary>
+
+   - <change 1>
+   - <change 2>
+   - <change 3>"
+   ```
+
+   Guidelines:
+   - **type**: `feat` (new feature), `fix` (bug fix), `refactor`, `test`, `docs`, `chore`, etc.
+   - **scope**: the main module or area affected (e.g., `auth`, `api`, `db`, `ui`)
+   - **summary**: concise description of what the task accomplished
+   - **body**: bullet list of the 3-5 most significant changes
+
+   Example:
+
+   ```text
+   feat(auth): add login form component
+
+   - Created LoginForm.tsx with email/password fields
+   - Added form validation using zod schema
+   - Wired up to AuthContext for state management
+   ```
+
+   If `git commit` fails (e.g., nothing to commit), that is OK — continue to the next task.
+
+8. **Handle failures.** If check or verify fails:
    - Read the error output and analyze the root cause.
    - Retry with adjusted approach (max 3 retries per task).
    - If retries are exhausted, mark the task as failed and continue to the next task.
 
-8. **Update and continue.** Move to the next task.
+9. **Update and continue.** Move to the next task.
 
 ## Parallel Scheduling
 
@@ -110,6 +138,7 @@ When all tasks are processed, use the **Write** tool to create `.trellis-phase-r
 
 - `status`: "complete" if all tasks passed, "partial" if some failed
 - `recommendedAction`: "advance" to proceed, "retry" if fixable issues remain, "halt" if phase is blocked
+- **Do NOT commit the `.trellis-phase-report.json` file.** The phase runner handles the final phase commit.
 - After writing the report, your work is done. The phase runner handles quality review independently.
 
 ## Error Handling

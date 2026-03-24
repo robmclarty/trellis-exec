@@ -16,6 +16,7 @@ import {
   saveState,
   updateStateAfterPhase,
   updateTaskStatus,
+  getPhaseCommitRange,
 } from "../stateManager.js";
 
 function makeTasksJson(): TasksJson {
@@ -255,6 +256,62 @@ describe("stateManager", () => {
       expect(
         () => updateTaskStatus(tasks, "phase-1", "task-99", "complete"),
       ).toThrow(/Task not found/);
+    });
+  });
+
+  describe("getPhaseCommitRange", () => {
+    it("returns commit range when both SHAs are present", () => {
+      const tasks = makeTasksJson();
+      const state = initState(tasks);
+      const report: PhaseReport = {
+        ...makePhaseReport("phase-1"),
+        startSha: "aaa111",
+        endSha: "bbb222",
+      };
+      const stateWithReport = {
+        ...state,
+        phaseReports: [report],
+      };
+
+      const range = getPhaseCommitRange(stateWithReport, "phase-1");
+      expect(range).toEqual({ startSha: "aaa111", endSha: "bbb222" });
+    });
+
+    it("returns null when phase has no SHAs", () => {
+      const tasks = makeTasksJson();
+      const state = initState(tasks);
+      const report = makePhaseReport("phase-1");
+      const stateWithReport = {
+        ...state,
+        phaseReports: [report],
+      };
+
+      const range = getPhaseCommitRange(stateWithReport, "phase-1");
+      expect(range).toBeNull();
+    });
+
+    it("returns null when phase is not found", () => {
+      const tasks = makeTasksJson();
+      const state = initState(tasks);
+
+      const range = getPhaseCommitRange(state, "nonexistent");
+      expect(range).toBeNull();
+    });
+
+    it("returns null when only startSha is present", () => {
+      const tasks = makeTasksJson();
+      const state = initState(tasks);
+      const report: PhaseReport = {
+        ...makePhaseReport("phase-1"),
+        startSha: "aaa111",
+      };
+      const stateWithReport = {
+        ...state,
+        phaseReports: [report],
+      };
+
+      const range = getPhaseCommitRange(stateWithReport, "phase-1");
+      expect(range).toBeNull();
     });
   });
 });

@@ -31,4 +31,12 @@ export declare function updateStateAfterPhase(state: SharedState, report: PhaseR
  * Throws if the phase or task is not found.
  */
 export declare function updateTaskStatus(tasksJson: TasksJson, phaseId: string, taskId: string, status: TaskStatus): TasksJson;
+/**
+ * Returns the commit range (startSha..endSha) for a completed phase,
+ * or null if the phase has no recorded SHAs.
+ */
+export declare function getPhaseCommitRange(state: SharedState, phaseId: string): {
+    startSha: string;
+    endSha: string;
+} | null;
 //# sourceMappingURL=stateManager.d.ts.map

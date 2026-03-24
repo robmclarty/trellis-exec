@@ -23,6 +23,11 @@ vi.mock("../orchestrator/agentLauncher.js", () => ({
 vi.mock("../git.js", () => ({
     getChangedFiles: vi.fn(() => []),
     getDiffContent: vi.fn(() => ""),
+    getCurrentSha: vi.fn(() => "abc123"),
+    ensureInitialCommit: vi.fn(() => "abc123"),
+    commitAll: vi.fn(() => null),
+    getChangedFilesRange: vi.fn(() => []),
+    getDiffContentRange: vi.fn(() => ""),
 }));
 // Import modules under test AFTER vi.mock declarations
 import { parsePlan } from "../compile/planParser.js";

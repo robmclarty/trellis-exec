@@ -79,6 +79,8 @@ export declare const PhaseReportSchema: z.ZodObject<{
     correctiveTasks: z.ZodArray<z.ZodString>;
     decisionsLog: z.ZodArray<z.ZodString>;
     handoff: z.ZodString;
+    startSha: z.ZodOptional<z.ZodString>;
+    endSha: z.ZodOptional<z.ZodString>;
 }, z.core.$strip>;
 export declare const SharedStateSchema: z.ZodObject<{
     currentPhase: z.ZodString;
@@ -125,6 +127,8 @@ export declare const SharedStateSchema: z.ZodObject<{
         correctiveTasks: z.ZodArray<z.ZodString>;
         decisionsLog: z.ZodArray<z.ZodString>;
         handoff: z.ZodString;
+        startSha: z.ZodOptional<z.ZodString>;
+        endSha: z.ZodOptional<z.ZodString>;
     }, z.core.$strip>>;
     phaseRetries: z.ZodRecord<z.ZodString, z.ZodNumber>;
     phaseReport: z.ZodDefault<z.ZodNullable<z.ZodObject<{
@@ -159,6 +163,8 @@ export declare const SharedStateSchema: z.ZodObject<{
         correctiveTasks: z.ZodArray<z.ZodString>;
         decisionsLog: z.ZodArray<z.ZodString>;
         handoff: z.ZodString;
+        startSha: z.ZodOptional<z.ZodString>;
+        endSha: z.ZodOptional<z.ZodString>;
     }, z.core.$strip>>>;
 }, z.core.$strip>;
 export type CheckResult = z.infer<typeof CheckResultSchema>;

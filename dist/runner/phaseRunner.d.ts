@@ -45,6 +45,16 @@ export declare function buildFixPrompt(issues: JudgeIssue[], phase: Phase): stri
 export declare function createDefaultCheck(projectRoot: string, phase: Phase): {
     run: () => Promise<CheckResult>;
 };
+/**
+ * Extracts scope names from completed tasks' targetPaths.
+ * E.g., ["src/auth/login.tsx", "src/db/schema.ts"] → ["auth", "db"]
+ */
+export declare function extractScopes(phase: Phase, report: PhaseReport): string[];
+/**
+ * Commits any remaining uncommitted changes as a phase-level summary commit.
+ * Returns the new SHA, or null if nothing to commit.
+ */
+export declare function makePhaseCommit(projectRoot: string, phase: Phase, report: PhaseReport): string | null;
 export declare function runPhases(ctx: RunContext, tasksJson: TasksJson): Promise<PhaseRunnerResult>;
 export declare function runSinglePhase(ctx: RunContext, tasksJson: TasksJson, phaseId: string): Promise<PhaseRunnerResult>;
 //# sourceMappingURL=phaseRunner.d.ts.map

@@ -39,6 +39,8 @@ export const PhaseReportSchema = z.object({
     correctiveTasks: z.array(z.string()),
     decisionsLog: z.array(z.string()),
     handoff: z.string(),
+    startSha: z.string().optional(),
+    endSha: z.string().optional(),
 });
 export const SharedStateSchema = z.object({
     currentPhase: z.string(),
