@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.6
+
+- Use absolute path for phase report file in completion protocol so subagents resolve the correct location
+
 ## 0.5.5
 
 - Stream orchestrator output in real-time using `claude --output-format stream-json` instead of buffered `--print`
