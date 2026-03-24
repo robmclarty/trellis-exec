@@ -678,16 +678,12 @@ async function executePhase(ctx, phase, state, projectRoot, logger) {
     const agentFile = resolve(ctx.pluginRoot, "agents/phase-orchestrator.md");
     try {
         console.log("Launching orchestrator…");
-        const spinner = startSpinner("Orchestrator");
+        // Skip spinner in verbose mode so output isn't clobbered
+        const spinner = ctx.verbose ? null : startSpinner("Orchestrator");
         const startTime = Date.now();
-        const result = await launcher.runPhaseOrchestrator(phaseContext, agentFile, ctx.model, ctx.verbose
-            ? {
-                onStdout: (chunk) => process.stdout.write(chunk),
-                onStderr: (chunk) => process.stderr.write(chunk),
-            }
-            : undefined);
+        const result = await launcher.runPhaseOrchestrator(phaseContext, agentFile, ctx.model);
         const duration = Date.now() - startTime;
-        spinner.stop();
+        spinner?.stop();
         logger.append({
             phaseId: phase.id,
             turnNumber: 0,
@@ -697,7 +693,10 @@ async function executePhase(ctx, phase, state, projectRoot, logger) {
             duration,
         });
         if (ctx.verbose) {
-            console.log(`[orchestrator] exit code: ${result.exitCode}`);
+            console.log(`\n[orchestrator] exit code: ${result.exitCode} (${Math.round(duration / 1000)}s)`);
+            if (result.stdout) {
+                console.log(`\n--- orchestrator output ---\n${result.stdout}\n--- end output ---`);
+            }
             if (result.stderr) {
                 console.log(`[orchestrator] stderr: ${result.stderr.slice(0, 500)}`);
             }
