@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.3
+
+- Use Opus instead of Haiku for plan decomposition to handle ambiguous, architectural inputs
+- Add stage-based progress messages during compile (parsing, decomposing, enriching, validating)
+- Show elapsed time in spinner during long-running LLM calls
+- Increase default compile timeout to 10 minutes with `--timeout` CLI flag for user override
+- Add `onStderr` callback to `execClaude()` for real-time subprocess progress streaming
+- Add simplified orchestration design document and native tools architecture doc
+
 ## 0.5.2
 
 - Remove unused imports in phaseRunner test to fix lint warnings
