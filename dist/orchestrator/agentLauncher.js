@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { resolve } from "node:path";
 const DEFAULT_TIMEOUT = 300_000; // 5 minutes for sub-agent execution
 const ORCHESTRATOR_TIMEOUT = 600_000; // 10 minutes for phase orchestration
+export const COMPILE_TIMEOUT = 600_000; // 10 minutes for plan decomposition
 /**
  * Assembles the sub-agent prompt following the §5 input contract.
  * Lists file paths (rather than inlining contents) since the claude agent
@@ -51,7 +52,7 @@ export function buildSubAgentArgs(agentFile, model) {
  * Spawns a `claude` CLI subprocess, optionally pipes stdin, and collects
  * stdout/stderr. Rejects on timeout.
  */
-export function execClaude(args, cwd, stdin, timeout = DEFAULT_TIMEOUT) {
+export function execClaude(args, cwd, stdin, timeout = DEFAULT_TIMEOUT, onStderr) {
     return new Promise((resolvePromise, reject) => {
         const child = spawn("claude", args, {
             cwd,
@@ -60,7 +61,11 @@ export function execClaude(args, cwd, stdin, timeout = DEFAULT_TIMEOUT) {
         const stdoutChunks = [];
         const stderrChunks = [];
         child.stdout.on("data", (chunk) => stdoutChunks.push(chunk));
-        child.stderr.on("data", (chunk) => stderrChunks.push(chunk));
+        child.stderr.on("data", (chunk) => {
+            stderrChunks.push(chunk);
+            if (onStderr)
+                onStderr(chunk.toString("utf-8"));
+        });
         const timer = setTimeout(() => {
             child.kill("SIGTERM");
             reject(new Error(`claude subprocess timed out after ${timeout}ms`));

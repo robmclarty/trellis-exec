@@ -1,4 +1,5 @@
 import type { SubAgentConfig, SubAgentResult } from "../types/agents.js";
+export declare const COMPILE_TIMEOUT = 600000;
 export type ExecClaudeResult = {
     stdout: string;
     stderr: string;
@@ -31,7 +32,7 @@ export declare function buildSubAgentArgs(agentFile: string, model: string): str
  * Spawns a `claude` CLI subprocess, optionally pipes stdin, and collects
  * stdout/stderr. Rejects on timeout.
  */
-export declare function execClaude(args: string[], cwd: string, stdin?: string, timeout?: number): Promise<ExecClaudeResult>;
+export declare function execClaude(args: string[], cwd: string, stdin?: string, timeout?: number, onStderr?: (chunk: string) => void): Promise<ExecClaudeResult>;
 /**
  * Creates an AgentLauncher that manages claude CLI subprocesses for sub-agent
  * dispatch and phase orchestration.

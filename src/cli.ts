@@ -9,7 +9,7 @@ import type { TasksJson } from "./types/tasks.js";
 import { loadState } from "./runner/stateManager.js";
 import { parsePlan } from "./compile/planParser.js";
 import { compilePlan } from "./compile/compilePlan.js";
-import { execClaude } from "./orchestrator/agentLauncher.js";
+import { execClaude, COMPILE_TIMEOUT } from "./orchestrator/agentLauncher.js";
 import {
   runPhases,
   runSinglePhase,
@@ -209,6 +209,7 @@ export function parseCompileArgs(args: string[]): {
   projectRoot: string;
   outputPath: string;
   enrich: boolean;
+  timeout?: number;
 } {
   const { values, positionals } = parseArgs({
     args,
@@ -218,6 +219,7 @@ export function parseCompileArgs(args: string[]): {
       "project-root": { type: "string" },
       output: { type: "string" },
       enrich: { type: "boolean", default: false },
+      timeout: { type: "string" },
     },
     allowPositionals: true,
   });
@@ -240,6 +242,12 @@ export function parseCompileArgs(args: string[]): {
     ? relative(dirname(outputPath), resolve(values["project-root"])) || "."
     : ".";
 
+  const timeout = values.timeout ? parseInt(values.timeout, 10) : undefined;
+  if (timeout !== undefined && (isNaN(timeout) || timeout <= 0)) {
+    console.error("Error: --timeout must be a positive integer (milliseconds).");
+    process.exit(1);
+  }
+
   return {
     planPath: resolve(planPath),
     specPath: resolve(values.spec),
@@ -247,6 +255,7 @@ export function parseCompileArgs(args: string[]): {
     projectRoot,
     outputPath,
     enrich: values.enrich ?? false,
+    ...(timeout !== undefined ? { timeout } : {}),
   };
 }
 
@@ -318,7 +327,7 @@ async function handleRun(args: string[]): Promise<void> {
 }
 
 async function handleCompile(args: string[]): Promise<void> {
-  const { planPath, specPath, guidelinesPath, projectRoot, outputPath, enrich } = parseCompileArgs(args);
+  const { planPath, specPath, guidelinesPath, projectRoot, outputPath, enrich, timeout } = parseCompileArgs(args);
 
   const planContent = readFileSync(planPath, "utf-8");
 
@@ -327,6 +336,7 @@ async function handleCompile(args: string[]): Promise<void> {
   const specRef = relative(outputDir, resolve(specPath)) || ".";
   const planRef = relative(outputDir, resolve(planPath)) || ".";
 
+  console.log("Parsing plan structure...");
   const result = parsePlan(planContent, specRef, planRef, projectRoot);
 
   // Deterministic parse failed — decompose via LLM using spec + plan + guidelines
@@ -351,25 +361,48 @@ async function handleCompile(args: string[]): Promise<void> {
       process.exit(1);
     }
 
-    if (needsDecompose) {
-      console.log("Decomposing plan into tasks via LLM...");
-    }
-
+    const compileTimeout = timeout ?? COMPILE_TIMEOUT;
     const cwd = dirname(resolve(planPath));
-    const query = async (prompt: string) => {
-      const result = await execClaude(["--print", "--model", "haiku"], cwd, prompt);
+
+    // Haiku for lightweight enrichment, Opus for full decomposition
+    const enrichQuery = async (prompt: string) => {
+      const result = await execClaude(["--print", "--model", "haiku"], cwd, prompt, compileTimeout);
       return result.stdout;
     };
-    const spinner = startSpinner("Compiling");
+    const decomposeQuery = async (prompt: string) => {
+      console.log("Decomposing plan via LLM (this may take a few minutes)...");
+      const spinner = startSpinner("Decomposing");
+      const result = await execClaude(
+        ["--print", "--model", "opus"],
+        cwd,
+        prompt,
+        compileTimeout,
+        (chunk) => {
+          // Stderr from claude CLI contains progress info; log in verbose scenarios
+          // For now we let the spinner + elapsed time handle UX
+        },
+      );
+      spinner.stop();
+      return result.stdout;
+    };
+
+    if (needsEnrichment && !needsDecompose) {
+      console.log(`Enriching ${result.enrichmentNeeded.length} flagged field(s) via LLM...`);
+    }
+
+    const spinner = needsDecompose ? undefined : startSpinner("Enriching");
     const tasksJson = await compilePlan({
       planPath,
       specPath,
       ...(guidelinesPath ? { guidelinesPath } : {}),
       projectRoot,
       outputPath,
-      query,
+      query: enrichQuery,
+      decomposeQuery,
     });
-    spinner.stop();
+    spinner?.stop();
+
+    console.log("Validating output...");
     const taskCount = tasksJson.phases.reduce(
       (sum, phase) => sum + phase.tasks.length,
       0,

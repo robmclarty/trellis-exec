@@ -5,7 +5,10 @@ export type CompileConfig = {
     guidelinesPath?: string;
     projectRoot: string;
     outputPath: string;
+    /** Used for lightweight enrichment calls (e.g. Haiku). */
     query: (prompt: string) => Promise<string>;
+    /** Used for full plan decomposition (e.g. Opus). Falls back to `query` if not provided. */
+    decomposeQuery?: (prompt: string) => Promise<string>;
 };
 /**
  * Strips markdown code fences from a JSON response if present.

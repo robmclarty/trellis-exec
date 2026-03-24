@@ -43,7 +43,8 @@ export async function compilePlan(config) {
             ? readFileSync(config.guidelinesPath, "utf-8")
             : undefined;
         const decomposePrompt = buildDecomposePrompt(planContent, specContent, specRef, planRef, config.projectRoot, guidelinesContent, guidelinesRef);
-        const raw = await config.query(decomposePrompt);
+        const decompose = config.decomposeQuery ?? config.query;
+        const raw = await decompose(decomposePrompt);
         const parsed = JSON.parse(stripCodeFences(raw));
         const validation = TasksJsonSchema.safeParse(parsed);
         if (!validation.success) {

@@ -27,6 +27,16 @@ export interface Spinner {
  * The spinner writes to stderr so it never contaminates captured stdout.
  * Calling `stop()` clears the line and restores the cursor.
  */
+function formatElapsed(ms: number): string {
+  const totalSeconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes > 0) {
+    return `${minutes}m ${seconds.toString().padStart(2, "0")}s`;
+  }
+  return `${seconds}s`;
+}
+
 export function startSpinner(label?: string): Spinner {
   // If stderr is not a TTY (e.g. piped to a file), skip animation entirely.
   if (!process.stderr.isTTY) {
@@ -35,11 +45,13 @@ export function startSpinner(label?: string): Spinner {
 
   let frameIndex = 0;
   const prefix = label ? `${label} ` : "";
+  const startTime = Date.now();
 
   const timer = setInterval(() => {
     const frame = FRAMES[frameIndex % FRAMES.length];
+    const elapsed = formatElapsed(Date.now() - startTime);
     // \r moves cursor to start of line; the frame overwrites previous output.
-    process.stderr.write(`\r${prefix}${frame}`);
+    process.stderr.write(`\r${prefix}${frame} (${elapsed})`);
     frameIndex++;
   }, DEFAULT_INTERVAL_MS);
 

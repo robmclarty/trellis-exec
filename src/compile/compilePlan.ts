@@ -12,7 +12,10 @@ export type CompileConfig = {
   guidelinesPath?: string;
   projectRoot: string;
   outputPath: string;
+  /** Used for lightweight enrichment calls (e.g. Haiku). */
   query: (prompt: string) => Promise<string>;
+  /** Used for full plan decomposition (e.g. Opus). Falls back to `query` if not provided. */
+  decomposeQuery?: (prompt: string) => Promise<string>;
 };
 
 /**
@@ -66,7 +69,8 @@ export async function compilePlan(config: CompileConfig): Promise<TasksJson> {
       guidelinesContent,
       guidelinesRef,
     );
-    const raw = await config.query(decomposePrompt);
+    const decompose = config.decomposeQuery ?? config.query;
+    const raw = await decompose(decomposePrompt);
     const parsed = JSON.parse(stripCodeFences(raw));
     const validation = TasksJsonSchema.safeParse(parsed);
     if (!validation.success) {

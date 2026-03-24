@@ -28,6 +28,7 @@ export declare function parseCompileArgs(args: string[]): {
     projectRoot: string;
     outputPath: string;
     enrich: boolean;
+    timeout?: number;
 };
 export declare function parseStatusArgs(args: string[]): {
     tasksJsonPath: string;
