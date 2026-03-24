@@ -11,8 +11,10 @@ export type AgentLauncherConfig = {
     dryRun?: boolean;
 };
 export type OrchestratorOptions = {
-    onStdout?: (chunk: string) => void;
-    onStderr?: (chunk: string) => void;
+    /** Stream NDJSON events via --output-format stream-json */
+    verbose?: boolean;
+    onStdout?: ((chunk: string) => void) | undefined;
+    onStderr?: ((chunk: string) => void) | undefined;
 };
 export type AgentLauncher = {
     dispatchSubAgent(config: SubAgentConfig): Promise<SubAgentResult>;

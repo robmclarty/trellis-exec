@@ -19,8 +19,10 @@ export type AgentLauncherConfig = {
 };
 
 export type OrchestratorOptions = {
-  onStdout?: (chunk: string) => void;
-  onStderr?: (chunk: string) => void;
+  /** Stream NDJSON events via --output-format stream-json */
+  verbose?: boolean;
+  onStdout?: ((chunk: string) => void) | undefined;
+  onStderr?: ((chunk: string) => void) | undefined;
 };
 
 export type AgentLauncher = {
@@ -224,6 +226,9 @@ export function createAgentLauncher(config: AgentLauncherConfig): AgentLauncher 
       "--print",
       "--dangerously-skip-permissions",
       ...(model ? ["--model", model] : []),
+      ...(options?.verbose
+        ? ["--output-format", "stream-json", "--verbose"]
+        : []),
     ];
 
     if (dryRun) {

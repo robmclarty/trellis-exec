@@ -19,6 +19,10 @@ const DEFAULT_INTERVAL_MS = 120;
 export interface Spinner {
   /** Stop the animation and clear the spinner line. */
   stop(): void;
+  /** Temporarily pause the spinner and clear its line (for printing output). */
+  pause(): void;
+  /** Resume the spinner after a pause. */
+  resume(): void;
 }
 
 /**
@@ -40,26 +44,50 @@ function formatElapsed(ms: number): string {
 export function startSpinner(label?: string): Spinner {
   // If stderr is not a TTY (e.g. piped to a file), skip animation entirely.
   if (!process.stderr.isTTY) {
-    return { stop() {} };
+    return { stop() {}, pause() {}, resume() {} };
   }
 
   let frameIndex = 0;
+  let stopped = false;
   const prefix = label ? `${label} ` : "";
   const startTime = Date.now();
 
-  const timer = setInterval(() => {
+  function tick() {
     const frame = FRAMES[frameIndex % FRAMES.length];
     const elapsed = formatElapsed(Date.now() - startTime);
     // \r moves cursor to start of line; the frame overwrites previous output.
     process.stderr.write(`\r${prefix}${frame} (${elapsed})`);
     frameIndex++;
-  }, DEFAULT_INTERVAL_MS);
+  }
+
+  let timer: ReturnType<typeof setInterval> | null = setInterval(
+    tick,
+    DEFAULT_INTERVAL_MS,
+  );
+
+  function clearLine() {
+    process.stderr.write("\r\x1b[K");
+  }
 
   return {
     stop() {
+      if (stopped) return;
+      stopped = true;
+      if (timer) {
+        clearInterval(timer);
+        timer = null;
+      }
+      clearLine();
+    },
+    pause() {
+      if (stopped || !timer) return;
       clearInterval(timer);
-      // Clear the spinner line entirely.
-      process.stderr.write("\r\x1b[K");
+      timer = null;
+      clearLine();
+    },
+    resume() {
+      if (stopped || timer) return;
+      timer = setInterval(tick, DEFAULT_INTERVAL_MS);
     },
   };
 }

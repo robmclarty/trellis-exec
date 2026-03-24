@@ -6,6 +6,7 @@ import { initState, loadState, saveState, updateStateAfterPhase, } from "./state
 import { validateDependencies, resolveExecutionOrder, detectTargetPathOverlaps, } from "./scheduler.js";
 import { createTrajectoryLogger } from "../logging/trajectoryLogger.js";
 import { startSpinner } from "../ui/spinner.js";
+import { createStreamHandler, extractResultText } from "../ui/streamParser.js";
 import { getChangedFiles, getDiffContent } from "../git.js";
 import { createCheckRunner } from "../verification/checkRunner.js";
 import { createAgentLauncher } from "../orchestrator/agentLauncher.js";
@@ -678,25 +679,38 @@ async function executePhase(ctx, phase, state, projectRoot, logger) {
     const agentFile = resolve(ctx.pluginRoot, "agents/phase-orchestrator.md");
     try {
         console.log("Launching orchestrator…");
-        // Skip spinner in verbose mode so output isn't clobbered
-        const spinner = ctx.verbose ? null : startSpinner("Orchestrator");
+        const spinner = startSpinner("Orchestrator");
         const startTime = Date.now();
-        const result = await launcher.runPhaseOrchestrator(phaseContext, agentFile, ctx.model);
+        const result = await launcher.runPhaseOrchestrator(phaseContext, agentFile, ctx.model, ctx.verbose
+            ? {
+                verbose: true,
+                onStdout: createStreamHandler((event) => {
+                    if (event.type === "text" && event.text.length > 0) {
+                        spinner.pause();
+                        process.stdout.write(event.text);
+                        if (!event.text.endsWith("\n"))
+                            process.stdout.write("\n");
+                        spinner.resume();
+                    }
+                }),
+            }
+            : undefined);
         const duration = Date.now() - startTime;
-        spinner?.stop();
+        spinner.stop();
+        // When streaming, stdout is raw NDJSON — extract the result text
+        const outputText = ctx.verbose
+            ? extractResultText(result.stdout)
+            : result.stdout;
         logger.append({
             phaseId: phase.id,
             turnNumber: 0,
             type: "phase_exec",
             input: { taskCount: phase.tasks.length },
-            output: result.stdout.slice(0, 2000),
+            output: outputText.slice(0, 2000),
             duration,
         });
         if (ctx.verbose) {
-            console.log(`\n[orchestrator] exit code: ${result.exitCode} (${Math.round(duration / 1000)}s)`);
-            if (result.stdout) {
-                console.log(`\n--- orchestrator output ---\n${result.stdout}\n--- end output ---`);
-            }
+            console.log(`[orchestrator] exit code: ${result.exitCode} (${Math.round(duration / 1000)}s)`);
             if (result.stderr) {
                 console.log(`[orchestrator] stderr: ${result.stderr.slice(0, 500)}`);
             }

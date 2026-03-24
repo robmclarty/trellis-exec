@@ -144,6 +144,9 @@ export function createAgentLauncher(config) {
             "--print",
             "--dangerously-skip-permissions",
             ...(model ? ["--model", model] : []),
+            ...(options?.verbose
+                ? ["--output-format", "stream-json", "--verbose"]
+                : []),
         ];
         if (dryRun) {
             console.log("[dry-run] runPhaseOrchestrator:", "claude", args.join(" "));
