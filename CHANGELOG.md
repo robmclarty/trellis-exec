@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.5
+
+- Stream orchestrator output in real-time using `claude --output-format stream-json` instead of buffered `--print`
+- Add pause/resume to spinner so real-time output and elapsed-time indicator coexist cleanly
+- Add NDJSON stream parser (`src/ui/streamParser.ts`) for extracting assistant text and result events
+
 ## 0.5.4
 
 - Stream orchestrator stdout/stderr in real-time with `--verbose` flag
