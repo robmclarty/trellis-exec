@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.10
+
+- Add input validation to dispatchSubAgent() — returns descriptive error instead of crashing on wrong argument format
+- Add writeFile(path, content) REPL helper for simple file creation without spawning a sub-agent
+- Add task completion gate on writePhaseReport() — rejects reports missing any task from tasksCompleted or tasksFailed
+- Add stuck-loop detection — intervenes after 4 identical REPL outputs with alternative approach guidance
+- Update orchestrator prompts with writeFile docs, dispatchSubAgent worked example, and stricter completion rules
+- Fix safePath ancestor resolution for symlinked tmpdir paths
+
 ## 0.4.9
 
 - Fix REPL async IIFE wrapper silently dropping sub-agent return values, causing orchestrator to skip tasks and prematurely complete phases
