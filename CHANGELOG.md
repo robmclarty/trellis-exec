@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.8
+
+- Add test coverage for streamParser, agentLauncher, and spinner (3 new test files)
+- Expand phaseRunner tests with range-based judging and startSha tracking coverage
+- Expand prompts tests with buildEnrichmentPrompt coverage
+- Export `formatElapsed` from spinner for testability
+- Fix markdown lint errors and migrate agnix config to tools array
+
 ## 0.5.7
 
 - Add per-task git commits via orchestrator prompt (conventional commit format with scope and bullet summary)
