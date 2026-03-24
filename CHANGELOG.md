@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.1
+
+- Fix executable bit on dist/cli.js lost during tsc rebuild, causing npx entrypoint to fail with "Permission denied"
+
 ## 0.5.0
 
 - Replace REPL-mediated orchestrator with single `claude --print` invocation per phase using native tools (Read, Write, Edit, Bash, Glob, Grep)
