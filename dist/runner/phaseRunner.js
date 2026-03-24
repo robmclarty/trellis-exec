@@ -21,6 +21,16 @@ function getHandoffFromState(state) {
     const last = state.phaseReports.at(-1);
     return last?.handoff ?? "";
 }
+const MAX_LEARNINGS = 20;
+export function collectLearnings(state) {
+    const all = [];
+    for (const report of state.phaseReports) {
+        for (const entry of report.decisionsLog) {
+            all.push(`[${report.phaseId}] ${entry}`);
+        }
+    }
+    return all.slice(-MAX_LEARNINGS);
+}
 export function buildPhaseContext(phase, state, handoff, ctx) {
     const lines = [];
     lines.push(`# Phase: ${phase.name} (${phase.id})`);
@@ -51,6 +61,16 @@ export function buildPhaseContext(phase, state, handoff, ctx) {
     lines.push(`Completed phases: ${state.completedPhases.length > 0 ? state.completedPhases.join(", ") : "none"}`);
     lines.push(`Modified files: ${state.modifiedFiles.length}`);
     lines.push(`Schema changes: ${state.schemaChanges.length}`);
+    const learnings = collectLearnings(state);
+    if (learnings.length > 0) {
+        lines.push("");
+        lines.push("## Learnings from Prior Phases");
+        lines.push("Important decisions and discoveries from earlier phases. " +
+            "Apply these to avoid repeating mistakes:");
+        for (const entry of learnings) {
+            lines.push(`- ${entry}`);
+        }
+    }
     // Pre-load spec and guidelines content so the orchestrator doesn't waste
     // turns reading these. They're still available on disk if the orchestrator
     // needs to re-read them after context compaction.
@@ -701,9 +721,9 @@ async function executePhase(ctx, phase, state, projectRoot, logger) {
         // Ignore — file may not exist
     }
     const agentFile = resolve(ctx.pluginRoot, "agents/phase-orchestrator.md");
+    console.log("Launching orchestrator…");
+    const spinner = startSpinner("Orchestrator");
     try {
-        console.log("Launching orchestrator…");
-        const spinner = startSpinner("Orchestrator");
         const startTime = Date.now();
         const result = await launcher.runPhaseOrchestrator(phaseContext, agentFile, ctx.model, ctx.verbose
             ? {
@@ -793,6 +813,7 @@ async function executePhase(ctx, phase, state, projectRoot, logger) {
         };
     }
     catch (err) {
+        spinner.stop();
         const reason = err instanceof Error ? err.message : "unexpected error";
         if (ctx.verbose) {
             console.error(`[executePhase] error:`, err);

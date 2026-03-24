@@ -38,6 +38,7 @@ At session start you receive:
 3. **Handoff briefing** — the prior phase's summary of what was done, what to watch for, and any unresolved issues.
 4. **Spec content** — the full spec is pre-loaded in the phase context below. You do NOT need to read it from disk. It is also available on disk if you need to re-read after context compaction.
 5. **Guidelines content** — the full guidelines are pre-loaded in the phase context below. Same as spec — no need to read from disk.
+6. **Learnings** — key decisions and discoveries from prior phases (e.g., "Vite requires .jsx for JSX files"). Apply these when making implementation decisions to avoid repeating earlier mistakes.
 
 Read these carefully before starting any task. They are your ground truth. **Do NOT spend turns reading the spec or guidelines — they are already in your context. Start working on tasks immediately.**
 
@@ -131,7 +132,7 @@ When all tasks are processed, use the **Write** tool to create `.trellis-phase-r
   "summary": "Brief description of what was accomplished",
   "handoff": "Briefing for the next phase — what was created, key decisions, anything to watch for",
   "correctiveTasks": ["Description of what needs fixing, if recommending retry"],
-  "decisionsLog": ["Key decisions made during this phase"],
+  "decisionsLog": ["Key technical decisions and discoveries the NEXT phase should know (e.g., file naming conventions, tool quirks, workarounds)"],
   "orchestratorAnalysis": "Your assessment of the phase outcome"
 }
 ```

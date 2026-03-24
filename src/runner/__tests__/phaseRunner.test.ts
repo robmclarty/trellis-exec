@@ -45,6 +45,7 @@ import {
   createDefaultCheck,
   extractScopes,
   makePhaseCommit,
+  collectLearnings,
 } from "../phaseRunner.js";
 import type { RunContext } from "../../cli.js";
 import { createAgentLauncher } from "../../orchestrator/agentLauncher.js";
@@ -724,6 +725,148 @@ describe("phaseRunner", () => {
       expect(context).toContain("## Git Commit Protocol");
       expect(context).toContain("conventional commit format");
       expect(context).toContain(".trellis-phase-report.json");
+    });
+  });
+
+  describe("collectLearnings", () => {
+    it("returns empty array when no phase reports exist", () => {
+      const state: SharedState = {
+        currentPhase: "",
+        completedPhases: [],
+        modifiedFiles: [],
+        schemaChanges: [],
+        phaseReports: [],
+        phaseRetries: {},
+        phaseReport: null,
+      };
+
+      expect(collectLearnings(state)).toEqual([]);
+    });
+
+    it("collects from multiple phases with phase ID prefix", () => {
+      const state: SharedState = {
+        currentPhase: "phase-3",
+        completedPhases: ["phase-1", "phase-2"],
+        modifiedFiles: [],
+        schemaChanges: [],
+        phaseReports: [
+          makePhaseReport("phase-1", {
+            decisionsLog: ["Used .jsx for all JSX files"],
+          }),
+          makePhaseReport("phase-2", {
+            decisionsLog: ["localStorage adapter uses JSON.stringify"],
+          }),
+        ],
+        phaseRetries: {},
+        phaseReport: null,
+      };
+
+      const learnings = collectLearnings(state);
+      expect(learnings).toEqual([
+        "[phase-1] Used .jsx for all JSX files",
+        "[phase-2] localStorage adapter uses JSON.stringify",
+      ]);
+    });
+
+    it("respects MAX_LEARNINGS cap using tail", () => {
+      const reports = Array.from({ length: 25 }, (_, i) =>
+        makePhaseReport(`phase-${i}`, {
+          decisionsLog: [`Decision from phase ${i}`],
+        }),
+      );
+      const state: SharedState = {
+        currentPhase: "phase-25",
+        completedPhases: reports.map((r) => r.phaseId),
+        modifiedFiles: [],
+        schemaChanges: [],
+        phaseReports: reports,
+        phaseRetries: {},
+        phaseReport: null,
+      };
+
+      const learnings = collectLearnings(state);
+      expect(learnings).toHaveLength(20);
+      // Should keep the most recent (tail)
+      expect(learnings[0]).toBe("[phase-5] Decision from phase 5");
+      expect(learnings[19]).toBe("[phase-24] Decision from phase 24");
+    });
+
+    it("skips phases with empty decisionsLog", () => {
+      const state: SharedState = {
+        currentPhase: "phase-3",
+        completedPhases: ["phase-1", "phase-2"],
+        modifiedFiles: [],
+        schemaChanges: [],
+        phaseReports: [
+          makePhaseReport("phase-1", { decisionsLog: [] }),
+          makePhaseReport("phase-2", {
+            decisionsLog: ["Important finding"],
+          }),
+        ],
+        phaseRetries: {},
+        phaseReport: null,
+      };
+
+      const learnings = collectLearnings(state);
+      expect(learnings).toEqual(["[phase-2] Important finding"]);
+    });
+  });
+
+  describe("buildPhaseContext — learnings section", () => {
+    it("includes learnings section when prior phases have decisionsLog entries", () => {
+      const tasksJson = makeTasksJson();
+      tmpDir = setupTmpDir(tasksJson);
+      const config = makeDefaultConfig(tmpDir);
+      const state: SharedState = {
+        currentPhase: "phase-2",
+        completedPhases: ["phase-1"],
+        modifiedFiles: [],
+        schemaChanges: [],
+        phaseReports: [
+          makePhaseReport("phase-1", {
+            decisionsLog: ["Vite requires .jsx extension for JSX files"],
+          }),
+        ],
+        phaseRetries: {},
+        phaseReport: null,
+      };
+
+      const context = buildPhaseContext(
+        tasksJson.phases[1]!,
+        state,
+        "Phase 1 done.",
+        config,
+      );
+
+      expect(context).toContain("## Learnings from Prior Phases");
+      expect(context).toContain("[phase-1] Vite requires .jsx extension for JSX files");
+      expect(context).toContain("Apply these to avoid repeating mistakes");
+    });
+
+    it("omits learnings section when all decisionsLog arrays are empty", () => {
+      const tasksJson = makeTasksJson();
+      tmpDir = setupTmpDir(tasksJson);
+      const config = makeDefaultConfig(tmpDir);
+      const state: SharedState = {
+        currentPhase: "phase-2",
+        completedPhases: ["phase-1"],
+        modifiedFiles: [],
+        schemaChanges: [],
+        phaseReports: [
+          makePhaseReport("phase-1", { decisionsLog: [] }),
+        ],
+        phaseRetries: {},
+        phaseReport: null,
+      };
+
+      const context = buildPhaseContext(
+        tasksJson.phases[1]!,
+        state,
+        "Phase 1 done.",
+        config,
+      );
+
+      expect(context).not.toContain("Learnings from Prior Phases");
     });
   });
 

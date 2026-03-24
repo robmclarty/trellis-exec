@@ -21,11 +21,15 @@ vi.mock("../../git.js", () => ({
     getDiffContentRange: vi.fn(() => ""),
 }));
 // Import module under test and mocked modules AFTER vi.mock declarations
-import { runPhases, dryRunReport, buildPhaseContext, buildJudgePrompt, parseJudgeResult, buildFixPrompt, normalizeReport, createDefaultCheck, extractScopes, makePhaseCommit, } from "../phaseRunner.js";
+import { runPhases, dryRunReport, buildPhaseContext, buildJudgePrompt, parseJudgeResult, buildFixPrompt, normalizeReport, createDefaultCheck, extractScopes, makePhaseCommit, collectLearnings, } from "../phaseRunner.js";
 import { createAgentLauncher } from "../../orchestrator/agentLauncher.js";
-import { getChangedFiles, commitAll } from "../../git.js";
+import { getChangedFiles, commitAll, getChangedFilesRange, getDiffContentRange, ensureInitialCommit, getCurrentSha } from "../../git.js";
 const mockedGetChangedFiles = vi.mocked(getChangedFiles);
 const mockedCommitAll = vi.mocked(commitAll);
+const mockedGetChangedFilesRange = vi.mocked(getChangedFilesRange);
+const mockedGetDiffContentRange = vi.mocked(getDiffContentRange);
+const mockedEnsureInitialCommit = vi.mocked(ensureInitialCommit);
+const mockedGetCurrentSha = vi.mocked(getCurrentSha);
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
@@ -484,16 +488,20 @@ describe("phaseRunner", () => {
         });
         it("only considers completed tasks", () => {
             const tasks = makeTasksJson();
-            const phase = tasks.phases[1];
+            const phase = {
+                ...tasks.phases[1],
+                tasks: [
+                    { ...tasks.phases[1].tasks[0], targetPaths: ["src/auth/login.tsx"] },
+                    { ...tasks.phases[1].tasks[1], targetPaths: ["src/db/schema.ts"] },
+                ],
+            };
             const report = makePhaseReport("phase-2", {
                 tasksCompleted: ["task-2-1"],
                 tasksFailed: ["task-2-2"],
             });
             const scopes = extractScopes(phase, report);
-            // task-2-1 has targetPaths: ["src/a.ts"] → "a" would be the scope
-            // task-2-2 has targetPaths: ["src/b.ts"] → should be excluded
-            expect(scopes).toContain("a");
-            expect(scopes).not.toContain("b");
+            expect(scopes).toContain("auth");
+            expect(scopes).not.toContain("db");
         });
     });
     describe("makePhaseCommit", () => {
@@ -559,6 +567,188 @@ describe("phaseRunner", () => {
             expect(context).toContain("## Git Commit Protocol");
             expect(context).toContain("conventional commit format");
             expect(context).toContain(".trellis-phase-report.json");
+        });
+    });
+    describe("collectLearnings", () => {
+        it("returns empty array when no phase reports exist", () => {
+            const state = {
+                currentPhase: "",
+                completedPhases: [],
+                modifiedFiles: [],
+                schemaChanges: [],
+                phaseReports: [],
+                phaseRetries: {},
+                phaseReport: null,
+            };
+            expect(collectLearnings(state)).toEqual([]);
+        });
+        it("collects from multiple phases with phase ID prefix", () => {
+            const state = {
+                currentPhase: "phase-3",
+                completedPhases: ["phase-1", "phase-2"],
+                modifiedFiles: [],
+                schemaChanges: [],
+                phaseReports: [
+                    makePhaseReport("phase-1", {
+                        decisionsLog: ["Used .jsx for all JSX files"],
+                    }),
+                    makePhaseReport("phase-2", {
+                        decisionsLog: ["localStorage adapter uses JSON.stringify"],
+                    }),
+                ],
+                phaseRetries: {},
+                phaseReport: null,
+            };
+            const learnings = collectLearnings(state);
+            expect(learnings).toEqual([
+                "[phase-1] Used .jsx for all JSX files",
+                "[phase-2] localStorage adapter uses JSON.stringify",
+            ]);
+        });
+        it("respects MAX_LEARNINGS cap using tail", () => {
+            const reports = Array.from({ length: 25 }, (_, i) => makePhaseReport(`phase-${i}`, {
+                decisionsLog: [`Decision from phase ${i}`],
+            }));
+            const state = {
+                currentPhase: "phase-25",
+                completedPhases: reports.map((r) => r.phaseId),
+                modifiedFiles: [],
+                schemaChanges: [],
+                phaseReports: reports,
+                phaseRetries: {},
+                phaseReport: null,
+            };
+            const learnings = collectLearnings(state);
+            expect(learnings).toHaveLength(20);
+            // Should keep the most recent (tail)
+            expect(learnings[0]).toBe("[phase-5] Decision from phase 5");
+            expect(learnings[19]).toBe("[phase-24] Decision from phase 24");
+        });
+        it("skips phases with empty decisionsLog", () => {
+            const state = {
+                currentPhase: "phase-3",
+                completedPhases: ["phase-1", "phase-2"],
+                modifiedFiles: [],
+                schemaChanges: [],
+                phaseReports: [
+                    makePhaseReport("phase-1", { decisionsLog: [] }),
+                    makePhaseReport("phase-2", {
+                        decisionsLog: ["Important finding"],
+                    }),
+                ],
+                phaseRetries: {},
+                phaseReport: null,
+            };
+            const learnings = collectLearnings(state);
+            expect(learnings).toEqual(["[phase-2] Important finding"]);
+        });
+    });
+    describe("buildPhaseContext — learnings section", () => {
+        it("includes learnings section when prior phases have decisionsLog entries", () => {
+            const tasksJson = makeTasksJson();
+            tmpDir = setupTmpDir(tasksJson);
+            const config = makeDefaultConfig(tmpDir);
+            const state = {
+                currentPhase: "phase-2",
+                completedPhases: ["phase-1"],
+                modifiedFiles: [],
+                schemaChanges: [],
+                phaseReports: [
+                    makePhaseReport("phase-1", {
+                        decisionsLog: ["Vite requires .jsx extension for JSX files"],
+                    }),
+                ],
+                phaseRetries: {},
+                phaseReport: null,
+            };
+            const context = buildPhaseContext(tasksJson.phases[1], state, "Phase 1 done.", config);
+            expect(context).toContain("## Learnings from Prior Phases");
+            expect(context).toContain("[phase-1] Vite requires .jsx extension for JSX files");
+            expect(context).toContain("Apply these to avoid repeating mistakes");
+        });
+        it("omits learnings section when all decisionsLog arrays are empty", () => {
+            const tasksJson = makeTasksJson();
+            tmpDir = setupTmpDir(tasksJson);
+            const config = makeDefaultConfig(tmpDir);
+            const state = {
+                currentPhase: "phase-2",
+                completedPhases: ["phase-1"],
+                modifiedFiles: [],
+                schemaChanges: [],
+                phaseReports: [
+                    makePhaseReport("phase-1", { decisionsLog: [] }),
+                ],
+                phaseRetries: {},
+                phaseReport: null,
+            };
+            const context = buildPhaseContext(tasksJson.phases[1], state, "Phase 1 done.", config);
+            expect(context).not.toContain("Learnings from Prior Phases");
+        });
+    });
+    describe("runPhases — range-based judging", () => {
+        it("uses getChangedFilesRange with startSha during judge phase", async () => {
+            const tasksJson = makeTasksJson();
+            tmpDir = setupTmpDir(tasksJson);
+            const config = makeDefaultConfig(tmpDir);
+            // ensureInitialCommit returns the baseline SHA
+            mockedEnsureInitialCommit.mockReturnValue("baseline-sha-000");
+            // Range-based functions return some files so judge runs
+            mockedGetChangedFilesRange.mockReturnValue([
+                { path: "package.json", status: "A" },
+            ]);
+            mockedGetDiffContentRange.mockReturnValue("diff --git a/package.json");
+            mockedGetCurrentSha.mockReturnValue("final-sha-999");
+            mockedCommitAll.mockReturnValue("commit-sha-111");
+            const reports = new Map([
+                [
+                    "phase-1",
+                    makePhaseReport("phase-1", {
+                        tasksCompleted: ["task-1-1", "task-1-2"],
+                    }),
+                ],
+                [
+                    "phase-2",
+                    makePhaseReport("phase-2", {
+                        tasksCompleted: ["task-2-1", "task-2-2"],
+                    }),
+                ],
+            ]);
+            setupMocksForSuccess(tmpDir, reports);
+            await runPhases(config, tasksJson);
+            // Verify range-based git functions were called with the baseline SHA
+            expect(mockedGetChangedFilesRange).toHaveBeenCalledWith(tmpDir, "baseline-sha-000");
+            expect(mockedGetDiffContentRange).toHaveBeenCalledWith(tmpDir, "baseline-sha-000");
+        });
+        it("tracks startSha and endSha in phase reports", async () => {
+            const tasksJson = makeTasksJson();
+            tmpDir = setupTmpDir(tasksJson);
+            const config = makeDefaultConfig(tmpDir);
+            mockedEnsureInitialCommit.mockReturnValue("start-sha-aaa");
+            mockedGetChangedFilesRange.mockReturnValue([
+                { path: "file.ts", status: "A" },
+            ]);
+            mockedGetDiffContentRange.mockReturnValue("some diff");
+            mockedGetCurrentSha.mockReturnValue("end-sha-bbb");
+            mockedCommitAll.mockReturnValue("commit-sha-ccc");
+            const reports = new Map([
+                [
+                    "phase-1",
+                    makePhaseReport("phase-1", {
+                        tasksCompleted: ["task-1-1", "task-1-2"],
+                    }),
+                ],
+                [
+                    "phase-2",
+                    makePhaseReport("phase-2", {
+                        tasksCompleted: ["task-2-1", "task-2-2"],
+                    }),
+                ],
+            ]);
+            setupMocksForSuccess(tmpDir, reports);
+            const result = await runPhases(config, tasksJson);
+            // Phase reports should include SHA tracking
+            const phaseReport = result.finalState.phaseReports.find((r) => r.phaseId === "phase-1");
+            expect(phaseReport?.startSha).toBe("start-sha-aaa");
         });
     });
 });

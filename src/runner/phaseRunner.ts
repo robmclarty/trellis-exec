@@ -64,6 +64,18 @@ function getHandoffFromState(state: SharedState): string {
   return last?.handoff ?? "";
 }
 
+const MAX_LEARNINGS = 20;
+
+export function collectLearnings(state: SharedState): string[] {
+  const all: string[] = [];
+  for (const report of state.phaseReports) {
+    for (const entry of report.decisionsLog) {
+      all.push(`[${report.phaseId}] ${entry}`);
+    }
+  }
+  return all.slice(-MAX_LEARNINGS);
+}
+
 export function buildPhaseContext(
   phase: Phase,
   state: SharedState,
@@ -106,6 +118,19 @@ export function buildPhaseContext(
   );
   lines.push(`Modified files: ${state.modifiedFiles.length}`);
   lines.push(`Schema changes: ${state.schemaChanges.length}`);
+
+  const learnings = collectLearnings(state);
+  if (learnings.length > 0) {
+    lines.push("");
+    lines.push("## Learnings from Prior Phases");
+    lines.push(
+      "Important decisions and discoveries from earlier phases. " +
+      "Apply these to avoid repeating mistakes:",
+    );
+    for (const entry of learnings) {
+      lines.push(`- ${entry}`);
+    }
+  }
 
   // Pre-load spec and guidelines content so the orchestrator doesn't waste
   // turns reading these. They're still available on disk if the orchestrator
@@ -921,9 +946,10 @@ async function executePhase(
 
   const agentFile = resolve(ctx.pluginRoot, "agents/phase-orchestrator.md");
 
+  console.log("Launching orchestrator…");
+  const spinner = startSpinner("Orchestrator");
+
   try {
-    console.log("Launching orchestrator…");
-    const spinner = startSpinner("Orchestrator");
     const startTime = Date.now();
 
     const result = await launcher.runPhaseOrchestrator(
@@ -1024,6 +1050,7 @@ async function executePhase(
       report: { ...report, startSha },
     };
   } catch (err) {
+    spinner.stop();
     const reason =
       err instanceof Error ? err.message : "unexpected error";
     if (ctx.verbose) {

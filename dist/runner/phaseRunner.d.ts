@@ -8,6 +8,7 @@ export type PhaseRunnerResult = {
     phasesFailed: string[];
     finalState: SharedState;
 };
+export declare function collectLearnings(state: SharedState): string[];
 export declare function buildPhaseContext(phase: Phase, state: SharedState, handoff: string, ctx: RunContext): string;
 /**
  * Normalizes a raw report object (as produced by the orchestrator LLM) into
