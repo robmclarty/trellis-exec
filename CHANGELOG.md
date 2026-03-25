@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.11
+
+- Fix spinner bounce to show zero bars at both endpoints for symmetric animation
+
 ## 0.5.10
 
 - Polish orchestrator spinner: add trailing ellipsis to label and smooth ping-pong with 1-frame dwell at bounce endpoints
