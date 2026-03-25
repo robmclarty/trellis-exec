@@ -2,25 +2,22 @@
 
 `src/orchestrator/agentLauncher.ts`
 
-Manages `claude` CLI subprocesses for three purposes: dispatching sub-agents to execute discrete tasks, running quick LLM queries for analysis, and launching long-running orchestrator sessions. This is the bridge between the REPL helpers (which the orchestrator calls inside its sandbox) and the actual `claude` processes that do the work.
+Manages `claude` CLI subprocesses for two purposes: dispatching sub-agents to execute discrete tasks, and running phase orchestrator sessions. This is the bridge between the phase runner (which manages the execution lifecycle) and the actual `claude` processes that do the work.
 
 ## Why a separate module
 
-The REPL helpers (`replHelpers.ts`) define the API surface that the phase orchestrator sees — `dispatchSubAgent()`, `llmQuery()`, etc. But those helpers don't know how to spawn processes. They accept an `agentLauncher` callback and delegate to it. This module provides that callback plus additional capabilities (orchestrator launching) that the phase runner needs directly.
+The phase runner (`phaseRunner.ts`) manages the execution lifecycle — phase sequencing, retry logic, judge evaluation, state management. But it doesn't know how to spawn `claude` processes. This module handles subprocess lifecycle and CLI argument assembly, keeping process management separate from orchestration logic.
 
-Separating process management from the REPL sandbox keeps each module focused: replHelpers handles sandboxing and file access, agentLauncher handles subprocess lifecycle and CLI argument assembly. This also makes testing straightforward — the launcher supports dryRun and mock modes so tests never spawn real `claude` processes.
+This also makes testing straightforward — the launcher supports a dryRun mode so tests never spawn real `claude` processes.
 
 ## Operating modes
 
-The launcher runs in one of three modes, selected by config:
+The launcher runs in one of two modes, selected by config:
 
 | Mode | When | Behavior |
 |------|------|----------|
 | **real** | Production | Spawns actual `claude` CLI processes |
 | **dryRun** | `--dry-run` flag | Logs commands to console, returns placeholder results |
-| **mock** | Unit tests | Returns pre-configured responses from a `Map<string, SubAgentResult>` |
-
-Mode precedence: dryRun is checked first, then mock, then real. This means `dryRun: true` always wins, even if `mockResponses` is also provided.
 
 ## Factory function
 
@@ -31,11 +28,10 @@ const launcher = createAgentLauncher({
   pluginRoot: process.env.CLAUDE_PLUGIN_ROOT ?? resolve(__dirname, "../.."),
   projectRoot: "/path/to/user/project",
   dryRun: false,
-  mockResponses: undefined,
 });
 ```
 
-Returns an object with three methods: `dispatchSubAgent`, `llmQuery`, and `launchOrchestrator`.
+Returns an object with two methods: `dispatchSubAgent` and `runPhaseOrchestrator`.
 
 ## Methods
 
@@ -44,14 +40,14 @@ Returns an object with three methods: `dispatchSubAgent`, `llmQuery`, and `launc
 Dispatches a sub-agent to execute a discrete task (implement a module, write tests, run a judge review).
 
 1. Resolves the agent file: `{pluginRoot}/agents/{config.type}.md`
-2. Assembles the prompt following the §5 sub-agent input contract.
-3. Spawns: `claude --agent-file {agentFile} --print --model {model}`
+2. Assembles the prompt following the sub-agent input contract.
+3. Spawns: `claude --agent {agentFile} --print --dangerously-skip-permissions --model {model}`
 4. Pipes the prompt to stdin, collects stdout as the result.
 5. Returns `SubAgentResult` with `success`, `output`, `filesModified`, and optional `error`.
 
 ```typescript
 const result = await launcher.dispatchSubAgent({
-  type: "implementer",
+  type: "implement",
   taskId: "phase-1-task-3",
   instructions: "Implement the user authentication module",
   filePaths: ["src/types/user.ts", "src/db/schema.ts"],
@@ -60,50 +56,31 @@ const result = await launcher.dispatchSubAgent({
 });
 ```
 
-The default model is Sonnet. The orchestrator can override per-task based on complexity — simpler tasks might use Haiku for cost savings.
+The default model is Sonnet. The orchestrator can override per-task based on complexity.
 
-### `llmQuery(prompt: string, options?): Promise<string>`
+### `runPhaseOrchestrator(prompt, agentFile, model?, options?): Promise<ExecClaudeResult>`
 
-Runs a quick LLM query for interpretive work: analyzing check failures, summarizing spec sections, evaluating whether output meets acceptance criteria.
+Launches a single fire-and-forget `claude` session for phase orchestration. The orchestrator receives the full phase context via stdin and uses native Claude tools (Read, Write, Edit, Bash, Glob, Grep) to complete all tasks.
 
-1. Spawns: `claude --print --model {model}`
-2. Pipes the prompt to stdin, returns stdout as a plain string.
+1. Spawns: `claude --agent {agentFile} --print --dangerously-skip-permissions [--model {model}]`
+2. Optionally adds `--output-format stream-json --verbose` for verbose mode.
+3. Pipes the phase context prompt to stdin.
+4. Returns `ExecClaudeResult` with `stdout`, `stderr`, and `exitCode`.
 
 ```typescript
-const analysis = await launcher.llmQuery(
-  "Does this implementation satisfy the requirement: ...",
-  { model: "haiku" }  // optional, defaults to "haiku"
+const result = await launcher.runPhaseOrchestrator(
+  phaseContext,
+  resolve(pluginRoot, "agents/phase-orchestrator.md"),
+  "opus",
+  { verbose: true, onStdout: (chunk) => process.stdout.write(chunk) },
 );
 ```
 
-The default model is Haiku (cheapest/fastest). Use `llmQuery` for thinking, `dispatchSubAgent` for doing.
-
-### `launchOrchestrator(config: OrchestratorLaunchConfig): Promise<OrchestratorHandle>`
-
-Launches a long-running interactive `claude` session for phase orchestration.
-
-1. Spawns: `claude --agent-file {agentFile} --add-dir {skillsDir} --model {model}`
-2. Sends the initial `phaseContext` to stdin on launch.
-3. Returns an `OrchestratorHandle` for ongoing stdin/stdout communication.
-
-```typescript
-const handle = await launcher.launchOrchestrator({
-  agentFile: resolve(pluginRoot, "agents/phase-orchestrator.md"),
-  skillsDir: resolve(pluginRoot, "skills"),
-  phaseContext: "Phase 1 tasks: ...\nShared state: ...",
-  model: "sonnet",
-});
-
-const response = await handle.send("REPL output from last eval...");
-// response contains the orchestrator's next code to evaluate
-
-handle.isAlive(); // true while process is running
-handle.kill();    // sends SIGTERM
-```
+This is a one-shot call — the orchestrator runs to completion and writes a `.trellis-phase-report.json` file to disk. The phase runner reads this file after the subprocess exits.
 
 ## Prompt assembly
 
-`buildSubAgentPrompt(config)` assembles the prompt per the spec's §5 sub-agent input contract:
+`buildSubAgentPrompt(config)` assembles the sub-agent prompt:
 
 ```text
 You are a {type} sub-agent. Your task:
@@ -116,63 +93,47 @@ You may ONLY create or modify these files:
 Context files to reference:
 {filePaths}
 
-Respond with the complete contents of each file you create or modify.
+Use the Write tool to create new files and the Edit tool to modify existing files. Do not just output code as text.
 ```
 
-File paths are listed by reference rather than inlining file contents. The `claude` agent can read files from the filesystem directly, which keeps prompts small and avoids the launcher needing file system access. If the orchestrator wants to inline specific content, it can include it in the `instructions` field after reading via REPL helpers.
-
-Sections with empty arrays (no outputPaths, no filePaths) are omitted entirely.
+File paths are listed by reference rather than inlining file contents. The `claude` agent can read files from the filesystem directly, which keeps prompts small. Sections with empty arrays (no outputPaths, no filePaths) are omitted entirely.
 
 ## Process management
 
-All subprocess spawning goes through a shared `execClaude` helper that uses `child_process.spawn` with piped stdio. This gives streaming control for the orchestrator handle while also working for one-shot sub-agent and query calls.
+All subprocess spawning goes through a shared `execClaude` helper that uses `child_process.spawn` with piped stdio:
 
 | Concern | Approach |
 |---------|----------|
-| Timeout | 5 minutes default for sub-agents; SIGTERM on expiry |
+| Timeout | Sub-agents: 5 minutes; orchestrator: 10 minutes. SIGTERM on expiry. |
 | stdout/stderr | Collected as buffers, decoded to UTF-8 on completion |
 | Exit codes | Non-zero exit → `SubAgentResult.success = false` with error |
-| Orchestrator turn | Sequential one-shot calls with `--continue`; 5-minute timeout per call |
+| Streaming | Optional `onStdout`/`onStderr` callbacks for real-time output |
 
 ## Path resolution
 
-Following the spec's §14 path resolution:
-
 ```typescript
-const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT ?? resolve(__dirname, "../..");
+const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT ?? process.cwd();
 ```
 
 - **Plugin context**: `CLAUDE_PLUGIN_ROOT` is set automatically by Claude Code. Agent files resolve to `{pluginRoot}/agents/{type}.md`.
-- **CLI context**: The fallback walks up from `dist/cli.js` to the repo root where `agents/` and `skills/` live.
+- **CLI context**: Falls back to `process.cwd()`.
 
 ## Types
 
 | Type | Fields |
 |------|--------|
-| `AgentLauncherConfig` | `pluginRoot`, `projectRoot`, `dryRun?`, `mockResponses?` |
-| `AgentLauncher` | `{ dispatchSubAgent, llmQuery, launchOrchestrator }` |
-| `OrchestratorLaunchConfig` | `agentFile`, `skillsDir`, `phaseContext`, `model?` |
-| `OrchestratorHandle` | `{ send, isAlive, kill }` |
+| `AgentLauncherConfig` | `pluginRoot`, `projectRoot`, `dryRun?` |
+| `AgentLauncher` | `{ dispatchSubAgent, runPhaseOrchestrator }` |
+| `ExecClaudeResult` | `{ stdout, stderr, exitCode }` |
+| `OrchestratorOptions` | `{ verbose?, onStdout?, onStderr? }` |
 | `SubAgentConfig` | `type`, `taskId`, `instructions`, `filePaths`, `outputPaths`, `model?` (from `types/agents.ts`) |
 | `SubAgentResult` | `success`, `output`, `filesModified`, `error?` (from `types/agents.ts`) |
-
-## Orchestrator protocol
-
-The `OrchestratorHandle` communicates with the Claude CLI using sequential one-shot `--print` calls:
-
-1. **Turn 1**: `claude --print --agent <agentFile> --dangerously-skip-permissions --disallowedTools ... --append-system-prompt <REPL_PROMPT> --add-dir <skillsDir> [--model <model>]` with phaseContext + initial input as stdin.
-2. **Turn 2+**: `claude --print --continue --dangerously-skip-permissions --disallowedTools ... --append-system-prompt <REPL_PROMPT> --add-dir <skillsDir> [--model <model>]` with REPL output as stdin.
-3. **Tool restrictions**: The orchestrator has file-manipulation tools disabled (`--disallowedTools`) and uses REPL helpers (`readFile`, `dispatchSubAgent`, `runCheck`, `writePhaseReport`, etc.) instead.
-4. **Response extraction**: The phase runner's `extractCode()` extracts JavaScript from Claude's response (from code fences or raw text), filtering out natural language responses.
-5. **Sub-agents**: Use `--dangerously-skip-permissions` and have full tool access (Write, Edit, Read) to actually create/modify files.
-
-The `filesModified` field in `SubAgentResult` is returned as an empty array from real mode — populating it requires parsing the sub-agent's output to detect which files were actually written. This parsing logic belongs in the phase runner or orchestrator, not the launcher.
 
 ## Defaults
 
 | Setting | Value |
 |---------|-------|
 | Sub-agent model | Sonnet |
-| llmQuery model | Haiku |
 | Sub-agent timeout | 300,000ms (5 minutes) |
-| Orchestrator turn timeout | 300,000ms (5 minutes per turn) |
+| Orchestrator timeout | 600,000ms (10 minutes) |
+| Compile timeout | 600,000ms (10 minutes) |

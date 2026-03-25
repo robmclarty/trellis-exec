@@ -2,91 +2,126 @@
 
 `src/runner/phaseRunner.ts`
 
-The deterministic outer loop that composes every other module in the executor into a single pipeline. It reads a `tasks.json` file, walks through each phase in order, launches an orchestrator for each one, mediates the orchestrator ↔ REPL conversation, and decides what to do when a phase finishes — advance, retry, skip, or halt. Everything that touches shared state, trajectory logging, worktree isolation, and inter-phase handoff flows through this module.
+The deterministic outer loop that composes every other module in the executor into a single pipeline. It reads a `tasks.json` file, walks through each phase in order, launches an orchestrator for each one, and decides what to do when a phase finishes — advance, retry, skip, or halt. Everything that touches shared state, trajectory logging, and inter-phase handoff flows through this module.
 
 ## Why a dedicated runner
 
-Each sub-module (state manager, scheduler, trajectory logger, worktree manager, check runner, agent launcher, REPL manager, REPL helpers) solves one problem. None of them know about the others. The phase runner is the composition layer that wires them together and enforces the execution protocol described in §6 of the spec.
+Each sub-module (state manager, scheduler, trajectory logger, check runner, agent launcher) solves one problem. None of them know about the others. The phase runner is the composition layer that wires them together and enforces the execution protocol.
 
-Without it, the caller would need to manually sequence module calls, handle retry counters, manage orchestrator lifecycles, and coordinate worktree commits at phase boundaries. The runner encapsulates all of that into a single `runPhases()` call.
+Without it, the caller would need to manually sequence module calls, handle retry counters, manage orchestrator lifecycles, and coordinate git commits at phase boundaries. The runner encapsulates all of that into a single `runPhases()` call.
 
 ## How it works
 
-The runner follows a strict sequence. Each step maps to a specific sub-module:
+The runner follows a strict sequence:
 
 ```text
 Load tasks.json            →  Zod validation (TasksJsonSchema)
 Validate dependencies      →  scheduler.validateDependencies()
 Load / init state          →  stateManager.loadState() / initState()
 Create trajectory logger   →  trajectoryLogger.createTrajectoryLogger()
-Create worktree (optional) →  worktreeManager.createWorktree()
 
 For each incomplete phase:
-  Build phase context      →  buildPhaseContext() (internal)
-  Create agent launcher    →  agentLauncher.createAgentLauncher()
-  Create REPL helpers      →  replHelpers.createReplHelpers() + overrides
-  Create REPL session      →  replManager.createReplSession()
-  Launch orchestrator      →  launcher.launchOrchestrator()
-  Run REPL turn loop       →  replTurnLoop() (internal)
-  Judge phase              →  judgePhase() (judge → fix correction loop)
-  Decide action            →  report.recommendedAction + judge assessment + user input
-  Update state             →  stateManager.updateStateAfterPhase()
-  Commit to worktree       →  worktreeManager.commitPhase()
+  Ensure initial git commit →  git.ensureInitialCommit() (captures startSha)
+  Build phase context       →  buildPhaseContext() (internal)
+  Create agent launcher     →  agentLauncher.createAgentLauncher()
+  Launch orchestrator       →  launcher.runPhaseOrchestrator() (single subprocess)
+  Read report file          →  .trellis-phase-report.json
+  Normalize report          →  normalizeReport() (handles LLM output variations)
+  Judge phase               →  judgePhase() (judge → fix correction loop)
+  Auto-detect test suite    →  hasNewTestFiles() + detectTestCommand()
+  Decide action             →  report.recommendedAction + judge assessment + user input
+  Phase-level git commit    →  makePhaseCommit() (conventional commit format)
+  Update state              →  stateManager.updateStateAfterPhase()
 
-Merge worktree (on success) → worktreeManager.mergeWorktree()
-Cleanup                      → worktreeManager.cleanupWorktree(), logger.close()
+Cleanup                     →  logger.close()
 ```
 
-### The REPL turn loop
+### Orchestrator execution
 
-This is the core inner loop. It mediates between the orchestrator (a `claude` subprocess) and the REPL session (a `node:vm` sandbox):
+The orchestrator is spawned as a single `claude --agent --print` subprocess that runs to completion. It receives the full phase context via stdin and uses native Claude tools (Read, Write, Edit, Bash, Glob, Grep) to execute tasks. The orchestrator signals completion by writing a `.trellis-phase-report.json` file to the project root.
 
-1. Send the previous REPL output (or "Begin phase execution." on turn 1) to the orchestrator.
-2. Receive code back from the orchestrator.
-3. Eval the code in the REPL sandbox.
-4. Restore scaffold — re-inject original REPL helper references so the orchestrator's code can't accidentally overwrite them.
-5. Log the turn to `trajectory.jsonl`.
-6. Check for phase completion (the orchestrator signals this by calling `writePhaseReport()` inside its REPL code).
-7. Check for consecutive errors — halt if the threshold is reached.
-8. Feed the REPL output back to the orchestrator.
-9. Repeat until complete, turn limit, consecutive error threshold, or orchestrator death.
+The phase context includes:
+- Phase name, description, and all tasks with acceptance criteria
+- Prior phase handoff briefing
+- Shared state summary (completed phases, learnings)
+- Pre-loaded spec and guidelines content
+- Check command (if configured)
+- Git commit protocol instructions
+- Completion protocol with report JSON schema
+- Previous attempt context (on retries — judge issues, corrective tasks)
 
 ### Phase completion detection
 
-The orchestrator signals it's done by calling `writePhaseReport(report)` in the REPL. This works through a closure: the runner creates the REPL helpers with an overridden `writePhaseReport` that captures the report into a local variable. The turn loop checks this variable after each orchestrator response and after each REPL eval. When it's set, the loop exits with reason "complete".
+The orchestrator writes a `.trellis-phase-report.json` file to the project root when done. The phase runner reads and parses this file after the subprocess exits. The report is validated — all task IDs must appear in either `tasksCompleted` or `tasksFailed`. Missing tasks cause the report to be marked as `"partial"` with a recommendation to retry.
+
+### Git commit protocol
+
+The orchestrator creates **per-task commits** using conventional commit format during execution:
+```
+<type>(<scope>): <summary>
+
+- <change 1>
+- <change 2>
+```
+
+After the phase advances, the runner creates a **phase-level commit** for any remaining uncommitted changes:
+```
+feat(auth,api): [trellis phase-2] Implemented user authentication
+
+- Created LoginForm component
+- Added JWT token validation
+```
+
+Scopes are extracted from completed tasks' `targetPaths`, skipping generic top-level directories (src, lib, app).
 
 ### Judge flow
 
-After the orchestrator completes a phase (status is not `"failed"`), the runner dispatches a **judge agent** to independently verify the work against the spec and task acceptance criteria. The judge runs inside a correction loop managed by `judgePhase()`.
+After the orchestrator completes a phase, the runner dispatches a **judge agent** to independently verify the work against the spec and task acceptance criteria. The judge runs inside a correction loop managed by `judgePhase()`.
+
+#### Judge model selection
+
+The judge uses **adaptive model selection** based on diff size:
+- Small diffs (<150 lines) with few tasks (<3) → Sonnet
+- Larger diffs or more tasks → Opus
+- Explicit `--judge-model` override takes precedence
 
 #### What the judge receives
 
 The runner builds a judge prompt containing:
 
-- **Changed files** — list with git status indicators (A/M/D)
-- **Full unified diff** — all changes made during the phase
+- **Changed files** — list with git status indicators (A/M/D), sourced from `startSha..HEAD` range
+- **Full unified diff** — all changes made during the phase (committed + uncommitted)
 - **Task definitions** — IDs, titles, descriptions, target paths, and acceptance criteria
-- **Spec sections** — referenced via each task's `specSections` field
-- **Orchestrator's self-report** — the phase report with status and completion claims
+- **Orchestrator's self-report** — the phase report with status and completion claims (marked as "context only — not authoritative")
 
-#### What the judge evaluates
+#### Judge assessment format
 
-The judge (dispatched as a `"judge"` sub-agent on the `opus` model) assesses four dimensions:
-
-1. **Spec compliance** — do the changes implement what the spec requires?
-2. **Correctness** — are there obvious bugs or unhandled cases?
-3. **Completeness** — are all tasks fully addressed, or are TODOs left behind?
-4. **Consistency** — do the changes fit existing codebase patterns?
-
-It returns a `JudgeAssessment`:
+The judge returns a `JudgeAssessment`:
 
 ```typescript
 {
   passed: boolean;
-  issues: string[];     // problems that must be fixed
-  suggestions: string[]; // optional improvements
+  issues: JudgeIssue[];      // problems that must be fixed
+  suggestions: JudgeIssue[];  // optional improvements
 }
 ```
+
+Where `JudgeIssue` is either a plain string or a structured object:
+```typescript
+{ task?: string; severity?: string; description: string }
+```
+
+#### Judge mode
+
+Judge invocation is controlled by the `--judge` flag:
+
+| Mode | Behavior |
+|------|----------|
+| `always` (default) | Judge runs after every phase |
+| `on-failure` | Judge runs only when the phase status is not `"complete"` |
+| `never` | Judge is skipped entirely |
+
+The judge also runs on `"failed"` phases if they produced changes (so the fix loop can attempt recovery).
 
 #### The judge → fix correction loop
 
@@ -94,29 +129,39 @@ When the judge finds issues and correction attempts remain (default max: 2), the
 
 ```text
 judgePhase(phase, report)
-  ├── Get changed files from git diff
+  ├── Get changed files from git diff (startSha..HEAD)
   ├── Skip if no files changed
   └── Loop (up to maxCorrections):
-       ├── Dispatch judge sub-agent with diff + criteria
+       ├── Build judge/re-judge prompt
+       ├── Select model (adaptive or override)
+       ├── Dispatch judge sub-agent
        ├── Parse JudgeAssessment from response
        ├── Log "judge_invoke" trajectory event
        ├── If passed → break, return assessment
        ├── If not passed and attempts remain:
+       │    ├── Capture pre-fix SHA for targeted diff
        │    ├── Dispatch fix sub-agent with issues list
        │    ├── Run check command (if configured)
+       │    ├── Capture fix-only diff for targeted re-judging
        │    └── Refresh changed files for next pass
        └── If max corrections exceeded → return final assessment
 ```
 
-The fix agent (dispatched as a `"fix"` sub-agent on the `sonnet` model) receives only the specific issues identified by the judge and is constrained to fixing those issues — no refactoring.
+After the first judge pass, subsequent passes use a **targeted re-judge prompt** that includes only the fix diff and previous issues (rather than the full phase diff), making re-evaluation faster and more focused.
 
 #### How the assessment affects action decisions
 
 The judge assessment is stored on the phase report as `judgeAssessment` and influences the action decision:
 
-**Interactive mode:** If the judge found issues and the orchestrator recommended `"advance"`, the runner overrides the recommendation to `"retry"` and populates `correctiveTasks` with the judge's issues. The user is then prompted with this adjusted recommendation.
+In `runPhases()`: If the judge found issues and the orchestrator recommended `"advance"`, the runner changes the recommendation to `"retry"` and populates `correctiveTasks` with the judge's issues.
 
-**Headless mode:** If the judge found issues and the orchestrator recommended `"advance"`, the runner downgrades the status to `"partial"` and changes the recommendation to `"retry"`.
+In `runSinglePhase()`: Same behavior, but also downgrades the status to `"partial"`.
+
+### Test auto-detection
+
+If no `--check` command is provided, the runner automatically detects test suites when new test files appear:
+- Checks `package.json` for a `test` script → `npm test`
+- Checks for common config files (`vitest.config.ts`, `jest.config.js`, etc.) → appropriate `npx` command
 
 ### Action logic after a phase
 
@@ -132,7 +177,7 @@ Once a phase finishes and the judge assessment is applied, the runner decides wh
 | `retry` | — | (headless) | Retry if under `maxRetries`, else halt |
 | `halt` | — | (any) | Save state, exit |
 
-On retry, the runner appends the report's `correctiveTasks` (which may include judge-identified issues) as new task objects to the phase and re-enters it without advancing the phase index. The retry counter is stored in `state.phaseRetries` and persists across saves.
+On retry, the runner appends the report's `correctiveTasks` as new task objects to the phase and re-enters it without advancing the phase index. Corrective task IDs include a retry-count offset (`retryCount * 100`) to ensure uniqueness across retries. The retry counter is stored in `state.phaseRetries` and persists across saves.
 
 State is only updated after the action decision. This prevents a retry-bound phase from being prematurely marked as completed.
 
@@ -148,122 +193,86 @@ The runner connects sub-modules through dependency injection rather than direct 
 phaseRunner.runPhases()
   ├── stateManager      — load, init, save, update
   ├── scheduler         — validate dependencies, resolve execution order
-  ├── trajectoryLogger  — append events per REPL turn
-  ├── worktreeManager   — create, commit, merge, cleanup
+  ├── trajectoryLogger  — append events per phase
+  ├── git               — ensureInitialCommit, commitAll, getChangedFiles/Range, getDiff/Range
   └── executePhase()
        ├── agentLauncher.createAgentLauncher()
-       │    ├── .dispatchSubAgent()  →  wired into replHelpers + judgePhase
-       │    ├── .llmQuery()          →  wired into replHelpers
-       │    └── .launchOrchestrator() → orchestratorHandle
-       ├── checkRunner.createCheckRunner()
-       │    └── .run()  →  wired into replHelpers.runCheck
-       ├── replHelpers.createReplHelpers()
-       │    └── writePhaseReport, runCheck, llmQuery overridden
-       ├── replManager.createReplSession(helpers)
-       ├── replTurnLoop(orchestratorHandle, replSession, logger)
-       └── judgePhase(phase, report, launcher, logger)
-            ├── dispatchSubAgent("judge")  →  assess changes against criteria
-            └── dispatchSubAgent("fix")    →  correct issues (if judge fails)
+       │    ├── .dispatchSubAgent()         → judge + fix sub-agents
+       │    └── .runPhaseOrchestrator()     → single fire-and-forget subprocess
+       ├── checkRunner.createCheckRunner()  → check command after fixes
+       └── judgePhase()
+            ├── dispatchSubAgent("judge")   → assess changes against criteria
+            └── dispatchSubAgent("fix")     → correct issues (if judge fails)
 ```
-
-The REPL helpers bridge is the key integration point. The phase runner creates the helpers with `createReplHelpers()`, then overrides three methods using object spread:
-
-- **`writePhaseReport`** — replaced with a closure that captures the report for the turn loop to detect.
-- **`runCheck`** — replaced with a real `CheckRunner` (when a check command is configured) instead of the stub.
-- **`llmQuery`** — replaced with the agent launcher's `llmQuery`, which spawns a real `claude --print` subprocess.
-
-This avoids modifying `replHelpers.ts` while giving the runner full control over how these operations execute.
 
 ## Exported API
 
-### `runPhases(config: PhaseRunnerConfig): Promise<PhaseRunnerResult>`
+### `runPhases(ctx: RunContext, tasksJson: TasksJson): Promise<PhaseRunnerResult>`
 
 The main entry point. Runs all incomplete phases from `tasks.json`.
 
 ```typescript
-const result = await runPhases({
-  tasksJsonPath: ".specs/auth/tasks.json",
-  isolation: "worktree",
-  concurrency: 3,
-  maxRetries: 2,
-  headless: false,
-  verbose: false,
-  dryRun: false,
-  turnLimit: 100,
-  maxConsecutiveErrors: 5,
-  pluginRoot: process.env.CLAUDE_PLUGIN_ROOT ?? ".",
-});
+const result = await runPhases(ctx, tasksJson);
 // result.success          → true if all phases completed
 // result.phasesCompleted  → ["phase-1", "phase-2"]
 // result.phasesFailed     → []
 // result.finalState       → full SharedState object
 ```
 
-### `runSinglePhase(config, phaseId): Promise<PhaseRunnerResult>`
+### `runSinglePhase(ctx, tasksJson, phaseId): Promise<PhaseRunnerResult>`
 
 Runs one phase by ID. Same setup as `runPhases` but targets a single phase. Used for the `--phase <id>` CLI flag.
 
-```typescript
-const result = await runSinglePhase(config, "phase-2");
-```
+### `promptForContinuation(options?): Promise<"continue" | "retry" | "skip" | "quit">`
 
-### `promptForContinuation(): Promise<"continue" | "retry" | "skip" | "quit">`
+Reads a single line from stdin. Maps Enter → `"continue"`, `r` → `"retry"`, `s` → `"skip"`, `q` → `"quit"`. Displays retry counts, recommendations, and reasons when provided.
 
-Reads a single line from stdin. Maps Enter → `"continue"`, `r` → `"retry"`, `s` → `"skip"`, `q` → `"quit"`. Used between phases in interactive mode.
-
-### `dryRunReport(tasksJson: TasksJson): string`
+### `dryRunReport(tasksJson: TasksJson, ctx: RunContext): string`
 
 Produces a human-readable execution plan without making any LLM calls. Uses the scheduler to resolve execution groups and detect target path overlaps.
 
-```text
-Spec: ./spec.md
-Plan: ./plan.md
-Phases: 2
+### Other exported functions
 
-## phase-1: scaffolding
-Set up project
-
-  Group 0 [sequential]:
-    - task-1-1: Init project (implement)
-      targets: package.json
-  Group 1 [sequential]:
-    - task-1-2: Add config (scaffold)
-      targets: tsconfig.json
-
-## phase-2: implementation
-Build features
-
-  Group 0 [parallel]:
-    - task-2-1: Build feature A (implement)
-      targets: src/a.ts
-    - task-2-2: Build feature B (implement)
-      targets: src/b.ts
-```
+- `buildPhaseContext(phase, state, handoff, ctx)` — constructs the orchestrator prompt
+- `buildJudgePrompt(config)` — creates judge evaluation prompt
+- `buildRejudgePrompt(config)` — creates targeted re-judge prompt after fix
+- `buildFixPrompt(issues, phase)` — creates fix agent prompt
+- `normalizeReport(raw, phaseId)` — normalizes orchestrator output to PhaseReport schema
+- `selectJudgeModel(diffLineCount, taskCount, override?)` — adaptive model selection
+- `parseJudgeResult(output)` — extracts JudgeAssessment from judge output
+- `formatIssue(issue)` — formats JudgeIssue for display
+- `makePhaseCommit(projectRoot, phase, report)` — creates conventional commit
+- `extractScopes(phase, report)` — extracts scope names for commit messages
+- `collectLearnings(state)` — gathers decision log entries from prior phases
+- `hasNewTestFiles(projectRoot)` — checks for newly added test files
+- `detectTestCommand(projectRoot)` — auto-detects test runner from project config
+- `createDefaultCheck(projectRoot, phase)` — file-existence check when no command is configured
 
 ## Safety and cleanup
 
-The runner uses `try/finally` at two levels:
+The runner uses `try/finally` to ensure `logger.close()` always executes, even on unhandled errors.
 
-1. **`runPhases` level** — ensures `cleanupWorktree()` and `logger.close()` always execute, even on unhandled errors.
-2. **`executePhase` level** — ensures `repl.destroy()` and `orchestrator.kill()` always execute, even if the turn loop throws.
-
-State is saved to disk after every phase boundary, so a crash between phases loses no progress. The trajectory log is flushed synchronously after each turn (via `fsyncSync`), so the external record is always complete regardless of crashes.
+State is saved to disk after every phase boundary, so a crash between phases loses no progress. The trajectory log is flushed synchronously after each event (via `fsyncSync`), so the external record is always complete regardless of crashes.
 
 ## Configuration
 
+Configuration is provided via `RunContext` (defined in `cli.ts`):
+
 | Field | Default | Purpose |
 |-------|---------|---------|
-| `tasksJsonPath` | (required) | Path to `tasks.json` |
+| `projectRoot` | *(from tasks.json)* | Absolute path to project root |
+| `specPath` | *(from tasks.json)* | Path to spec file |
+| `planPath` | *(from tasks.json)* | Path to plan file |
+| `guidelinesPath` | *(optional)* | Path to guidelines file |
 | `statePath` | `<tasksJsonDir>/state.json` | Persisted execution state |
 | `trajectoryPath` | `<tasksJsonDir>/trajectory.jsonl` | Append-only event log |
 | `checkCommand` | none | Shell command run after each task (e.g., `npm run lint && npm test`) |
-| `isolation` | `"worktree"` | `"worktree"` for git isolation, `"none"` to work in place |
 | `concurrency` | `3` | Max parallel sub-agents within a phase |
 | `model` | none | Override the orchestrator's default model |
 | `maxRetries` | `2` | Max phase retries before halting |
 | `headless` | `false` | Skip interactive prompts between phases |
-| `verbose` | `false` | Print REPL turn details to stdout |
+| `verbose` | `false` | Print stream-json output from orchestrator |
 | `dryRun` | `false` | Print execution plan, make no changes |
-| `turnLimit` | `100` | Max REPL turns per phase before forced halt |
-| `maxConsecutiveErrors` | `5` | Consecutive REPL errors before halting |
 | `pluginRoot` | (required) | Directory containing `agents/` and `skills/` |
+| `judgeMode` | `"always"` | When to run the judge: `always`, `on-failure`, `never` |
+| `judgeModel` | *(adaptive)* | Override judge model selection |

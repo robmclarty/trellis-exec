@@ -33,13 +33,18 @@ Reads a `tasks.json` file and executes its phases through the phase runner. By d
 | `--phase <id>` | string | *(all)* | Run a single phase by ID instead of all remaining phases |
 | `--dry-run` | boolean | `false` | Print the execution plan (phases, tasks, dependencies) without running anything |
 | `--resume` | boolean | `false` | Resume from the last incomplete task by reading existing `state.json` |
-| `--check <command>` | string | *(from config)* | Override the check command (e.g. `"npm run lint && npm test"`) |
-| `--isolation <mode>` | string | `"worktree"` | Isolation strategy: `"worktree"` creates a git worktree; `"none"` runs in place |
+| `--check <command>` | string | *(none)* | Override the check command (e.g. `"npm run lint && npm test"`) |
 | `--concurrency <n>` | number | `3` | Maximum parallel sub-agents within a phase |
 | `--model <model>` | string | *(none)* | Override the default orchestrator model |
 | `--max-retries <n>` | number | `2` | Maximum phase retries before halting |
-| `--headless` | boolean | `false` | Run without interactive prompts between phases |
-| `--verbose` | boolean | `false` | Print REPL interactions to stdout |
+| `--project-root <path>` | string | *(from tasks.json)* | Override project root from tasks.json |
+| `--spec <path>` | string | *(from tasks.json)* | Override spec path from tasks.json |
+| `--plan <path>` | string | *(from tasks.json)* | Override plan path from tasks.json |
+| `--guidelines <path>` | string | *(from tasks.json)* | Override guidelines path from tasks.json |
+| `--judge <mode>` | string | `"always"` | Judge mode: `always`, `on-failure`, or `never` |
+| `--judge-model <model>` | string | *(adaptive)* | Override judge model (default: adaptive — Sonnet for small diffs, Opus for larger ones) |
+| `--headless` | boolean | `false` | Disable interactive prompts between phases |
+| `--verbose` | boolean | `false` | Print stream-json debug output from orchestrator |
 
 **Examples:**
 
@@ -56,8 +61,8 @@ trellis-exec run tasks.json --phase phase-2 --headless
 # Resume a previous run with a custom check command
 trellis-exec run tasks.json --resume --check "npm test"
 
-# Run without git worktree isolation
-trellis-exec run tasks.json --isolation none --concurrency 5
+# Run with judge disabled for faster iteration
+trellis-exec run tasks.json --judge never --concurrency 5
 ```
 
 **Exit codes:**
@@ -75,21 +80,30 @@ trellis-exec compile <plan.md> --spec <spec.md> [options]
 
 Reads a `plan.md` file and runs the deterministic plan parser (Stage 1) to produce a `tasks.json` file. The `--spec` flag is required so the compiler can record the spec reference in the output.
 
+If the deterministic parser can't find phase boundaries, the compiler automatically falls back to LLM decomposition (Stage 3) using Opus. If `--enrich` is set and the parser flagged ambiguous fields, it runs LLM enrichment (Stage 2) using Haiku.
+
 **Options:**
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--spec <path>` | string | *(required)* | Path to the spec file |
+| `--guidelines <path>` | string | *(none)* | Path to project guidelines (optional) |
+| `--project-root <path>` | string | `"."` | Project root relative to output |
 | `--output <path>` | string | `./tasks.json` | Output path for the generated tasks file |
+| `--enrich` | boolean | `false` | Run LLM enrichment to fill ambiguous fields |
+| `--timeout <ms>` | number | `600000` | Timeout for LLM calls in milliseconds |
 
 **Examples:**
 
 ```bash
-# Compile with default output
+# Compile with default output (deterministic parse, no LLM needed)
 trellis-exec compile plan.md --spec spec.md
 
-# Compile to a custom output path
-trellis-exec compile plan.md --spec spec.md --output .specs/feature/tasks.json
+# Architectural plan requiring LLM decomposition
+trellis-exec compile plan.md --spec spec.md --guidelines guidelines.md
+
+# With enrichment for ambiguous fields
+trellis-exec compile plan.md --spec spec.md --guidelines guidelines.md --enrich
 ```
 
 **Output:**
@@ -103,7 +117,7 @@ Compiled 3 phases, 12 tasks → ./tasks.json
 If the parser flags fields that need LLM enrichment (Stage 2), a note is printed:
 
 ```text
-Note: 4 field(s) flagged for enrichment.
+Note: 4 field(s) flagged for enrichment. Re-run with --enrich to fill gaps.
 ```
 
 **Exit codes:**
@@ -127,7 +141,6 @@ Reads the `state.json` file adjacent to the given `tasks.json` and prints a summ
 - **Completed phases** — list of phases that finished successfully
 - **Retry counts** — how many times each phase has been retried (if any)
 - **Phase reports** — status, summary, and task breakdown for each completed phase
-- **Modified files** — count of files changed during execution
 
 **Example output:**
 
@@ -144,8 +157,6 @@ Phase reports:
   phase-2: complete — Core API implementation
     Completed: task-2-1, task-2-2
     Failed: task-2-3
-
-Modified files: 14
 ```
 
 If no `state.json` exists (i.e. no run has been started), prints:
@@ -163,12 +174,10 @@ Environment variables serve as fallbacks when CLI flags are not provided. CLI fl
 | Variable | Maps to | Default | Description |
 |----------|---------|---------|-------------|
 | `TRELLIS_EXEC_MODEL` | `--model` | *(none)* | Default orchestrator model |
-| `TRELLIS_EXEC_TURN_LIMIT` | *(no flag)* | `200` | Max REPL turns per phase |
-| `TRELLIS_EXEC_REPL_OUTPUT_LIMIT` | *(no flag)* | `8192` | Max characters returned from REPL per turn |
 | `TRELLIS_EXEC_MAX_RETRIES` | `--max-retries` | `2` | Max phase retries before halting |
 | `TRELLIS_EXEC_CONCURRENCY` | `--concurrency` | `3` | Max parallel sub-agents per phase |
-| `TRELLIS_EXEC_MAX_CONSECUTIVE_ERRORS` | *(no flag)* | `5` | Consecutive REPL errors before halting a phase |
-| `TRELLIS_EXEC_COMPACTION_THRESHOLD` | *(no flag)* | `80` | Context usage percentage that triggers compaction |
+| `TRELLIS_EXEC_JUDGE_MODE` | `--judge` | `"always"` | Judge mode (always, on-failure, never) |
+| `TRELLIS_EXEC_JUDGE_MODEL` | `--judge-model` | *(adaptive)* | Override judge model |
 | `CLAUDE_PLUGIN_ROOT` | *(no flag)* | `process.cwd()` | Plugin directory root (auto-set by Claude Code) |
 
 **Precedence order:** CLI flag > environment variable > built-in default.

@@ -60,8 +60,14 @@ Execute phases from a tasks.json file.
 | `--concurrency <n>` | Max parallel sub-agents (default: 3) |
 | `--model <model>` | Override orchestrator model |
 | `--max-retries <n>` | Max phase retries (default: 2) |
+| `--project-root <path>` | Override project root from tasks.json |
+| `--spec <path>` | Override spec path from tasks.json |
+| `--plan <path>` | Override plan path from tasks.json |
+| `--guidelines <path>` | Override guidelines path from tasks.json |
+| `--judge <mode>` | Judge mode: `always`, `on-failure`, `never` (default: `always`) |
+| `--judge-model <model>` | Override judge model (default: adaptive) |
 | `--headless` | Disable interactive prompts |
-| `--verbose` | Print debug output |
+| `--verbose` | Print stream-json debug output |
 
 ### `trellis-exec compile <plan.md>`
 
@@ -70,7 +76,11 @@ Compile a plan.md into tasks.json.
 | Flag | Description |
 |------|-------------|
 | `--spec <spec.md>` | Path to the spec (required) |
+| `--guidelines <path>` | Path to project guidelines (optional) |
+| `--project-root <path>` | Project root relative to output (default: `.`) |
 | `--output <path>` | Output path (default: `./tasks.json`) |
+| `--enrich` | Run LLM enrichment to fill ambiguous fields |
+| `--timeout <ms>` | Timeout for LLM calls (default: 600000) |
 
 ### `trellis-exec status <tasks.json>`
 
@@ -87,7 +97,7 @@ Show execution status for all phases and tasks.
                     │                       │
                     │  planParser.ts        │  Stage 1: deterministic
                     │  planEnricher.ts      │  Stage 2: LLM enrichment
-                    │  compilePlan.ts       │  Orchestrator (fallback: full LLM decomposition)
+                    │  compilePlan.ts       │  Stage 3: full LLM decomposition (Opus)
                     └───────────┬───────────┘
                                 │
                            tasks.json
@@ -135,7 +145,7 @@ Show execution status for all phases and tasks.
           │                                     │
           │  ┌───────────────┐  ┌────────────┐  │
           │  │    judge      │  │    fix     │  │
-          │  │  (Opus, r/o)  │──▶  (Sonnet)  │  │
+          │  │  (adaptive)   │──▶  (Sonnet)  │  │
           │  │  assess diff  │  │ apply fix  │  │
           │  └───────┬───────┘  └─────┬──────┘  │
           │          │◀───────────────┘         │
@@ -157,9 +167,9 @@ Show execution status for all phases and tasks.
 
 The system has four layers:
 
-1. **Plan Compiler** -- Parses `plan.md` into `tasks.json` using a deterministic TypeScript parser with targeted LLM enrichment for ambiguous fields.
+1. **Plan Compiler** -- Parses `plan.md` into `tasks.json` using a deterministic TypeScript parser with targeted LLM enrichment (Haiku) for ambiguous fields, falling back to full LLM decomposition (Opus) for freeform plans.
 
-2. **Phase Runner** -- A deterministic Node.js loop that owns the phase queue and iterative refinement cycle. It advances phases, handles retries, dispatches the judge → fix correction loop after each phase, and writes a `trajectory.jsonl` log.
+2. **Phase Runner** -- A deterministic Node.js loop that owns the phase queue and iterative refinement cycle. It advances phases, handles retries with corrective tasks, dispatches the judge → fix correction loop (with adaptive model selection) after each phase, manages per-task and per-phase git commits, and writes a `trajectory.jsonl` log.
 
 3. **Phase Orchestrator** -- An LLM agent launched once per phase via a single `claude --print` subprocess. It receives the phase's task list and shared state, works through tasks using Claude's native tools (Read, Write, Edit, Bash, Glob, Grep), dispatches sub-agents for complex tasks, and writes a `.trellis-phase-report.json` file to signal completion.
 
@@ -173,11 +183,13 @@ For a detailed explanation of the architecture and its evolution, see [docs/nati
 
 All environment variables are optional.
 
-| Variable | Purpose | Example |
+| Variable | Purpose | Default |
 |----------|---------|---------|
-| `TRELLIS_EXEC_MODEL` | Default orchestrator model override | `sonnet` |
+| `TRELLIS_EXEC_MODEL` | Default orchestrator model override | *(none)* |
 | `TRELLIS_EXEC_MAX_RETRIES` | Max phase retries before halting | `2` |
 | `TRELLIS_EXEC_CONCURRENCY` | Max parallel sub-agents per phase | `3` |
+| `TRELLIS_EXEC_JUDGE_MODE` | Judge mode (`always`, `on-failure`, `never`) | `always` |
+| `TRELLIS_EXEC_JUDGE_MODEL` | Override judge model | *(adaptive)* |
 
 `CLAUDE_PLUGIN_ROOT` is set automatically by Claude Code in plugin contexts.
 
@@ -187,12 +199,13 @@ Add a new specialist agent by dropping a `.md` file in `agents/`:
 
 ```text
 agents/
-  implement.md
-  test-writer.md
-  scaffold.md
-  judge.md
-  fix.md
-  your-agent.md        # add your own
+  phase-orchestrator.md  # main orchestrator (launched by phase runner)
+  implement.md           # general implementation tasks
+  test-writer.md         # test file creation
+  scaffold.md            # project scaffolding
+  judge.md               # read-only code review
+  fix.md                 # targeted issue fixes
+  your-agent.md          # add your own
 ```
 
 Each agent file uses Claude Code agent frontmatter to declare its name, description, model, and allowed tools. The phase orchestrator dispatches agents via `claude --agent`.

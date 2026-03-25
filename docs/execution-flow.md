@@ -1,26 +1,46 @@
-**Yes, if you're using worktree isolation, all work happens in a worktree** — that's why you don't see new files in the project root yet.
+# Execution Flow
+
+All work happens directly in the project root — there is no worktree isolation or branch creation.
 
 ## The execution flow
 
-1. **Worktree created** at `.trellis-worktrees/<slug>/` — an isolated copy of your repo on a branch like `trellis-exec/<spec>/<timestamp>`
-2. **Each phase** runs inside that worktree: Claude sub-agents create/modify files there
-3. **After each phase passes**, changes are committed to that branch with a message like `trellis-exec: complete phase-2`
-4. **When all phases complete**, the branch is merged back into your original repo and the worktree is cleaned up
+1. **Phase runner starts** — loads `tasks.json`, validates dependencies, and loads or initializes `state.json`
+2. **Each phase** runs in the project root: the orchestrator is spawned as a single `claude --agent --print` subprocess that executes all tasks, creating per-task git commits along the way
+3. **After each phase**, the judge evaluates the work against the spec and acceptance criteria. If issues are found, a fix agent is dispatched (up to 2 correction attempts)
+4. **Phase-level commit** — any remaining uncommitted changes are committed with a conventional commit message:
+   ```
+   feat(auth,api): [trellis phase-2] Implemented user authentication
 
-## To see what's actually been built
+   - Created LoginForm component
+   - Added JWT token validation
+   - Integrated with AuthContext
+   ```
+5. **When all phases complete**, state is saved and the runner exits. All changes remain on the current branch as a series of conventional commits.
 
-You can check the worktree directly:
+## To see what's been built
+
+Check the git log for trellis commits:
 
 ```bash
-ls ../habit-tracker-trellis-exec-1/.trellis-worktrees/
+git log --oneline | grep trellis
 ```
 
-Or check for the working branch:
+Or check the execution state:
 
 ```bash
-cd ../habit-tracker-trellis-exec-1 && git branch | grep trellis-exec
+trellis-exec status tasks.json
 ```
 
-The files exist in the worktree copy, accumulating commits as each phase completes. You'll only see them in your main project root after the final merge at the end of the run.
+## Interactive vs headless mode
 
-If isolation is set to `"none"` instead of `"worktree"`, it works directly in the project root with no git commits — but worktree mode gives you an audit trail and safe rollback if something goes wrong.
+By default, the runner pauses after each phase and prompts the user for a decision:
+- **Enter** — accept the recommendation (advance, retry, etc.)
+- **r** — retry the current phase
+- **s** — skip to the next phase
+- **q** — save state and quit
+
+Use `--headless` to run all phases without pausing. In headless mode, the runner follows the orchestrator's recommendation (as adjusted by the judge assessment).
+
+## Resume support
+
+State is persisted to `state.json` after every phase boundary. If a run is interrupted or fails, re-running `trellis-exec run tasks.json` will automatically skip completed phases and resume from where it left off.
