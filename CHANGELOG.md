@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.0
+
+- Add adaptive judge model selection: Sonnet for small diffs (<150 lines, <3 tasks), Opus for larger work
+- Add `--judge` flag (`always|on-failure|never`) to control when the judge runs
+- Add `--judge-model` flag to explicitly override the judge model
+- Use targeted re-judge prompt after fix (fix-only diff instead of full phase diff)
+- Switch orchestrator sub-agent dispatch from CLI subprocess to native Agent tool
+- Remove unused `modifiedFiles` and `schemaChanges` state fields
+- Consolidate duplicate `stripCodeFences` utility
+
 ## 0.5.11
 
 - Fix spinner bounce to show zero bars at both endpoints for symmetric animation
