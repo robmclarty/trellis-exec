@@ -96,6 +96,7 @@ function makeDefaultConfig(tmpDir: string): RunContext {
     verbose: false,
     dryRun: false,
     pluginRoot: join(tmpDir, "plugin"),
+    judgeMode: "always",
   };
 }
 
@@ -246,6 +247,7 @@ describe("e2e integration tests", () => {
         verbose: false,
         dryRun: true,
         pluginRoot: ".",
+        judgeMode: "always",
       };
       const report = dryRunReport(tasksJson, ctx);
 
@@ -327,8 +329,6 @@ describe("e2e integration tests", () => {
       const resumeState: SharedState = {
         currentPhase: "phase-2",
         completedPhases: ["phase-1"],
-        modifiedFiles: [],
-        schemaChanges: [],
         phaseReports: [phase1Report],
         phaseRetries: {},
         phaseReport: null,

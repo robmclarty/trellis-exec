@@ -16,8 +16,6 @@ export function initState(tasksJson: TasksJson): SharedState {
   return {
     currentPhase: firstPhase.id,
     completedPhases: [],
-    modifiedFiles: [],
-    schemaChanges: [],
     phaseReports: [],
     phaseRetries: {},
     phaseReport: null,

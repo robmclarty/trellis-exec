@@ -32,6 +32,8 @@ Run options:
   --spec <path>          Override spec path from tasks.json
   --plan <path>          Override plan path from tasks.json
   --guidelines <path>    Override guidelines path from tasks.json
+  --judge <mode>         Judge mode: always|on-failure|never (default: always)
+  --judge-model <model>  Override judge model (default: adaptive)
   --headless             Disable interactive prompts
   --verbose              Print debug output
 
@@ -46,6 +48,8 @@ Environment variables:
   TRELLIS_EXEC_MODEL                Override orchestrator model
   TRELLIS_EXEC_MAX_RETRIES          Max phase retries
   TRELLIS_EXEC_CONCURRENCY          Max parallel sub-agents
+  TRELLIS_EXEC_JUDGE_MODE           Judge mode (always|on-failure|never)
+  TRELLIS_EXEC_JUDGE_MODEL          Override judge model
 `;
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -77,6 +81,8 @@ export function buildRunContext(args, env = process.env) {
             spec: { type: "string" },
             plan: { type: "string" },
             guidelines: { type: "string" },
+            judge: { type: "string" },
+            "judge-model": { type: "string" },
             headless: { type: "boolean", default: false },
             verbose: { type: "boolean", default: false },
         },
@@ -119,6 +125,16 @@ export function buildRunContext(args, env = process.env) {
     const model = values.model ??
         env.TRELLIS_EXEC_MODEL ??
         undefined;
+    const validJudgeModes = ["always", "on-failure", "never"];
+    const judgeModeRaw = values.judge ?? env.TRELLIS_EXEC_JUDGE_MODE ?? "always";
+    if (!validJudgeModes.includes(judgeModeRaw)) {
+        console.error(`Error: --judge must be one of: ${validJudgeModes.join(", ")}`);
+        process.exit(1);
+    }
+    const judgeMode = judgeModeRaw;
+    const judgeModel = values["judge-model"] ??
+        env.TRELLIS_EXEC_JUDGE_MODEL ??
+        undefined;
     const context = {
         projectRoot,
         specPath,
@@ -134,6 +150,8 @@ export function buildRunContext(args, env = process.env) {
         verbose: values.verbose ?? false,
         dryRun: values["dry-run"] ?? false,
         pluginRoot: env.CLAUDE_PLUGIN_ROOT ?? process.cwd(),
+        judgeMode,
+        ...(judgeModel !== undefined ? { judgeModel } : {}),
     };
     return {
         context,
@@ -334,9 +352,6 @@ function handleStatus(args) {
                 console.log(`    Failed: ${report.tasksFailed.join(", ")}`);
             }
         }
-    }
-    if (state.modifiedFiles.length > 0) {
-        console.log(`\nModified files: ${state.modifiedFiles.length}`);
     }
 }
 // ---------------------------------------------------------------------------

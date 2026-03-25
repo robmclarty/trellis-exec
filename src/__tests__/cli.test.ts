@@ -354,8 +354,6 @@ describe("handleStatus (subprocess)", () => {
         },
       ],
       phaseRetries: {},
-      modifiedFiles: [],
-      schemaChanges: [],
     };
     writeFileSync(join(tmpDir, "state.json"), JSON.stringify(state));
 

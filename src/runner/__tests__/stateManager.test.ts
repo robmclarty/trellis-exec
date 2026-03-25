@@ -99,8 +99,6 @@ describe("stateManager", () => {
 
       expect(state.currentPhase).toBe("phase-1");
       expect(state.completedPhases).toEqual([]);
-      expect(state.modifiedFiles).toEqual([]);
-      expect(state.schemaChanges).toEqual([]);
       expect(state.phaseReports).toEqual([]);
       expect(state.phaseRetries).toEqual({});
     });

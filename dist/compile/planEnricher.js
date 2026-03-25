@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { buildEnrichmentPrompt } from "./prompts.js";
+import { stripCodeFences } from "./compilePlan.js";
 const FIELD_DEFAULTS = {
     dependsOn: [],
     subAgentType: "implement",
@@ -23,7 +24,7 @@ function collectAllTasks(tasksJson) {
  * Attempts to parse a JSON string that may be wrapped in markdown code fences.
  */
 function parseJsonResponse(raw) {
-    const stripped = raw.replace(/^```(?:json)?\s*\n?/m, "").replace(/\n?```\s*$/m, "");
+    const stripped = stripCodeFences(raw);
     return JSON.parse(stripped);
 }
 /**

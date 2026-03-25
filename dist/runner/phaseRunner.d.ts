@@ -33,11 +33,28 @@ export declare function promptForContinuation(options?: {
     recommendedAction?: "advance" | "retry" | "halt";
     reason?: string;
 }): Promise<"continue" | "retry" | "skip" | "quit">;
+/**
+ * Selects the judge model based on diff size and task count.
+ * Small diffs with few tasks use Sonnet; larger work uses Opus.
+ * An explicit override (from --judge-model) takes precedence.
+ */
+export declare function selectJudgeModel(diffLineCount: number, taskCount: number, override?: string): string;
 export declare function buildJudgePrompt(config: {
     changedFiles: ChangedFile[];
     diffContent: string;
     phase: Phase;
     orchestratorReport: PhaseReport;
+}): string;
+/**
+ * Builds a targeted re-judge prompt after a fix has been applied.
+ * Instead of the full phase diff, includes only the fix diff and the
+ * previous issues so the judge can evaluate whether they were resolved.
+ */
+export declare function buildRejudgePrompt(config: {
+    fixDiff: string;
+    fixChangedFiles: ChangedFile[];
+    previousIssues: JudgeIssue[];
+    phase: Phase;
 }): string;
 export declare function parseJudgeResult(output: string): JudgeAssessment;
 /** Format a JudgeIssue (string or object) to a display string. */

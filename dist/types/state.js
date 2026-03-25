@@ -4,16 +4,6 @@ export const CheckResultSchema = z.object({
     output: z.string().optional(),
     exitCode: z.number().optional(),
 });
-export const ModifiedFileSchema = z.object({
-    path: z.string(),
-    modifiedBy: z.string(),
-    changeType: z.string(),
-});
-export const SchemaChangeSchema = z.object({
-    table: z.string(),
-    action: z.string(),
-    task: z.string(),
-});
 export const JudgeIssueObjectSchema = z.object({
     task: z.string().optional(),
     severity: z.string().optional(),
@@ -45,8 +35,6 @@ export const PhaseReportSchema = z.object({
 export const SharedStateSchema = z.object({
     currentPhase: z.string(),
     completedPhases: z.array(z.string()),
-    modifiedFiles: z.array(ModifiedFileSchema),
-    schemaChanges: z.array(SchemaChangeSchema),
     phaseReports: z.array(PhaseReportSchema),
     phaseRetries: z.record(z.string(), z.number()),
     phaseReport: PhaseReportSchema.nullable().default(null),

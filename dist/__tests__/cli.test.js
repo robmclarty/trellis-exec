@@ -299,8 +299,6 @@ describe("handleStatus (subprocess)", () => {
                 },
             ],
             phaseRetries: {},
-            modifiedFiles: [],
-            schemaChanges: [],
         };
         writeFileSync(join(tmpDir, "state.json"), JSON.stringify(state));
         const stdout = execSync(`node ${cliPath} status ${tasksJsonPath}`, {

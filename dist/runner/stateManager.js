@@ -12,8 +12,6 @@ export function initState(tasksJson) {
     return {
         currentPhase: firstPhase.id,
         completedPhases: [],
-        modifiedFiles: [],
-        schemaChanges: [],
         phaseReports: [],
         phaseRetries: {},
         phaseReport: null,

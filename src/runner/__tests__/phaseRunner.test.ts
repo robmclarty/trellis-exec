@@ -163,6 +163,7 @@ function makeDefaultConfig(tmpDir: string): RunContext {
     verbose: false,
     dryRun: false,
     pluginRoot: join(tmpDir, "plugin"),
+    judgeMode: "always",
   };
 }
 
@@ -408,8 +409,6 @@ describe("phaseRunner", () => {
       const state: SharedState = {
         currentPhase: "",
         completedPhases: [],
-        modifiedFiles: [],
-        schemaChanges: [],
         phaseReports: [],
         phaseRetries: {},
         phaseReport: null,
@@ -439,8 +438,6 @@ describe("phaseRunner", () => {
       const state: SharedState = {
         currentPhase: "phase-1",
         completedPhases: [],
-        modifiedFiles: [],
-        schemaChanges: [],
         phaseReports: [
           makePhaseReport("phase-1", {
             status: "partial",
@@ -712,8 +709,6 @@ describe("phaseRunner", () => {
       const state = {
         currentPhase: "phase-1",
         completedPhases: [],
-        modifiedFiles: [],
-        schemaChanges: [],
         phaseReports: [],
         phaseRetries: {},
         phaseReport: null,
@@ -733,8 +728,6 @@ describe("phaseRunner", () => {
       const state: SharedState = {
         currentPhase: "",
         completedPhases: [],
-        modifiedFiles: [],
-        schemaChanges: [],
         phaseReports: [],
         phaseRetries: {},
         phaseReport: null,
@@ -747,8 +740,6 @@ describe("phaseRunner", () => {
       const state: SharedState = {
         currentPhase: "phase-3",
         completedPhases: ["phase-1", "phase-2"],
-        modifiedFiles: [],
-        schemaChanges: [],
         phaseReports: [
           makePhaseReport("phase-1", {
             decisionsLog: ["Used .jsx for all JSX files"],
@@ -777,8 +768,6 @@ describe("phaseRunner", () => {
       const state: SharedState = {
         currentPhase: "phase-25",
         completedPhases: reports.map((r) => r.phaseId),
-        modifiedFiles: [],
-        schemaChanges: [],
         phaseReports: reports,
         phaseRetries: {},
         phaseReport: null,
@@ -795,8 +784,6 @@ describe("phaseRunner", () => {
       const state: SharedState = {
         currentPhase: "phase-3",
         completedPhases: ["phase-1", "phase-2"],
-        modifiedFiles: [],
-        schemaChanges: [],
         phaseReports: [
           makePhaseReport("phase-1", { decisionsLog: [] }),
           makePhaseReport("phase-2", {
@@ -820,8 +807,6 @@ describe("phaseRunner", () => {
       const state: SharedState = {
         currentPhase: "phase-2",
         completedPhases: ["phase-1"],
-        modifiedFiles: [],
-        schemaChanges: [],
         phaseReports: [
           makePhaseReport("phase-1", {
             decisionsLog: ["Vite requires .jsx extension for JSX files"],
@@ -850,8 +835,6 @@ describe("phaseRunner", () => {
       const state: SharedState = {
         currentPhase: "phase-2",
         completedPhases: ["phase-1"],
-        modifiedFiles: [],
-        schemaChanges: [],
         phaseReports: [
           makePhaseReport("phase-1", { decisionsLog: [] }),
         ],

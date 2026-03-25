@@ -116,8 +116,6 @@ export function buildPhaseContext(
   lines.push(
     `Completed phases: ${state.completedPhases.length > 0 ? state.completedPhases.join(", ") : "none"}`,
   );
-  lines.push(`Modified files: ${state.modifiedFiles.length}`);
-  lines.push(`Schema changes: ${state.schemaChanges.length}`);
 
   const learnings = collectLearnings(state);
   if (learnings.length > 0) {
@@ -552,6 +550,26 @@ type JudgePhaseResult = {
   correctionAttempts: number;
 };
 
+const SMALL_DIFF_LINE_THRESHOLD = 150;
+const SMALL_TASK_THRESHOLD = 3;
+
+/**
+ * Selects the judge model based on diff size and task count.
+ * Small diffs with few tasks use Sonnet; larger work uses Opus.
+ * An explicit override (from --judge-model) takes precedence.
+ */
+export function selectJudgeModel(
+  diffLineCount: number,
+  taskCount: number,
+  override?: string,
+): string {
+  if (override) return override;
+  if (diffLineCount < SMALL_DIFF_LINE_THRESHOLD && taskCount < SMALL_TASK_THRESHOLD) {
+    return "sonnet";
+  }
+  return "opus";
+}
+
 export function buildJudgePrompt(config: {
   changedFiles: ChangedFile[];
   diffContent: string;
@@ -631,6 +649,98 @@ export function buildJudgePrompt(config: {
   lines.push(
     "Set `passed` to false only for must-fix problems: spec violations, bugs, " +
       "missing requirements, incomplete tasks. Style suggestions alone do not cause failure.",
+  );
+
+  return lines.join("\n");
+}
+
+/**
+ * Builds a targeted re-judge prompt after a fix has been applied.
+ * Instead of the full phase diff, includes only the fix diff and the
+ * previous issues so the judge can evaluate whether they were resolved.
+ */
+export function buildRejudgePrompt(config: {
+  fixDiff: string;
+  fixChangedFiles: ChangedFile[];
+  previousIssues: JudgeIssue[];
+  phase: Phase;
+}): string {
+  const lines: string[] = [];
+
+  lines.push("# Re-Judge After Fix");
+  lines.push("");
+  lines.push(
+    "A fix agent was dispatched to resolve the issues below. " +
+      "Evaluate whether each issue has been resolved and check for regressions.",
+  );
+
+  lines.push("");
+  lines.push("## Previous Issues");
+  lines.push("");
+  for (let i = 0; i < config.previousIssues.length; i++) {
+    lines.push(`${i + 1}. ${formatIssue(config.previousIssues[i]!)}`);
+  }
+
+  lines.push("");
+  lines.push("## Fix Changes");
+  lines.push("");
+  if (config.fixChangedFiles.length > 0) {
+    for (const f of config.fixChangedFiles) {
+      lines.push(`- \`${f.path}\` (${f.status})`);
+    }
+  } else {
+    lines.push("(no files changed by the fix)");
+  }
+  lines.push("");
+  lines.push("```diff");
+  lines.push(config.fixDiff);
+  lines.push("```");
+
+  lines.push("");
+  lines.push("## Phase Tasks & Acceptance Criteria");
+  lines.push("");
+  for (const task of config.phase.tasks) {
+    lines.push(`### ${task.id}: ${task.title}`);
+    lines.push(`Description: ${task.description}`);
+    lines.push(`Target paths: ${task.targetPaths.join(", ")}`);
+    lines.push(`Spec sections: ${task.specSections.join(", ")}`);
+    lines.push("Acceptance criteria:");
+    for (const criterion of task.acceptanceCriteria) {
+      lines.push(`- ${criterion}`);
+    }
+    lines.push("");
+  }
+
+  lines.push("## Spec & Guidelines");
+  lines.push("");
+  lines.push(
+    "Read `spec.md` and `guidelines.md` in the project root for full context.",
+  );
+
+  lines.push("");
+  lines.push("## Instructions");
+  lines.push("");
+  lines.push(
+    "Evaluate whether the previous issues have been resolved by the fix. " +
+      "Check for regressions introduced by the fix. " +
+      "Return ONLY a JSON block — no prose before or after — in this exact format:",
+  );
+  lines.push("");
+  lines.push("```json");
+  lines.push('{');
+  lines.push('  "passed": true,');
+  lines.push('  "issues": [');
+  lines.push('    { "task": "phase-1-task-2", "severity": "must-fix", "description": "..." }');
+  lines.push('  ],');
+  lines.push('  "suggestions": [');
+  lines.push('    { "task": "phase-1-task-1", "severity": "minor", "description": "..." }');
+  lines.push('  ]');
+  lines.push('}');
+  lines.push("```");
+  lines.push("");
+  lines.push(
+    "Set `passed` to false only for must-fix problems: spec violations, bugs, " +
+      "missing requirements, regressions. Style suggestions alone do not cause failure.",
   );
 
   return lines.join("\n");
@@ -777,21 +887,41 @@ async function judgePhase(config: {
   });
 
   let assessment: JudgeAssessment = { passed: true, issues: [], suggestions: [] };
+  let previousIssues: JudgeIssue[] | undefined;
+  let fixDiffContent: string | undefined;
+  let fixChangedFiles: ChangedFile[] | undefined;
 
   for (let attempt = 0; attempt <= maxCorrections; attempt++) {
-    const diffContent = startSha
-      ? getDiffContentRange(projectRoot, startSha)
-      : getDiffContent(projectRoot);
-    const prompt = buildJudgePrompt({
-      changedFiles,
-      diffContent,
-      phase,
-      orchestratorReport: report,
-    });
+    // Build prompt: first pass uses full phase diff, subsequent passes use fix-only diff
+    let prompt: string;
+    let diffForModel: string;
+    if (attempt > 0 && previousIssues && fixDiffContent && fixChangedFiles) {
+      prompt = buildRejudgePrompt({
+        fixDiff: fixDiffContent,
+        fixChangedFiles,
+        previousIssues,
+        phase,
+      });
+      diffForModel = fixDiffContent;
+    } else {
+      const diffContent = startSha
+        ? getDiffContentRange(projectRoot, startSha)
+        : getDiffContent(projectRoot);
+      prompt = buildJudgePrompt({
+        changedFiles,
+        diffContent,
+        phase,
+        orchestratorReport: report,
+      });
+      diffForModel = diffContent;
+    }
+
+    const diffLineCount = diffForModel.split("\n").length;
+    const judgeModel = selectJudgeModel(diffLineCount, phase.tasks.length, ctx.judgeModel);
 
     if (ctx.verbose) {
       console.log(
-        `[judge] attempt ${attempt}, reviewing ${changedFiles.length} changed file(s)`,
+        `[judge] attempt ${attempt}, reviewing ${changedFiles.length} changed file(s), model: ${judgeModel} (${diffLineCount} diff lines, ${phase.tasks.length} tasks)`,
       );
     }
 
@@ -799,7 +929,7 @@ async function judgePhase(config: {
     const startTime = Date.now();
     const result = await launcher.dispatchSubAgent({
       type: "judge",
-      model: "opus",
+      model: judgeModel,
       taskId: `${phase.id}-judge-${attempt}`,
       instructions: prompt,
       filePaths: changedFiles.map((f) => f.path),
@@ -826,7 +956,9 @@ async function judgePhase(config: {
       return { assessment, correctionAttempts: attempt };
     }
 
-    // Judge found issues
+    // Judge found issues — save for targeted re-judging
+    previousIssues = assessment.issues;
+
     console.log(
       `Judge found ${assessment.issues.length} issue(s) in phase "${phase.id}":`,
     );
@@ -837,6 +969,9 @@ async function judgePhase(config: {
     if (attempt >= maxCorrections) {
       break;
     }
+
+    // Capture SHA before fix for targeted diff
+    const preFixSha = getCurrentSha(projectRoot);
 
     // Dispatch fix agent
     console.log(`Dispatching fix agent (attempt ${attempt + 1})…`);
@@ -866,7 +1001,19 @@ async function judgePhase(config: {
       }
     }
 
-    // Refresh changed files for next judge pass
+    // Capture fix-only diff for targeted re-judging
+    if (preFixSha) {
+      fixDiffContent = getDiffContentRange(projectRoot, preFixSha);
+      fixChangedFiles = getChangedFilesRange(projectRoot, preFixSha);
+    } else {
+      // Fallback: use full diff if no SHA available
+      fixDiffContent = startSha
+        ? getDiffContentRange(projectRoot, startSha)
+        : getDiffContent(projectRoot);
+      fixChangedFiles = changedFiles;
+    }
+
+    // Refresh changed files for file paths context
     changedFiles = startSha
       ? getChangedFilesRange(projectRoot, startSha)
       : getChangedFiles(projectRoot);
@@ -1189,11 +1336,15 @@ export async function runPhases(
       state = { ...state, phaseReport: report };
       saveState(ctx.statePath, state);
 
-      // Judge loop: runs unless phase failed with no changed files
+      // Judge loop: runs based on judgeMode setting
       const hasChanges = report.startSha
         ? getChangedFilesRange(projectRoot, report.startSha).length > 0
         : getChangedFiles(projectRoot).length > 0;
-      if (phaseResult.status !== "failed" || hasChanges) {
+      const shouldJudge =
+        ctx.judgeMode !== "never" &&
+        (ctx.judgeMode === "always" ||
+          (ctx.judgeMode === "on-failure" && phaseResult.status !== "complete"));
+      if (shouldJudge && (phaseResult.status !== "failed" || hasChanges)) {
         console.log(`Judging phase "${phase.id}"…`);
 
         const judgeResult = await judgePhase({
@@ -1411,8 +1562,12 @@ export async function runSinglePhase(
 
     let report = phaseResult.report;
 
-    // Judge loop: always runs unless phase outright failed
-    if (phaseResult.status !== "failed") {
+    // Judge loop: runs based on judgeMode setting
+    const shouldJudge =
+      ctx.judgeMode !== "never" &&
+      (ctx.judgeMode === "always" ||
+        (ctx.judgeMode === "on-failure" && phaseResult.status !== "complete"));
+    if (shouldJudge && phaseResult.status !== "failed") {
       console.log(`Judging phase "${phase.id}"…`);
 
       const judgeResult = await judgePhase({

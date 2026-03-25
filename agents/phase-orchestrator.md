@@ -19,15 +19,14 @@ Use Claude's built-in tools directly:
 - **Glob** — find files by pattern
 - **Grep** — search file contents
 
-For complex multi-file tasks that need LLM reasoning, dispatch a sub-agent via Bash:
+For complex multi-file tasks that need LLM reasoning, use the **Agent** tool to dispatch a sub-agent:
 
-```bash
-echo "<instructions>" | claude --agent agents/<type>.md --print --dangerously-skip-permissions
-```
+- Set `prompt` to the task instructions, including file paths to read and output paths to create/modify
+- Set `model` to the task's sub-agent model: `sonnet` for implement and test-writer tasks, `haiku` for scaffold tasks
 
-Where `<type>` is the task's assigned sub-agent type (e.g., `implement`, `scaffold`, `test-writer`). Include file paths and output paths in the instructions.
+The Agent tool runs a sub-agent with access to Read, Write, Edit, Bash, Glob, and Grep. It returns the result directly when complete.
 
-For simple single-file creation (config files, small files with known content), use the Write tool directly instead of dispatching a sub-agent.
+For simple single-file creation (config files, small files with known content), use the Write tool directly instead of dispatching a sub-agent — no Agent tool needed for trivial changes.
 
 ## Phase Context
 
@@ -52,7 +51,7 @@ Work through tasks in dependency order:
 
 3. **Assemble context.** Build focused instructions for the sub-agent: the specific files it needs, clear instructions, and constrained output paths.
 
-4. **Dispatch or implement.** Either dispatch a sub-agent via Bash for complex tasks, or use Write/Edit directly for simple changes.
+4. **Dispatch or implement.** Either dispatch a sub-agent via the Agent tool for complex tasks, or use Write/Edit directly for simple changes.
 
 5. **Check.** Run the project's check command via Bash (provided in the phase context). This is the hard gate — if it fails, the task is not complete.
 
@@ -145,6 +144,6 @@ When all tasks are processed, use the **Write** tool to create `.trellis-phase-r
 ## Error Handling
 
 - **Per-task failures**: Retry up to 3 times with adjusted approach. Analyze the error before retrying. If all retries fail, mark the task as failed and proceed.
-- **Sub-agent failures**: If the sub-agent Bash command fails, read its output, analyze the error, and retry or mark failed.
+- **Sub-agent failures**: If the Agent tool returns an error or the sub-agent fails, read the output, analyze the error, and retry or mark failed.
 - **Check command failures**: Analyze the output carefully. Failures often indicate a real problem in the generated code — don't just retry blindly. Understand the error first.
 - **Do not create tasks in other phases.** If issues require work beyond this phase, include recommended corrective tasks in the phase report. The phase runner decides whether to act on them.

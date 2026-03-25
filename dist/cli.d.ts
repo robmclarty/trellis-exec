@@ -15,6 +15,8 @@ export type RunContext = {
     verbose: boolean;
     dryRun: boolean;
     pluginRoot: string;
+    judgeMode: "always" | "on-failure" | "never";
+    judgeModel?: string;
 };
 export declare function buildRunContext(args: string[], env?: Record<string, string | undefined>): {
     context: RunContext;

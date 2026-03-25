@@ -4,16 +4,6 @@ export declare const CheckResultSchema: z.ZodObject<{
     output: z.ZodOptional<z.ZodString>;
     exitCode: z.ZodOptional<z.ZodNumber>;
 }, z.core.$strip>;
-export declare const ModifiedFileSchema: z.ZodObject<{
-    path: z.ZodString;
-    modifiedBy: z.ZodString;
-    changeType: z.ZodString;
-}, z.core.$strip>;
-export declare const SchemaChangeSchema: z.ZodObject<{
-    table: z.ZodString;
-    action: z.ZodString;
-    task: z.ZodString;
-}, z.core.$strip>;
 export declare const JudgeIssueObjectSchema: z.ZodObject<{
     task: z.ZodOptional<z.ZodString>;
     severity: z.ZodOptional<z.ZodString>;
@@ -85,16 +75,6 @@ export declare const PhaseReportSchema: z.ZodObject<{
 export declare const SharedStateSchema: z.ZodObject<{
     currentPhase: z.ZodString;
     completedPhases: z.ZodArray<z.ZodString>;
-    modifiedFiles: z.ZodArray<z.ZodObject<{
-        path: z.ZodString;
-        modifiedBy: z.ZodString;
-        changeType: z.ZodString;
-    }, z.core.$strip>>;
-    schemaChanges: z.ZodArray<z.ZodObject<{
-        table: z.ZodString;
-        action: z.ZodString;
-        task: z.ZodString;
-    }, z.core.$strip>>;
     phaseReports: z.ZodArray<z.ZodObject<{
         phaseId: z.ZodString;
         status: z.ZodEnum<{
@@ -168,8 +148,6 @@ export declare const SharedStateSchema: z.ZodObject<{
     }, z.core.$strip>>>;
 }, z.core.$strip>;
 export type CheckResult = z.infer<typeof CheckResultSchema>;
-export type ModifiedFile = z.infer<typeof ModifiedFileSchema>;
-export type SchemaChange = z.infer<typeof SchemaChangeSchema>;
 export type JudgeIssue = z.infer<typeof JudgeIssueSchema>;
 export type JudgeAssessment = z.infer<typeof JudgeAssessmentSchema>;
 export type PhaseReportStatus = z.infer<typeof PhaseReportStatusSchema>;
