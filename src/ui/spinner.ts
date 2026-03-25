@@ -12,6 +12,7 @@ const FRAMES = [
   "[ ===]",
   "[  ==]",
   "[   =]",
+  "[    ]",
 ];
 
 const DEFAULT_INTERVAL_MS = 120;
