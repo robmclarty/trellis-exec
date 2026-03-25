@@ -946,8 +946,8 @@ async function executePhase(
 
   const agentFile = resolve(ctx.pluginRoot, "agents/phase-orchestrator.md");
 
-  console.log("Launching orchestrator…");
-  const spinner = startSpinner("Orchestrator");
+  console.log("Orchestrating…");
+  const spinner = startSpinner("Orchestrating");
 
   try {
     const startTime = Date.now();
