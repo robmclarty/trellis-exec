@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.1
+
+- Validate and rewrite all docs to match current native-tools architecture
+- Archive 7 obsolete docs (REPL, worktree, old spec) to docs/_archive/
+- Update README with all current CLI flags, compile options, env vars, and adaptive judge model
+
 ## 0.6.0
 
 - Add adaptive judge model selection: Sonnet for small diffs (<150 lines, <3 tasks), Opus for larger work
