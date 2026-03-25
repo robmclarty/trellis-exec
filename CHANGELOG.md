@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.10
+
+- Polish orchestrator spinner: add trailing ellipsis to label and smooth ping-pong with 1-frame dwell at bounce endpoints
+- Fix spinner animation to bounce back and forth instead of jumping to start
+- Normalize orchestrator spinner label to action word "Orchestrating…"
+
 ## 0.5.9
 
 - Fix spinner leak: stop spinner in executePhase catch block so process exits after orchestrator timeout
