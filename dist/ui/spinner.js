@@ -1,7 +1,7 @@
 // Bouncing-bar spinner ("Cylon eye") for indicating LLM thinking.
 //
-// Frames animate a lit segment bouncing left-to-right and back:
-//   [=   ] → [==  ] → [=== ] → [====] → [ ===] → [  ==] → [   =] → [    ]
+// Frames animate a lit segment bouncing left-to-right then right-to-left:
+//   [    ] → [=   ] → … → [   =] → [  ==] → … → [    ] (ping-pong)
 const FRAMES = [
     "[    ]",
     "[=   ]",
@@ -34,15 +34,19 @@ export function startSpinner(label) {
         return { stop() { }, pause() { }, resume() { } };
     }
     let frameIndex = 0;
+    let direction = 1;
     let stopped = false;
     const prefix = label ? `${label} ` : "";
     const startTime = Date.now();
     function tick() {
-        const frame = FRAMES[frameIndex % FRAMES.length];
+        const frame = FRAMES[frameIndex];
         const elapsed = formatElapsed(Date.now() - startTime);
         // \r moves cursor to start of line; the frame overwrites previous output.
         process.stderr.write(`\r${prefix}${frame} (${elapsed})`);
-        frameIndex++;
+        frameIndex += direction;
+        if (frameIndex >= FRAMES.length - 1 || frameIndex <= 0) {
+            direction *= -1;
+        }
     }
     let timer = setInterval(tick, DEFAULT_INTERVAL_MS);
     function clearLine() {

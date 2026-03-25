@@ -49,6 +49,7 @@ export function startSpinner(label?: string): Spinner {
 
   let frameIndex = 0;
   let direction = 1;
+  let pauseFrames = 0;
   let stopped = false;
   const prefix = label ? `${label} ` : "";
   const startTime = Date.now();
@@ -58,9 +59,14 @@ export function startSpinner(label?: string): Spinner {
     const elapsed = formatElapsed(Date.now() - startTime);
     // \r moves cursor to start of line; the frame overwrites previous output.
     process.stderr.write(`\r${prefix}${frame} (${elapsed})`);
+    if (pauseFrames > 0) {
+      pauseFrames--;
+      return;
+    }
     frameIndex += direction;
     if (frameIndex >= FRAMES.length - 1 || frameIndex <= 0) {
       direction *= -1;
+      pauseFrames = 1;
     }
   }
 

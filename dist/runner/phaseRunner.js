@@ -721,8 +721,8 @@ async function executePhase(ctx, phase, state, projectRoot, logger) {
         // Ignore — file may not exist
     }
     const agentFile = resolve(ctx.pluginRoot, "agents/phase-orchestrator.md");
-    console.log("Launching orchestrator…");
-    const spinner = startSpinner("Orchestrator");
+    console.log("Orchestrating…");
+    const spinner = startSpinner("Orchestrating");
     try {
         const startTime = Date.now();
         const result = await launcher.runPhaseOrchestrator(phaseContext, agentFile, ctx.model, ctx.verbose
