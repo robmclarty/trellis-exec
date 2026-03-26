@@ -51,6 +51,9 @@ export async function compilePlan(config) {
             throw new Error(`LLM decomposition produced invalid TasksJson: ${validation.error.message}`);
         }
         tasksJson = validation.data;
+        if (guidelinesRef) {
+            tasksJson = { ...tasksJson, guidelinesRef };
+        }
     }
     const finalValidation = TasksJsonSchema.safeParse(tasksJson);
     if (!finalValidation.success) {

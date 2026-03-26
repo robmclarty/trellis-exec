@@ -6,6 +6,7 @@ A critical comparison of Trellis against Anthropic's published research on long-
 
 - [Harness Design for Long-Running Application Development](https://www.anthropic.com/engineering/harness-design-long-running-apps) — Prithvi Rajasekaran, Anthropic Labs
 - [Long-Running Claude for Scientific Computing](https://www.anthropic.com/research/long-running-Claude) — Siddharth Mishra-Sharma, Anthropic Research
+- [Anthropic Just Dropped the New Blueprint for Long-Running AI Agents](https://www.youtube.com/watch?v=9d5bzxVsocw) — The AI Automators
 
 **Date:** 2026-03-25
 

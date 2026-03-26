@@ -27,6 +27,17 @@ export declare const JudgeAssessmentSchema: z.ZodObject<{
         description: z.ZodString;
     }, z.core.$strip>]>>;
 }, z.core.$strip>;
+export declare const DecisionTierSchema: z.ZodEnum<{
+    architectural: "architectural";
+    tactical: "tactical";
+}>;
+export declare const DecisionEntrySchema: z.ZodObject<{
+    text: z.ZodString;
+    tier: z.ZodEnum<{
+        architectural: "architectural";
+        tactical: "tactical";
+    }>;
+}, z.core.$strip>;
 export declare const PhaseReportStatusSchema: z.ZodEnum<{
     complete: "complete";
     failed: "failed";
@@ -67,7 +78,13 @@ export declare const PhaseReportSchema: z.ZodObject<{
         halt: "halt";
     }>;
     correctiveTasks: z.ZodArray<z.ZodString>;
-    decisionsLog: z.ZodArray<z.ZodString>;
+    decisionsLog: z.ZodArray<z.ZodObject<{
+        text: z.ZodString;
+        tier: z.ZodEnum<{
+            architectural: "architectural";
+            tactical: "tactical";
+        }>;
+    }, z.core.$strip>>;
     handoff: z.ZodString;
     startSha: z.ZodOptional<z.ZodString>;
     endSha: z.ZodOptional<z.ZodString>;
@@ -105,7 +122,13 @@ export declare const SharedStateSchema: z.ZodObject<{
             halt: "halt";
         }>;
         correctiveTasks: z.ZodArray<z.ZodString>;
-        decisionsLog: z.ZodArray<z.ZodString>;
+        decisionsLog: z.ZodArray<z.ZodObject<{
+            text: z.ZodString;
+            tier: z.ZodEnum<{
+                architectural: "architectural";
+                tactical: "tactical";
+            }>;
+        }, z.core.$strip>>;
         handoff: z.ZodString;
         startSha: z.ZodOptional<z.ZodString>;
         endSha: z.ZodOptional<z.ZodString>;
@@ -141,12 +164,19 @@ export declare const SharedStateSchema: z.ZodObject<{
             halt: "halt";
         }>;
         correctiveTasks: z.ZodArray<z.ZodString>;
-        decisionsLog: z.ZodArray<z.ZodString>;
+        decisionsLog: z.ZodArray<z.ZodObject<{
+            text: z.ZodString;
+            tier: z.ZodEnum<{
+                architectural: "architectural";
+                tactical: "tactical";
+            }>;
+        }, z.core.$strip>>;
         handoff: z.ZodString;
         startSha: z.ZodOptional<z.ZodString>;
         endSha: z.ZodOptional<z.ZodString>;
     }, z.core.$strip>>>;
 }, z.core.$strip>;
+export type DecisionEntry = z.infer<typeof DecisionEntrySchema>;
 export type CheckResult = z.infer<typeof CheckResultSchema>;
 export type JudgeIssue = z.infer<typeof JudgeIssueSchema>;
 export type JudgeAssessment = z.infer<typeof JudgeAssessmentSchema>;

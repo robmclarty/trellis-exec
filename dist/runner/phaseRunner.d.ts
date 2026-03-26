@@ -8,7 +8,10 @@ export type PhaseRunnerResult = {
     phasesFailed: string[];
     finalState: SharedState;
 };
-export declare function collectLearnings(state: SharedState): string[];
+export declare function collectLearnings(state: SharedState): {
+    architectural: string[];
+    tactical: string[];
+};
 export declare function buildPhaseContext(phase: Phase, state: SharedState, handoff: string, ctx: RunContext): string;
 /**
  * Normalizes a raw report object (as produced by the orchestrator LLM) into
@@ -16,6 +19,11 @@ export declare function buildPhaseContext(phase: Phase, state: SharedState, hand
  * schema fields and fills in defaults for anything missing.
  */
 export declare function normalizeReport(raw: Record<string, unknown>, phaseId: string): PhaseReport;
+/**
+ * Lightweight pre-phase contract review. Checks acceptance criteria for
+ * common issues without invoking an LLM. Returns warnings (advisory only).
+ */
+export declare function reviewPhaseContract(phase: Phase): string[];
 export declare function dryRunReport(tasksJson: TasksJson, ctx: RunContext): string;
 /**
  * Returns true if any newly added files look like test files.

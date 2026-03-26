@@ -737,7 +737,9 @@ describe("phaseRunner", () => {
         phaseReport: null,
       };
 
-      expect(collectLearnings(state)).toEqual([]);
+      const learnings = collectLearnings(state);
+      expect(learnings.architectural).toEqual([]);
+      expect(learnings.tactical).toEqual([]);
     });
 
     it("collects from multiple phases with phase ID prefix", () => {
@@ -746,10 +748,10 @@ describe("phaseRunner", () => {
         completedPhases: ["phase-1", "phase-2"],
         phaseReports: [
           makePhaseReport("phase-1", {
-            decisionsLog: ["Used .jsx for all JSX files"],
+            decisionsLog: [{ text: "Used .jsx for all JSX files", tier: "tactical" }],
           }),
           makePhaseReport("phase-2", {
-            decisionsLog: ["localStorage adapter uses JSON.stringify"],
+            decisionsLog: [{ text: "localStorage adapter uses JSON.stringify", tier: "tactical" }],
           }),
         ],
         phaseRetries: {},
@@ -757,18 +759,21 @@ describe("phaseRunner", () => {
       };
 
       const learnings = collectLearnings(state);
-      expect(learnings).toEqual([
+      expect(learnings.tactical).toEqual([
         "[phase-1] Used .jsx for all JSX files",
         "[phase-2] localStorage adapter uses JSON.stringify",
       ]);
     });
 
-    it("respects MAX_LEARNINGS cap using tail", () => {
+    it("never evicts architectural learnings", () => {
       const reports = Array.from({ length: 25 }, (_, i) =>
         makePhaseReport(`phase-${i}`, {
-          decisionsLog: [`Decision from phase ${i}`],
+          decisionsLog: [{ text: `Decision from phase ${i}`, tier: "tactical" as const }],
         }),
       );
+      // Add an early architectural decision
+      reports[0]!.decisionsLog.push({ text: "Use PostgreSQL", tier: "architectural" });
+
       const state: SharedState = {
         currentPhase: "phase-25",
         completedPhases: reports.map((r) => r.phaseId),
@@ -778,10 +783,14 @@ describe("phaseRunner", () => {
       };
 
       const learnings = collectLearnings(state);
-      expect(learnings).toHaveLength(20);
-      // Should keep the most recent (tail)
-      expect(learnings[0]).toBe("[phase-5] Decision from phase 5");
-      expect(learnings[19]).toBe("[phase-24] Decision from phase 24");
+      // Architectural is always preserved
+      expect(learnings.architectural).toContain("[phase-0] Use PostgreSQL");
+      // Tactical is capped
+      expect(learnings.tactical.length).toBeLessThanOrEqual(20);
+      // Most recent tactical entries kept
+      expect(learnings.tactical[learnings.tactical.length - 1]).toBe(
+        "[phase-24] Decision from phase 24",
+      );
     });
 
     it("skips phases with empty decisionsLog", () => {
@@ -791,7 +800,7 @@ describe("phaseRunner", () => {
         phaseReports: [
           makePhaseReport("phase-1", { decisionsLog: [] }),
           makePhaseReport("phase-2", {
-            decisionsLog: ["Important finding"],
+            decisionsLog: [{ text: "Important finding", tier: "tactical" }],
           }),
         ],
         phaseRetries: {},
@@ -799,7 +808,28 @@ describe("phaseRunner", () => {
       };
 
       const learnings = collectLearnings(state);
-      expect(learnings).toEqual(["[phase-2] Important finding"]);
+      expect(learnings.tactical).toEqual(["[phase-2] Important finding"]);
+    });
+
+    it("partitions architectural and tactical entries correctly", () => {
+      const state: SharedState = {
+        currentPhase: "phase-2",
+        completedPhases: ["phase-1"],
+        phaseReports: [
+          makePhaseReport("phase-1", {
+            decisionsLog: [
+              { text: "Use ESM modules", tier: "architectural" },
+              { text: "Renamed file to avoid warning", tier: "tactical" },
+            ],
+          }),
+        ],
+        phaseRetries: {},
+        phaseReport: null,
+      };
+
+      const learnings = collectLearnings(state);
+      expect(learnings.architectural).toEqual(["[phase-1] Use ESM modules"]);
+      expect(learnings.tactical).toEqual(["[phase-1] Renamed file to avoid warning"]);
     });
   });
 
@@ -813,7 +843,7 @@ describe("phaseRunner", () => {
         completedPhases: ["phase-1"],
         phaseReports: [
           makePhaseReport("phase-1", {
-            decisionsLog: ["Vite requires .jsx extension for JSX files"],
+            decisionsLog: [{ text: "Vite requires .jsx extension for JSX files", tier: "tactical" }],
           }),
         ],
         phaseRetries: {},
@@ -1045,6 +1075,13 @@ describe("phaseRunner", () => {
       const tasksJson = makeTasksJson();
       tmpDir = setupTmpDir(tasksJson);
       const config = makeDefaultConfig(tmpDir);
+
+      // Create target files so completion verifier passes
+      writeFileSync(join(tmpDir, "package.json"), "{}");
+      writeFileSync(join(tmpDir, "tsconfig.json"), "{}");
+      mkdirSync(join(tmpDir, "src"), { recursive: true });
+      writeFileSync(join(tmpDir, "src", "a.ts"), "");
+      writeFileSync(join(tmpDir, "src", "b.ts"), "");
 
       const reports = new Map<string, PhaseReport>([
         [

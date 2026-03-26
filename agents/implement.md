@@ -2,7 +2,7 @@
 name: implement
 description: Create or modify source files per task instructions
 model: sonnet
-tools: [Read, Write, Edit]
+tools: [Read, Write, Edit, Glob, Grep]
 ---
 
 # Implementation Sub-Agent
@@ -23,6 +23,7 @@ You receive:
 - **Follow the project's code style.** Match the patterns you see in the provided file context: naming conventions, module structure, error handling style, import patterns.
 - **Return complete file contents.** For each file you create or modify, output the entire file content. Do not use partial diffs or placeholders like "rest of file unchanged."
 - **Stay focused.** Implement exactly what the instructions ask for. Do not add features, refactor surrounding code, or make improvements beyond the scope of the task.
+- **Search before implementing.** Use Glob and Grep to find existing patterns, conventions, and type definitions in the codebase before writing new code.
 - **No unnecessary dependencies.** Prefer built-in APIs over external packages. Only add imports that are directly required.
 
 ## Output

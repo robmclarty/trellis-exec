@@ -20,6 +20,13 @@ export const JudgeAssessmentSchema = z.object({
   suggestions: z.array(JudgeIssueSchema),
 });
 
+export const DecisionTierSchema = z.enum(["architectural", "tactical"]);
+
+export const DecisionEntrySchema = z.object({
+  text: z.string(),
+  tier: DecisionTierSchema,
+});
+
 export const PhaseReportStatusSchema = z.enum(["complete", "partial", "failed"]);
 
 export const RecommendedActionSchema = z.enum(["advance", "retry", "halt"]);
@@ -34,7 +41,7 @@ export const PhaseReportSchema = z.object({
   orchestratorAnalysis: z.string(),
   recommendedAction: RecommendedActionSchema,
   correctiveTasks: z.array(z.string()),
-  decisionsLog: z.array(z.string()),
+  decisionsLog: z.array(DecisionEntrySchema),
   handoff: z.string(),
   startSha: z.string().optional(),
   endSha: z.string().optional(),
@@ -48,6 +55,7 @@ export const SharedStateSchema = z.object({
   phaseReport: PhaseReportSchema.nullable().default(null),
 });
 
+export type DecisionEntry = z.infer<typeof DecisionEntrySchema>;
 export type CheckResult = z.infer<typeof CheckResultSchema>;
 export type JudgeIssue = z.infer<typeof JudgeIssueSchema>;
 export type JudgeAssessment = z.infer<typeof JudgeAssessmentSchema>;

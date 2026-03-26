@@ -23,7 +23,7 @@ function createMockProcess() {
     const proc = Object.assign(new EventEmitter(), {
         stdout,
         stderr,
-        stdin: { write: vi.fn(), end: vi.fn() },
+        stdin: { write: vi.fn(), end: vi.fn(), on: vi.fn() },
         kill: vi.fn(),
         pid: 1234,
     });

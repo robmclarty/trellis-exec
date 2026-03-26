@@ -8,7 +8,7 @@ import {
   cpSync,
   existsSync,
 } from "node:fs";
-import { join, resolve } from "node:path";
+import { join, resolve, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
 import { TasksJsonSchema } from "../types/tasks.js";
@@ -111,6 +111,16 @@ function setupTmpDir(tasksJson: TasksJson): string {
   );
   // Copy spec into project root matching the specRef in tasks.json
   cpSync(SAMPLE_SPEC_PATH, join(tmpDir, "sample-spec.md"));
+  // Create target path files so completion verifier passes
+  for (const phase of tasksJson.phases) {
+    for (const task of phase.tasks) {
+      for (const targetPath of task.targetPaths) {
+        const absPath = join(tmpDir, targetPath);
+        mkdirSync(dirname(absPath), { recursive: true });
+        writeFileSync(absPath, "");
+      }
+    }
+  }
   return tmpDir;
 }
 

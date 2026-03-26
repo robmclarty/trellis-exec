@@ -7,7 +7,7 @@ import { TasksJsonSchema } from "./types/tasks.js";
 import { loadState } from "./runner/stateManager.js";
 import { parsePlan } from "./compile/planParser.js";
 import { compilePlan } from "./compile/compilePlan.js";
-import { execClaude, COMPILE_TIMEOUT } from "./orchestrator/agentLauncher.js";
+import { execClaude, COMPILE_TIMEOUT, LONG_RUN_TIMEOUT } from "./orchestrator/agentLauncher.js";
 import { runPhases, runSinglePhase, dryRunReport, } from "./runner/phaseRunner.js";
 import { startSpinner } from "./ui/spinner.js";
 // ---------------------------------------------------------------------------
@@ -35,6 +35,7 @@ Run options:
   --judge <mode>         Judge mode: always|on-failure|never (default: always)
   --judge-model <model>  Override judge model (default: adaptive)
   --headless             Disable interactive prompts
+  --long-run             Set 2-hour timeout for complex phases
   --verbose              Print debug output
 
 Compile options:
@@ -50,6 +51,7 @@ Environment variables:
   TRELLIS_EXEC_CONCURRENCY          Max parallel sub-agents
   TRELLIS_EXEC_JUDGE_MODE           Judge mode (always|on-failure|never)
   TRELLIS_EXEC_JUDGE_MODEL          Override judge model
+  TRELLIS_EXEC_LONG_RUN             Enable long-run mode (2-hour timeout)
 `;
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -85,6 +87,7 @@ export function buildRunContext(args, env = process.env) {
             "judge-model": { type: "string" },
             timeout: { type: "string" },
             headless: { type: "boolean", default: false },
+            "long-run": { type: "boolean", default: false },
             verbose: { type: "boolean", default: false },
         },
         allowPositionals: true,
@@ -137,11 +140,14 @@ export function buildRunContext(args, env = process.env) {
         env.TRELLIS_EXEC_JUDGE_MODEL ??
         undefined;
     const timeoutRaw = values.timeout ?? env.TRELLIS_EXEC_TIMEOUT ?? undefined;
-    const timeout = timeoutRaw ? parseInt(timeoutRaw, 10) : undefined;
-    if (timeout !== undefined && (isNaN(timeout) || timeout <= 0)) {
+    const longRun = values["long-run"] || env.TRELLIS_EXEC_LONG_RUN === "true" || env.TRELLIS_EXEC_LONG_RUN === "1";
+    const explicitTimeout = timeoutRaw ? parseInt(timeoutRaw, 10) : undefined;
+    if (explicitTimeout !== undefined && (isNaN(explicitTimeout) || explicitTimeout <= 0)) {
         console.error("Error: --timeout must be a positive integer (milliseconds).");
         process.exit(1);
     }
+    // Explicit --timeout wins over --long-run
+    const timeout = explicitTimeout ?? (longRun ? LONG_RUN_TIMEOUT : undefined);
     const context = {
         projectRoot,
         specPath,

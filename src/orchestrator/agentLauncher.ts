@@ -3,8 +3,9 @@ import { resolve } from "node:path";
 import type { SubAgentConfig, SubAgentResult } from "../types/agents.js";
 
 const DEFAULT_TIMEOUT = 300_000; // 5 minutes for sub-agent execution
-const ORCHESTRATOR_TIMEOUT = 900_000; // 15 minutes for phase orchestration
+const ORCHESTRATOR_TIMEOUT = 1_800_000; // 30 minutes for phase orchestration
 export const COMPILE_TIMEOUT = 600_000; // 10 minutes for plan decomposition
+export const LONG_RUN_TIMEOUT = 7_200_000; // 2 hours for long-running phases
 
 export type ExecClaudeResult = {
   stdout: string;

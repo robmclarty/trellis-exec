@@ -1,8 +1,9 @@
 import { spawn } from "node:child_process";
 import { resolve } from "node:path";
 const DEFAULT_TIMEOUT = 300_000; // 5 minutes for sub-agent execution
-const ORCHESTRATOR_TIMEOUT = 900_000; // 15 minutes for phase orchestration
+const ORCHESTRATOR_TIMEOUT = 1_800_000; // 30 minutes for phase orchestration
 export const COMPILE_TIMEOUT = 600_000; // 10 minutes for plan decomposition
+export const LONG_RUN_TIMEOUT = 7_200_000; // 2 hours for long-running phases
 /**
  * Assembles the sub-agent prompt following the §5 input contract.
  * Lists file paths (rather than inlining contents) since the claude agent
@@ -84,6 +85,7 @@ export function execClaude(args, cwd, options = {}) {
             reject(err);
         });
         if (stdin !== undefined) {
+            child.stdin.on("error", (err) => reject(err));
             child.stdin.write(stdin);
             child.stdin.end();
         }

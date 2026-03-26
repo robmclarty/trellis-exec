@@ -1,5 +1,6 @@
 import type { SubAgentConfig, SubAgentResult } from "../types/agents.js";
 export declare const COMPILE_TIMEOUT = 600000;
+export declare const LONG_RUN_TIMEOUT = 7200000;
 export type ExecClaudeResult = {
     stdout: string;
     stderr: string;

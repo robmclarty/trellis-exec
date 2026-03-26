@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync, existsSync, unlinkSync, statSync } from "n
 import { resolve, basename, join } from "node:path";
 import { createInterface } from "node:readline";
 import type { TasksJson, Phase, Task } from "../types/tasks.js";
-import type { SharedState, PhaseReport, JudgeAssessment, JudgeIssue, CheckResult } from "../types/state.js";
+import type { SharedState, PhaseReport, JudgeAssessment, JudgeIssue, CheckResult, DecisionEntry } from "../types/state.js";
 import { JudgeAssessmentSchema } from "../types/state.js";
 import type { TrajectoryLogger } from "../logging/trajectoryLogger.js";
 import type { RunContext } from "../cli.js";
@@ -32,6 +32,7 @@ import {
 } from "../git.js";
 import type { ChangedFile } from "../git.js";
 import { createCheckRunner } from "../verification/checkRunner.js";
+import { verifyCompletion } from "../verification/completionVerifier.js";
 import { createAgentLauncher } from "../orchestrator/agentLauncher.js";
 
 // ---------------------------------------------------------------------------
@@ -65,16 +66,27 @@ function getHandoffFromState(state: SharedState): string {
   return last?.handoff ?? "";
 }
 
-const MAX_LEARNINGS = 20;
+const MAX_TACTICAL_LEARNINGS = 20;
 
-export function collectLearnings(state: SharedState): string[] {
-  const all: string[] = [];
+export function collectLearnings(state: SharedState): { architectural: string[]; tactical: string[] } {
+  const architectural: string[] = [];
+  const tactical: string[] = [];
   for (const report of state.phaseReports) {
     for (const entry of report.decisionsLog) {
-      all.push(`[${report.phaseId}] ${entry}`);
+      const label = `[${report.phaseId}] ${entry.text}`;
+      if (entry.tier === "architectural") {
+        architectural.push(label);
+      } else {
+        tactical.push(label);
+      }
     }
   }
-  return all.slice(-MAX_LEARNINGS);
+  // Architectural entries are never evicted. Tactical use a sliding window.
+  const tacticalBudget = Math.max(10, MAX_TACTICAL_LEARNINGS - architectural.length);
+  return {
+    architectural,
+    tactical: tactical.slice(-tacticalBudget),
+  };
 }
 
 export function buildPhaseContext(
@@ -119,15 +131,26 @@ export function buildPhaseContext(
   );
 
   const learnings = collectLearnings(state);
-  if (learnings.length > 0) {
+  if (learnings.architectural.length > 0 || learnings.tactical.length > 0) {
     lines.push("");
     lines.push("## Learnings from Prior Phases");
     lines.push(
       "Important decisions and discoveries from earlier phases. " +
       "Apply these to avoid repeating mistakes:",
     );
-    for (const entry of learnings) {
-      lines.push(`- ${entry}`);
+    if (learnings.architectural.length > 0) {
+      lines.push("");
+      lines.push("### Architectural (permanent)");
+      for (const entry of learnings.architectural) {
+        lines.push(`- ${entry}`);
+      }
+    }
+    if (learnings.tactical.length > 0) {
+      lines.push("");
+      lines.push("### Tactical (recent)");
+      for (const entry of learnings.tactical) {
+        lines.push(`- ${entry}`);
+      }
     }
   }
 
@@ -177,6 +200,16 @@ export function buildPhaseContext(
   lines.push("If `git commit` fails (nothing to commit), continue to the next task.");
   lines.push("Do NOT commit the `.trellis-phase-report.json` file.");
 
+  // Long-running phase protocol
+  if (ctx.timeout && ctx.timeout > 1_800_000) {
+    lines.push("");
+    lines.push("## Long-Running Phase");
+    lines.push(
+      "This phase has an extended timeout. Commit intermediate progress every 3-5 tasks " +
+      "to preserve work in case of timeout. The reporter fallback depends on committed work.",
+    );
+  }
+
   // Completion protocol
   lines.push("");
   lines.push("## Completion Protocol");
@@ -196,7 +229,9 @@ export function buildPhaseContext(
   lines.push('  "summary": "Brief description",');
   lines.push('  "handoff": "Briefing for next phase",');
   lines.push('  "correctiveTasks": [],');
-  lines.push('  "decisionsLog": [],');
+  lines.push('  "decisionsLog": [');
+  lines.push('    { "text": "Decision description", "tier": "architectural | tactical" }');
+  lines.push('  ],');
   lines.push('  "orchestratorAnalysis": "Phase outcome assessment"');
   lines.push('}');
   lines.push("```");
@@ -336,7 +371,7 @@ export function normalizeReport(
         : "",
     recommendedAction,
     correctiveTasks: asStringArray(r["correctiveTasks"] ?? []),
-    decisionsLog: asStringArray(r["decisionsLog"] ?? []),
+    decisionsLog: asDecisionEntryArray(r["decisionsLog"] ?? []),
     handoff:
       typeof r["handoff"] === "string"
         ? r["handoff"]
@@ -350,6 +385,56 @@ export function normalizeReport(
 function asStringArray(val: unknown): string[] {
   if (!Array.isArray(val)) return [];
   return val.filter((v): v is string => typeof v === "string");
+}
+
+/** Safely coerce a value to DecisionEntry[]. Plain strings become tactical. */
+function asDecisionEntryArray(val: unknown): DecisionEntry[] {
+  if (!Array.isArray(val)) return [];
+  return val
+    .map((v): DecisionEntry | null => {
+      if (typeof v === "string") {
+        return { text: v, tier: "tactical" };
+      }
+      if (v && typeof v === "object" && "text" in v && typeof v.text === "string") {
+        const tier = "tier" in v && (v.tier === "architectural" || v.tier === "tactical")
+          ? v.tier
+          : "tactical";
+        return { text: v.text, tier };
+      }
+      return null;
+    })
+    .filter((v): v is DecisionEntry => v !== null);
+}
+
+/**
+ * Lightweight pre-phase contract review. Checks acceptance criteria for
+ * common issues without invoking an LLM. Returns warnings (advisory only).
+ */
+export function reviewPhaseContract(phase: Phase): string[] {
+  const warnings: string[] = [];
+
+  for (const task of phase.tasks) {
+    // Flag tasks with no acceptance criteria
+    if (task.acceptanceCriteria.length === 0) {
+      warnings.push(`[${task.id}] has no acceptance criteria`);
+    }
+
+    // Flag vague criteria (too short to be testable)
+    for (const criterion of task.acceptanceCriteria) {
+      if (criterion.length < 10) {
+        warnings.push(
+          `[${task.id}] vague criterion: "${criterion}"`,
+        );
+      }
+    }
+
+    // Flag tasks with no target paths
+    if (task.targetPaths.length === 0) {
+      warnings.push(`[${task.id}] has no target paths`);
+    }
+  }
+
+  return warnings;
 }
 
 function makeCorrectiveTask(
@@ -1407,6 +1492,15 @@ export async function runPhases(
         `\nStarting phase "${phase.id}" (${taskCount} task${taskCount === 1 ? "" : "s"})…`,
       );
 
+      // Pre-phase contract review (advisory only)
+      if (localCtx.judgeMode !== "never") {
+        const warnings = reviewPhaseContract(phase);
+        if (warnings.length > 0) {
+          console.log(`Contract review warnings for "${phase.id}":`);
+          for (const w of warnings) console.log(`  - ${w}`);
+        }
+      }
+
       const phaseResult = await executePhase(
         localCtx,
         phase,
@@ -1416,6 +1510,24 @@ export async function runPhases(
       );
 
       let report = phaseResult.report;
+
+      // Lightweight completion verification before judge
+      if (report.status === "complete" || report.status === "partial") {
+        const verification = verifyCompletion(
+          projectRoot, phase, report, report.startSha,
+        );
+        if (!verification.passed) {
+          console.log(`Completion verification failed for "${phase.id}":`);
+          for (const f of verification.failures) console.log(`  - ${f}`);
+          report = {
+            ...report,
+            status: "partial",
+            recommendedAction: "retry",
+            correctiveTasks: [...report.correctiveTasks, ...verification.failures],
+          };
+        }
+      }
+
       state = { ...state, phaseReport: report };
       saveState(localCtx.statePath, state);
 
@@ -1660,6 +1772,15 @@ export async function runSinglePhase(
   try {
     state = { ...state, currentPhase: phase.id };
 
+    // Pre-phase contract review (advisory only)
+    if (localCtx.judgeMode !== "never") {
+      const warnings = reviewPhaseContract(phase);
+      if (warnings.length > 0) {
+        console.log(`Contract review warnings for "${phase.id}":`);
+        for (const w of warnings) console.log(`  - ${w}`);
+      }
+    }
+
     const phaseResult = await executePhase(
       localCtx,
       phase,
@@ -1669,6 +1790,23 @@ export async function runSinglePhase(
     );
 
     let report = phaseResult.report;
+
+    // Lightweight completion verification before judge
+    if (report.status === "complete" || report.status === "partial") {
+      const verification = verifyCompletion(
+        projectRoot, phase, report, report.startSha,
+      );
+      if (!verification.passed) {
+        console.log(`Completion verification failed for "${phase.id}":`);
+        for (const f of verification.failures) console.log(`  - ${f}`);
+        report = {
+          ...report,
+          status: "partial",
+          recommendedAction: "retry",
+          correctiveTasks: [...report.correctiveTasks, ...verification.failures],
+        };
+      }
+    }
 
     // Judge loop: runs based on judgeMode setting
     const hasChanges = report.startSha

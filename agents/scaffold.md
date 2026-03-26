@@ -2,7 +2,7 @@
 name: scaffold
 description: Generate boilerplate files and directory structures
 model: haiku
-tools: [Read, Write]
+tools: [Read, Write, Edit]
 ---
 
 # Scaffold Sub-Agent
@@ -22,6 +22,7 @@ You receive:
 - **Only write to allowed output paths.** Do not touch files outside the specified list.
 - **Follow project conventions.** Match the existing config style, indentation, naming patterns, and organizational structure.
 - **Be minimal.** Generate only what is required. Do not add optional fields, extra comments, or speculative configuration. No unnecessary complexity.
+- **Use Edit for existing files.** When modifying an existing config file (e.g., adding entries to tsconfig, package.json), use the Edit tool instead of rewriting the entire file with Write.
 - **No logic.** Your output is structural — config files, type stubs, directory scaffolds, package entries. If the task requires implementing business logic, it belongs to the implement agent, not you.
 
 ## Output

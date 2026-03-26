@@ -9,6 +9,7 @@ import { startSpinner } from "../ui/spinner.js";
 import { createStreamHandler, extractResultText } from "../ui/streamParser.js";
 import { getChangedFiles, getDiffContent, getCurrentSha, ensureInitialCommit, commitAll, getChangedFilesRange, getDiffContentRange, } from "../git.js";
 import { createCheckRunner } from "../verification/checkRunner.js";
+import { verifyCompletion } from "../verification/completionVerifier.js";
 import { createAgentLauncher } from "../orchestrator/agentLauncher.js";
 // ---------------------------------------------------------------------------
 // Constants
@@ -21,15 +22,27 @@ function getHandoffFromState(state) {
     const last = state.phaseReports.at(-1);
     return last?.handoff ?? "";
 }
-const MAX_LEARNINGS = 20;
+const MAX_TACTICAL_LEARNINGS = 20;
 export function collectLearnings(state) {
-    const all = [];
+    const architectural = [];
+    const tactical = [];
     for (const report of state.phaseReports) {
         for (const entry of report.decisionsLog) {
-            all.push(`[${report.phaseId}] ${entry}`);
+            const label = `[${report.phaseId}] ${entry.text}`;
+            if (entry.tier === "architectural") {
+                architectural.push(label);
+            }
+            else {
+                tactical.push(label);
+            }
         }
     }
-    return all.slice(-MAX_LEARNINGS);
+    // Architectural entries are never evicted. Tactical use a sliding window.
+    const tacticalBudget = Math.max(10, MAX_TACTICAL_LEARNINGS - architectural.length);
+    return {
+        architectural,
+        tactical: tactical.slice(-tacticalBudget),
+    };
 }
 export function buildPhaseContext(phase, state, handoff, ctx) {
     const lines = [];
@@ -60,13 +73,24 @@ export function buildPhaseContext(phase, state, handoff, ctx) {
     lines.push("## Shared State Summary");
     lines.push(`Completed phases: ${state.completedPhases.length > 0 ? state.completedPhases.join(", ") : "none"}`);
     const learnings = collectLearnings(state);
-    if (learnings.length > 0) {
+    if (learnings.architectural.length > 0 || learnings.tactical.length > 0) {
         lines.push("");
         lines.push("## Learnings from Prior Phases");
         lines.push("Important decisions and discoveries from earlier phases. " +
             "Apply these to avoid repeating mistakes:");
-        for (const entry of learnings) {
-            lines.push(`- ${entry}`);
+        if (learnings.architectural.length > 0) {
+            lines.push("");
+            lines.push("### Architectural (permanent)");
+            for (const entry of learnings.architectural) {
+                lines.push(`- ${entry}`);
+            }
+        }
+        if (learnings.tactical.length > 0) {
+            lines.push("");
+            lines.push("### Tactical (recent)");
+            for (const entry of learnings.tactical) {
+                lines.push(`- ${entry}`);
+            }
         }
     }
     // Pre-load spec and guidelines content so the orchestrator doesn't waste
@@ -76,23 +100,13 @@ export function buildPhaseContext(phase, state, handoff, ctx) {
     lines.push("## Spec Content");
     lines.push(`(Pre-loaded from \`${basename(ctx.specPath)}\`. Also available on disk via the Read tool.)`);
     lines.push("");
-    try {
-        lines.push(readFileSync(ctx.specPath, "utf-8"));
-    }
-    catch {
-        lines.push("[ERROR: Could not read spec file]");
-    }
+    lines.push(readFileSync(ctx.specPath, "utf-8"));
     lines.push("");
     lines.push("## Guidelines Content");
     if (ctx.guidelinesPath) {
         lines.push(`(Pre-loaded from \`${basename(ctx.guidelinesPath)}\`. Also available on disk via the Read tool.)`);
         lines.push("");
-        try {
-            lines.push(readFileSync(ctx.guidelinesPath, "utf-8"));
-        }
-        catch {
-            lines.push("[ERROR: Could not read guidelines file]");
-        }
+        lines.push(readFileSync(ctx.guidelinesPath, "utf-8"));
     }
     else {
         lines.push("none configured");
@@ -120,6 +134,13 @@ export function buildPhaseContext(phase, state, handoff, ctx) {
     lines.push("The scope should be the main module/area affected. The body should list 3-5 significant changes.");
     lines.push("If `git commit` fails (nothing to commit), continue to the next task.");
     lines.push("Do NOT commit the `.trellis-phase-report.json` file.");
+    // Long-running phase protocol
+    if (ctx.timeout && ctx.timeout > 1_800_000) {
+        lines.push("");
+        lines.push("## Long-Running Phase");
+        lines.push("This phase has an extended timeout. Commit intermediate progress every 3-5 tasks " +
+            "to preserve work in case of timeout. The reporter fallback depends on committed work.");
+    }
     // Completion protocol
     lines.push("");
     lines.push("## Completion Protocol");
@@ -137,7 +158,9 @@ export function buildPhaseContext(phase, state, handoff, ctx) {
     lines.push('  "summary": "Brief description",');
     lines.push('  "handoff": "Briefing for next phase",');
     lines.push('  "correctiveTasks": [],');
-    lines.push('  "decisionsLog": [],');
+    lines.push('  "decisionsLog": [');
+    lines.push('    { "text": "Decision description", "tier": "architectural | tactical" }');
+    lines.push('  ],');
     lines.push('  "orchestratorAnalysis": "Phase outcome assessment"');
     lines.push('}');
     lines.push("```");
@@ -251,7 +274,7 @@ export function normalizeReport(raw, phaseId) {
             : "",
         recommendedAction,
         correctiveTasks: asStringArray(r["correctiveTasks"] ?? []),
-        decisionsLog: asStringArray(r["decisionsLog"] ?? []),
+        decisionsLog: asDecisionEntryArray(r["decisionsLog"] ?? []),
         handoff: typeof r["handoff"] === "string"
             ? r["handoff"]
             : typeof r["handoffBriefing"] === "string"
@@ -264,6 +287,49 @@ function asStringArray(val) {
     if (!Array.isArray(val))
         return [];
     return val.filter((v) => typeof v === "string");
+}
+/** Safely coerce a value to DecisionEntry[]. Plain strings become tactical. */
+function asDecisionEntryArray(val) {
+    if (!Array.isArray(val))
+        return [];
+    return val
+        .map((v) => {
+        if (typeof v === "string") {
+            return { text: v, tier: "tactical" };
+        }
+        if (v && typeof v === "object" && "text" in v && typeof v.text === "string") {
+            const tier = "tier" in v && (v.tier === "architectural" || v.tier === "tactical")
+                ? v.tier
+                : "tactical";
+            return { text: v.text, tier };
+        }
+        return null;
+    })
+        .filter((v) => v !== null);
+}
+/**
+ * Lightweight pre-phase contract review. Checks acceptance criteria for
+ * common issues without invoking an LLM. Returns warnings (advisory only).
+ */
+export function reviewPhaseContract(phase) {
+    const warnings = [];
+    for (const task of phase.tasks) {
+        // Flag tasks with no acceptance criteria
+        if (task.acceptanceCriteria.length === 0) {
+            warnings.push(`[${task.id}] has no acceptance criteria`);
+        }
+        // Flag vague criteria (too short to be testable)
+        for (const criterion of task.acceptanceCriteria) {
+            if (criterion.length < 10) {
+                warnings.push(`[${task.id}] vague criterion: "${criterion}"`);
+            }
+        }
+        // Flag tasks with no target paths
+        if (task.targetPaths.length === 0) {
+            warnings.push(`[${task.id}] has no target paths`);
+        }
+    }
+    return warnings;
 }
 function makeCorrectiveTask(phaseId, description, index) {
     return {
@@ -1063,10 +1129,12 @@ export function makePhaseCommit(projectRoot, phase, report) {
 // Main loop
 // ---------------------------------------------------------------------------
 export async function runPhases(ctx, tasksJson) {
-    console.log(`Starting phase runner with ${tasksJson.phases.length} phase(s)…`);
+    // Deep-clone to avoid mutating the caller's object (e.g. corrective task appends)
+    let mutableTasksJson = structuredClone(tasksJson);
+    console.log(`Starting phase runner with ${mutableTasksJson.phases.length} phase(s)…`);
     // Validate dependencies for all phases upfront, allowing cross-phase refs
     const priorPhaseTaskIds = new Set();
-    for (const phase of tasksJson.phases) {
+    for (const phase of mutableTasksJson.phases) {
         const validation = validateDependencies(phase.tasks, priorPhaseTaskIds);
         if (!validation.valid) {
             throw new Error(`Phase ${phase.id} has invalid dependencies: ${validation.errors.join("; ")}`);
@@ -1075,14 +1143,14 @@ export async function runPhases(ctx, tasksJson) {
             priorPhaseTaskIds.add(task.id);
         }
     }
-    let state = loadState(ctx.statePath) ?? initState(tasksJson);
+    let state = loadState(ctx.statePath) ?? initState(mutableTasksJson);
     const logger = createTrajectoryLogger(ctx.trajectoryPath);
     const phasesCompleted = [];
     const phasesFailed = [];
     const projectRoot = ctx.projectRoot;
     // Handle dry run early
     if (ctx.dryRun) {
-        const report = dryRunReport(tasksJson, ctx);
+        const report = dryRunReport(mutableTasksJson, ctx);
         console.log(report);
         logger.close();
         return {
@@ -1092,10 +1160,12 @@ export async function runPhases(ctx, tasksJson) {
             finalState: state,
         };
     }
+    // Shallow-copy ctx so auto-detected checkCommand doesn't mutate the caller's object
+    const localCtx = { ...ctx };
     try {
         let phaseIndex = 0;
-        while (phaseIndex < tasksJson.phases.length) {
-            const phase = tasksJson.phases[phaseIndex];
+        while (phaseIndex < mutableTasksJson.phases.length) {
+            const phase = mutableTasksJson.phases[phaseIndex];
             // Skip completed phases (resume support)
             if (state.completedPhases.includes(phase.id)) {
                 phasesCompleted.push(phase.id);
@@ -1105,24 +1175,48 @@ export async function runPhases(ctx, tasksJson) {
             state = { ...state, currentPhase: phase.id, phaseReport: null };
             const taskCount = phase.tasks.length;
             console.log(`\nStarting phase "${phase.id}" (${taskCount} task${taskCount === 1 ? "" : "s"})…`);
-            const phaseResult = await executePhase(ctx, phase, state, projectRoot, logger);
+            // Pre-phase contract review (advisory only)
+            if (localCtx.judgeMode !== "never") {
+                const warnings = reviewPhaseContract(phase);
+                if (warnings.length > 0) {
+                    console.log(`Contract review warnings for "${phase.id}":`);
+                    for (const w of warnings)
+                        console.log(`  - ${w}`);
+                }
+            }
+            const phaseResult = await executePhase(localCtx, phase, state, projectRoot, logger);
             let report = phaseResult.report;
+            // Lightweight completion verification before judge
+            if (report.status === "complete" || report.status === "partial") {
+                const verification = verifyCompletion(projectRoot, phase, report, report.startSha);
+                if (!verification.passed) {
+                    console.log(`Completion verification failed for "${phase.id}":`);
+                    for (const f of verification.failures)
+                        console.log(`  - ${f}`);
+                    report = {
+                        ...report,
+                        status: "partial",
+                        recommendedAction: "retry",
+                        correctiveTasks: [...report.correctiveTasks, ...verification.failures],
+                    };
+                }
+            }
             state = { ...state, phaseReport: report };
-            saveState(ctx.statePath, state);
+            saveState(localCtx.statePath, state);
             // Judge loop: runs based on judgeMode setting
             const hasChanges = report.startSha
                 ? getChangedFilesRange(projectRoot, report.startSha).length > 0
                 : getChangedFiles(projectRoot).length > 0;
-            const shouldJudge = ctx.judgeMode !== "never" &&
-                (ctx.judgeMode === "always" ||
-                    (ctx.judgeMode === "on-failure" && phaseResult.status !== "complete"));
+            const shouldJudge = localCtx.judgeMode !== "never" &&
+                (localCtx.judgeMode === "always" ||
+                    (localCtx.judgeMode === "on-failure" && phaseResult.status !== "complete"));
             if (shouldJudge && (phaseResult.status !== "failed" || hasChanges)) {
                 console.log(`Judging phase "${phase.id}"…`);
                 const judgeResult = await judgePhase({
                     phase,
                     report,
                     projectRoot,
-                    ctx,
+                    ctx: localCtx,
                     logger,
                     ...(report.startSha ? { startSha: report.startSha } : {}),
                 });
@@ -1153,11 +1247,11 @@ export async function runPhases(ctx, tasksJson) {
                 }
             }
             // Auto-detect test suites if no --check was provided
-            if (!ctx.checkCommand && hasNewTestFiles(projectRoot, report.startSha)) {
+            if (!localCtx.checkCommand && hasNewTestFiles(projectRoot, report.startSha)) {
                 const detected = detectTestCommand(projectRoot);
                 if (detected) {
                     console.log(`Detected new test files. Setting check command: ${detected}`);
-                    ctx.checkCommand = detected;
+                    localCtx.checkCommand = detected;
                 }
             }
             // Determine action: combine report recommendation with user input
@@ -1166,12 +1260,12 @@ export async function runPhases(ctx, tasksJson) {
                 : report.recommendedAction === "retry"
                     ? "retry"
                     : "halt";
-            if (!ctx.headless) {
+            if (!localCtx.headless) {
                 const retryCount = state.phaseRetries[phase.id] ?? 0;
                 const userChoice = await promptForContinuation({
                     phaseId: phase.id,
                     retryCount,
-                    maxRetries: ctx.maxRetries,
+                    maxRetries: localCtx.maxRetries,
                     recommendedAction: report.recommendedAction,
                     reason: report.summary,
                 });
@@ -1182,7 +1276,7 @@ export async function runPhases(ctx, tasksJson) {
                         phaseReports: [...state.phaseReports, report],
                     };
                     phasesFailed.push(phase.id);
-                    saveState(ctx.statePath, state);
+                    saveState(localCtx.statePath, state);
                     break;
                 }
                 if (userChoice === "retry") {
@@ -1194,12 +1288,12 @@ export async function runPhases(ctx, tasksJson) {
                 // "continue" defers to report's recommendation
             }
             // In headless mode, follow the report's recommendation
-            if (ctx.headless && report.recommendedAction === "retry") {
+            if (localCtx.headless && report.recommendedAction === "retry") {
                 action = "retry";
             }
             if (action === "retry") {
                 const retryCount = state.phaseRetries[phase.id] ?? 0;
-                if (retryCount < ctx.maxRetries) {
+                if (retryCount < localCtx.maxRetries) {
                     state = {
                         ...state,
                         phaseReports: [...state.phaseReports, report],
@@ -1211,23 +1305,23 @@ export async function runPhases(ctx, tasksJson) {
                     // Append corrective tasks
                     if (report.correctiveTasks.length > 0) {
                         const newTasks = report.correctiveTasks.map((desc, i) => makeCorrectiveTask(phase.id, desc, i + retryCount * 100));
-                        tasksJson.phases[phaseIndex] = {
+                        mutableTasksJson.phases[phaseIndex] = {
                             ...phase,
                             tasks: [...phase.tasks, ...newTasks],
                         };
                     }
-                    saveState(ctx.statePath, state);
+                    saveState(localCtx.statePath, state);
                     // Don't increment phaseIndex — re-enter same phase
                     continue;
                 }
                 // Max retries exceeded — halt
-                console.log(`Max retries (${ctx.maxRetries}) exceeded for phase "${phase.id}". Halting.`);
+                console.log(`Max retries (${localCtx.maxRetries}) exceeded for phase "${phase.id}". Halting.`);
                 phasesFailed.push(phase.id);
                 state = {
                     ...state,
                     phaseReports: [...state.phaseReports, report],
                 };
-                saveState(ctx.statePath, state);
+                saveState(localCtx.statePath, state);
                 break;
             }
             if (action === "skip") {
@@ -1237,7 +1331,7 @@ export async function runPhases(ctx, tasksJson) {
                     completedPhases: [...state.completedPhases, phase.id],
                     phaseReports: [...state.phaseReports, report],
                 };
-                saveState(ctx.statePath, state);
+                saveState(localCtx.statePath, state);
                 phaseIndex++;
                 continue;
             }
@@ -1247,7 +1341,7 @@ export async function runPhases(ctx, tasksJson) {
                     ...state,
                     phaseReports: [...state.phaseReports, report],
                 };
-                saveState(ctx.statePath, state);
+                saveState(localCtx.statePath, state);
                 break;
             }
             // action === "advance"
@@ -1255,11 +1349,11 @@ export async function runPhases(ctx, tasksJson) {
             makePhaseCommit(projectRoot, phase, report);
             report = { ...report, endSha: getCurrentSha(projectRoot) ?? report.startSha };
             phasesCompleted.push(phase.id);
-            state = updateStateAfterPhase(state, report, tasksJson.phases);
-            saveState(ctx.statePath, state);
+            state = updateStateAfterPhase(state, report, mutableTasksJson.phases);
+            saveState(localCtx.statePath, state);
             // Sync task statuses back to tasks.json
-            tasksJson = applyReportToTasks(tasksJson, phase.id, report);
-            writeFileSync(ctx.tasksJsonPath, JSON.stringify(tasksJson, null, 2), "utf-8");
+            mutableTasksJson = applyReportToTasks(mutableTasksJson, phase.id, report);
+            writeFileSync(localCtx.tasksJsonPath, JSON.stringify(mutableTasksJson, null, 2), "utf-8");
             phaseIndex++;
         }
     }
@@ -1296,29 +1390,55 @@ export async function runSinglePhase(ctx, tasksJson, phaseId) {
     if (!validation.valid) {
         throw new Error(`Phase ${phase.id} has invalid dependencies: ${validation.errors.join("; ")}`);
     }
-    let state = loadState(ctx.statePath) ?? initState(tasksJson);
-    const logger = createTrajectoryLogger(ctx.trajectoryPath);
+    // Shallow-copy ctx so auto-detected checkCommand doesn't mutate the caller's object
+    const localCtx = { ...ctx };
+    let state = loadState(localCtx.statePath) ?? initState(tasksJson);
+    const logger = createTrajectoryLogger(localCtx.trajectoryPath);
     const phasesCompleted = [];
     const phasesFailed = [];
-    const projectRoot = ctx.projectRoot;
+    const projectRoot = localCtx.projectRoot;
     try {
         state = { ...state, currentPhase: phase.id };
-        const phaseResult = await executePhase(ctx, phase, state, projectRoot, logger);
+        // Pre-phase contract review (advisory only)
+        if (localCtx.judgeMode !== "never") {
+            const warnings = reviewPhaseContract(phase);
+            if (warnings.length > 0) {
+                console.log(`Contract review warnings for "${phase.id}":`);
+                for (const w of warnings)
+                    console.log(`  - ${w}`);
+            }
+        }
+        const phaseResult = await executePhase(localCtx, phase, state, projectRoot, logger);
         let report = phaseResult.report;
+        // Lightweight completion verification before judge
+        if (report.status === "complete" || report.status === "partial") {
+            const verification = verifyCompletion(projectRoot, phase, report, report.startSha);
+            if (!verification.passed) {
+                console.log(`Completion verification failed for "${phase.id}":`);
+                for (const f of verification.failures)
+                    console.log(`  - ${f}`);
+                report = {
+                    ...report,
+                    status: "partial",
+                    recommendedAction: "retry",
+                    correctiveTasks: [...report.correctiveTasks, ...verification.failures],
+                };
+            }
+        }
         // Judge loop: runs based on judgeMode setting
         const hasChanges = report.startSha
             ? getChangedFilesRange(projectRoot, report.startSha).length > 0
             : getChangedFiles(projectRoot).length > 0;
-        const shouldJudge = ctx.judgeMode !== "never" &&
-            (ctx.judgeMode === "always" ||
-                (ctx.judgeMode === "on-failure" && phaseResult.status !== "complete"));
+        const shouldJudge = localCtx.judgeMode !== "never" &&
+            (localCtx.judgeMode === "always" ||
+                (localCtx.judgeMode === "on-failure" && phaseResult.status !== "complete"));
         if (shouldJudge && (phaseResult.status !== "failed" || hasChanges)) {
             console.log(`Judging phase "${phase.id}"…`);
             const judgeResult = await judgePhase({
                 phase,
                 report,
                 projectRoot,
-                ctx,
+                ctx: localCtx,
                 logger,
                 ...(report.startSha ? { startSha: report.startSha } : {}),
             });
@@ -1350,11 +1470,11 @@ export async function runSinglePhase(ctx, tasksJson, phaseId) {
             }
         }
         // Auto-detect test suites if no --check was provided
-        if (!ctx.checkCommand && hasNewTestFiles(projectRoot, report.startSha)) {
+        if (!localCtx.checkCommand && hasNewTestFiles(projectRoot, report.startSha)) {
             const detected = detectTestCommand(projectRoot);
             if (detected) {
                 console.log(`Detected new test files. Setting check command: ${detected}`);
-                ctx.checkCommand = detected;
+                localCtx.checkCommand = detected;
             }
         }
         if (report.status === "complete" && report.recommendedAction === "advance") {
@@ -1364,7 +1484,7 @@ export async function runSinglePhase(ctx, tasksJson, phaseId) {
             state = updateStateAfterPhase(state, report, tasksJson.phases);
             // Sync task statuses back to tasks.json
             const updatedTasks = applyReportToTasks(tasksJson, phase.id, report);
-            writeFileSync(ctx.tasksJsonPath, JSON.stringify(updatedTasks, null, 2), "utf-8");
+            writeFileSync(localCtx.tasksJsonPath, JSON.stringify(updatedTasks, null, 2), "utf-8");
         }
         else {
             phasesFailed.push(phase.id);
@@ -1373,7 +1493,7 @@ export async function runSinglePhase(ctx, tasksJson, phaseId) {
                 phaseReports: [...state.phaseReports, report],
             };
         }
-        saveState(ctx.statePath, state);
+        saveState(localCtx.statePath, state);
     }
     finally {
         logger.close();

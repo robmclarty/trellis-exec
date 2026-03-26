@@ -33,7 +33,14 @@ export function loadState(statePath) {
         }
         throw err;
     }
-    const parsed = JSON.parse(raw);
+    let parsed;
+    try {
+        parsed = JSON.parse(raw);
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(`Failed to parse state file ${statePath}: ${message}`);
+    }
     return SharedStateSchema.parse(parsed);
 }
 /**

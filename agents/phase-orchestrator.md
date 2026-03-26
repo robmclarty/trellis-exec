@@ -131,7 +131,10 @@ When all tasks are processed, use the **Write** tool to create `.trellis-phase-r
   "summary": "Brief description of what was accomplished",
   "handoff": "Briefing for the next phase — what was created, key decisions, anything to watch for",
   "correctiveTasks": ["Description of what needs fixing, if recommending retry"],
-  "decisionsLog": ["Key technical decisions and discoveries the NEXT phase should know (e.g., file naming conventions, tool quirks, workarounds)"],
+  "decisionsLog": [
+    { "text": "Use PostgreSQL connection pooling via pgBouncer", "tier": "architectural" },
+    { "text": "Renamed Button.tsx to avoid Vite HMR warning", "tier": "tactical" }
+  ],
   "orchestratorAnalysis": "Your assessment of the phase outcome"
 }
 ```
@@ -140,6 +143,14 @@ When all tasks are processed, use the **Write** tool to create `.trellis-phase-r
 - `recommendedAction`: "advance" to proceed, "retry" if fixable issues remain, "halt" if phase is blocked
 - **Do NOT commit the `.trellis-phase-report.json` file.** The phase runner handles the final phase commit.
 - After writing the report, your work is done. The phase runner handles quality review independently.
+
+## Long-Running Phase Protocol
+
+For phases with extended timeouts (indicated by a "Long-Running Phase" section in the phase context):
+
+- **Commit working changes every 3-5 completed tasks**, not just at the end. Each intermediate commit ensures the reporter fallback has material to work with if the phase times out.
+- Use the same conventional commit format as task-level commits.
+- Prioritize getting working code committed over perfecting uncommitted work.
 
 ## Error Handling
 
