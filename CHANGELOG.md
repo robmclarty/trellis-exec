@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.7.7
+
+- Add two-tier browser testing with Playwright (optional peer dependency)
+- Tier 1: per-phase deterministic smoke check (console errors, blank page detection, interactive element click test) runs before the judge on UI phases
+- Tier 2: end-of-build LLM-driven acceptance tests generated from spec criteria, with browser-fixer retry loop (default 3 retries)
+- Add `requiresBrowserTest` flag to Phase schema, set by compiler prompt and deterministic heuristic
+- Add `--dev-server`, `--save-e2e-tests`, `--browser-test-retries` CLI flags
+- Add language-agnostic dev server autodiscovery (Node, Python, Rails, Go, Docker Compose)
+- Add `browser-tester` (Opus) and `browser-fixer` (Sonnet) agent definitions
+- Feed browser smoke results to judge prompt as additional evidence
+- Include browser acceptance results in end-of-run summary report
+
 ## 0.7.6
 
 - Upgrade phase learnings to authoritative "Spec Amendments" that take precedence over spec assumptions
