@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.4
+
+- Randomize orchestrator spinner message from 10 fun labels instead of always showing "Orchestrating…"
+- Reframe README tagline as phased execution harness
+
 ## 0.7.3
 
 - Start judge attempt count at 1 instead of 0 for user-friendly output
