@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.1
+
+- Fix projectRoot resolution: auto-detect git root instead of defaulting to tasks.json directory, preventing infinite retry loops when tasks.json lives in a subdirectory like `.specs/feature/`
+- Add "all paths missing" diagnostic in completion verifier to fail fast with a clear error instead of snowballing corrective tasks
+- Add early projectRoot sanity warning when resolved path is inside `.specs/` or differs from the git root
+
 ## 0.7.0
 
 - Relax sub-agent tool restrictions: implement agent gains Glob/Grep, scaffold agent gains Edit
