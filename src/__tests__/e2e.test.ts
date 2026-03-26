@@ -45,8 +45,6 @@ vi.mock("../git.js", () => ({
   getCurrentSha: vi.fn(() => "abc123"),
   ensureInitialCommit: vi.fn(() => "abc123"),
   commitAll: vi.fn(() => null),
-  getChangedFilesRange: vi.fn(() => []),
-  getDiffContentRange: vi.fn(() => ""),
   getGitRoot: vi.fn(() => null),
 }));
 

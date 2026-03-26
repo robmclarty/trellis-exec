@@ -5,7 +5,7 @@ import type { PhaseReport } from "../../types/state.js";
 
 // Mock git and fs modules
 vi.mock("../../git.js", () => ({
-  getChangedFilesRange: vi.fn(() => []),
+  getChangedFiles: vi.fn(() => []),
 }));
 
 vi.mock("node:fs", async () => {
@@ -18,11 +18,11 @@ vi.mock("node:fs", async () => {
 });
 
 import { existsSync, readFileSync } from "node:fs";
-import { getChangedFilesRange } from "../../git.js";
+import { getChangedFiles } from "../../git.js";
 
 const mockExistsSync = vi.mocked(existsSync);
 const mockReadFileSync = vi.mocked(readFileSync);
-const mockGetChangedFilesRange = vi.mocked(getChangedFilesRange);
+const mockGetChangedFiles = vi.mocked(getChangedFiles);
 
 function makePhase(overrides: Partial<Phase> = {}): Phase {
   return {
@@ -67,7 +67,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockExistsSync.mockReturnValue(true);
   mockReadFileSync.mockReturnValue("");
-  mockGetChangedFilesRange.mockReturnValue([]);
+  mockGetChangedFiles.mockReturnValue([]);
 });
 
 describe("verifyCompletion", () => {
@@ -222,7 +222,7 @@ describe("verifyCompletion", () => {
 
   describe("TODO/FIXME scan", () => {
     it("flags TODO in newly added files", () => {
-      mockGetChangedFilesRange.mockReturnValue([
+      mockGetChangedFiles.mockReturnValue([
         { path: "src/new.ts", status: "A" },
       ]);
       mockReadFileSync.mockReturnValue("const x = 1; // TODO: fix later\n");
@@ -237,7 +237,7 @@ describe("verifyCompletion", () => {
     });
 
     it("ignores TODO in modified (non-added) files", () => {
-      mockGetChangedFilesRange.mockReturnValue([
+      mockGetChangedFiles.mockReturnValue([
         { path: "src/existing.ts", status: "M" },
       ]);
       mockReadFileSync.mockReturnValue("// TODO: old todo\n");
@@ -249,7 +249,7 @@ describe("verifyCompletion", () => {
     });
 
     it("flags FIXME and HACK", () => {
-      mockGetChangedFilesRange.mockReturnValue([
+      mockGetChangedFiles.mockReturnValue([
         { path: "src/a.ts", status: "A" },
         { path: "src/b.ts", status: "A" },
       ]);
@@ -266,7 +266,7 @@ describe("verifyCompletion", () => {
 
     it("skips scan when no startSha provided", () => {
       const result = verifyCompletion("/project", makePhase(), makeReport());
-      expect(mockGetChangedFilesRange).not.toHaveBeenCalled();
+      expect(mockGetChangedFiles).not.toHaveBeenCalled();
       expect(result.passed).toBe(true);
     });
   });

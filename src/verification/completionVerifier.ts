@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve, extname } from "node:path";
 import type { Phase } from "../types/tasks.js";
 import type { PhaseReport } from "../types/state.js";
-import { getChangedFilesRange } from "../git.js";
+import { getChangedFiles } from "../git.js";
 
 export type CompletionVerification = {
   passed: boolean;
@@ -77,7 +77,7 @@ export function verifyCompletion(
 
   // 2. TODO/FIXME/HACK scan on newly added files
   if (startSha) {
-    const changedFiles = getChangedFilesRange(projectRoot, startSha);
+    const changedFiles = getChangedFiles(projectRoot, startSha);
     for (const file of changedFiles) {
       if (file.status !== "A") continue;
       try {

@@ -30,8 +30,6 @@ vi.mock("../../git.js", () => ({
   getCurrentSha: vi.fn(() => "abc123"),
   ensureInitialCommit: vi.fn(() => "abc123"),
   commitAll: vi.fn(() => null),
-  getChangedFilesRange: vi.fn(() => []),
-  getDiffContentRange: vi.fn(() => ""),
   getGitRoot: vi.fn(() => null),
 }));
 
@@ -53,12 +51,11 @@ import {
 } from "../phaseRunner.js";
 import type { RunContext } from "../../cli.js";
 import { createAgentLauncher } from "../../orchestrator/agentLauncher.js";
-import { getChangedFiles, commitAll, getChangedFilesRange, getDiffContentRange, ensureInitialCommit, getCurrentSha } from "../../git.js";
+import { getChangedFiles, getDiffContent, commitAll, ensureInitialCommit, getCurrentSha } from "../../git.js";
 
 const mockedGetChangedFiles = vi.mocked(getChangedFiles);
+const mockedGetDiffContent = vi.mocked(getDiffContent);
 const mockedCommitAll = vi.mocked(commitAll);
-const mockedGetChangedFilesRange = vi.mocked(getChangedFilesRange);
-const mockedGetDiffContentRange = vi.mocked(getDiffContentRange);
 const mockedEnsureInitialCommit = vi.mocked(ensureInitialCommit);
 const mockedGetCurrentSha = vi.mocked(getCurrentSha);
 
@@ -1005,7 +1002,7 @@ describe("phaseRunner", () => {
   });
 
   describe("runPhases — range-based judging", () => {
-    it("uses getChangedFilesRange with startSha during judge phase", async () => {
+    it("uses getChangedFiles with startSha during judge phase", async () => {
       const tasksJson = makeTasksJson();
       tmpDir = setupTmpDir(tasksJson);
       const config = makeDefaultConfig(tmpDir);
@@ -1013,10 +1010,10 @@ describe("phaseRunner", () => {
       // ensureInitialCommit returns the baseline SHA
       mockedEnsureInitialCommit.mockReturnValue("baseline-sha-000");
       // Range-based functions return some files so judge runs
-      mockedGetChangedFilesRange.mockReturnValue([
+      mockedGetChangedFiles.mockReturnValue([
         { path: "package.json", status: "A" },
       ]);
-      mockedGetDiffContentRange.mockReturnValue("diff --git a/package.json");
+      mockedGetDiffContent.mockReturnValue("diff --git a/package.json");
       mockedGetCurrentSha.mockReturnValue("final-sha-999");
       mockedCommitAll.mockReturnValue("commit-sha-111");
 
@@ -1039,11 +1036,11 @@ describe("phaseRunner", () => {
       await runPhases(config, tasksJson);
 
       // Verify range-based git functions were called with the baseline SHA
-      expect(mockedGetChangedFilesRange).toHaveBeenCalledWith(
+      expect(mockedGetChangedFiles).toHaveBeenCalledWith(
         tmpDir,
         "baseline-sha-000",
       );
-      expect(mockedGetDiffContentRange).toHaveBeenCalledWith(
+      expect(mockedGetDiffContent).toHaveBeenCalledWith(
         tmpDir,
         "baseline-sha-000",
       );
@@ -1055,10 +1052,10 @@ describe("phaseRunner", () => {
       const config = makeDefaultConfig(tmpDir);
 
       mockedEnsureInitialCommit.mockReturnValue("start-sha-aaa");
-      mockedGetChangedFilesRange.mockReturnValue([
+      mockedGetChangedFiles.mockReturnValue([
         { path: "file.ts", status: "A" },
       ]);
-      mockedGetDiffContentRange.mockReturnValue("some diff");
+      mockedGetDiffContent.mockReturnValue("some diff");
       mockedGetCurrentSha.mockReturnValue("end-sha-bbb");
       mockedCommitAll.mockReturnValue("commit-sha-ccc");
 
@@ -1089,15 +1086,15 @@ describe("phaseRunner", () => {
   });
 
   describe("hasNewTestFiles", () => {
-    it("uses getChangedFilesRange when startSha is provided", () => {
-      mockedGetChangedFilesRange.mockReturnValueOnce([
+    it("uses getChangedFiles with fromSha when startSha is provided", () => {
+      mockedGetChangedFiles.mockReturnValueOnce([
         { path: "test/foo.test.ts", status: "A" },
       ]);
 
       const result = hasNewTestFiles("/tmp/project", "abc123");
 
       expect(result).toBe(true);
-      expect(mockedGetChangedFilesRange).toHaveBeenCalledWith("/tmp/project", "abc123");
+      expect(mockedGetChangedFiles).toHaveBeenCalledWith("/tmp/project", "abc123");
     });
 
     it("falls back to getChangedFiles without startSha", () => {
@@ -1108,11 +1105,11 @@ describe("phaseRunner", () => {
       const result = hasNewTestFiles("/tmp/project");
 
       expect(result).toBe(true);
-      expect(mockedGetChangedFiles).toHaveBeenCalledWith("/tmp/project");
+      expect(mockedGetChangedFiles).toHaveBeenCalledWith("/tmp/project", undefined);
     });
 
     it("detects modified test files with startSha", () => {
-      mockedGetChangedFilesRange.mockReturnValueOnce([
+      mockedGetChangedFiles.mockReturnValueOnce([
         { path: "src/__tests__/app.test.js", status: "M" },
       ]);
 
@@ -1122,7 +1119,7 @@ describe("phaseRunner", () => {
     });
 
     it("returns false when no test files in changes", () => {
-      mockedGetChangedFilesRange.mockReturnValueOnce([
+      mockedGetChangedFiles.mockReturnValueOnce([
         { path: "src/index.ts", status: "A" },
       ]);
 
@@ -1142,10 +1139,10 @@ describe("phaseRunner", () => {
 
       mockedEnsureInitialCommit.mockReturnValue("baseline-sha");
       // Phase has committed changes (so judge will run)
-      mockedGetChangedFilesRange.mockReturnValue([
+      mockedGetChangedFiles.mockReturnValue([
         { path: "package.json", status: "A" },
       ]);
-      mockedGetDiffContentRange.mockReturnValue("diff content");
+      mockedGetDiffContent.mockReturnValue("diff content");
       mockedGetCurrentSha.mockReturnValue("end-sha");
       mockedCommitAll.mockReturnValue("commit-sha");
 
@@ -1257,10 +1254,10 @@ describe("phaseRunner", () => {
       const config = { ...makeDefaultConfig(tmpDir), maxRetries: 1 };
 
       mockedEnsureInitialCommit.mockReturnValue("baseline-sha");
-      mockedGetChangedFilesRange.mockReturnValue([
+      mockedGetChangedFiles.mockReturnValue([
         { path: "package.json", status: "A" },
       ]);
-      mockedGetDiffContentRange.mockReturnValue("diff content");
+      mockedGetDiffContent.mockReturnValue("diff content");
       mockedGetCurrentSha.mockReturnValue("end-sha");
       mockedCommitAll.mockReturnValue("commit-sha");
 
@@ -1309,10 +1306,10 @@ describe("phaseRunner", () => {
       const config = { ...makeDefaultConfig(tmpDir), maxRetries: 0, judgeMode: "never" as const };
 
       mockedEnsureInitialCommit.mockReturnValue("baseline-sha");
-      mockedGetChangedFilesRange.mockReturnValue([
+      mockedGetChangedFiles.mockReturnValue([
         { path: "package.json", status: "A" },
       ]);
-      mockedGetDiffContentRange.mockReturnValue("diff content");
+      mockedGetDiffContent.mockReturnValue("diff content");
 
       const mockCreateAgentLauncher = createAgentLauncher as ReturnType<typeof vi.fn>;
 
@@ -1339,7 +1336,7 @@ describe("phaseRunner", () => {
 
       mockedEnsureInitialCommit.mockReturnValue("baseline-sha");
       // No changes committed
-      mockedGetChangedFilesRange.mockReturnValue([]);
+      mockedGetChangedFiles.mockReturnValue([]);
 
       const mockCreateAgentLauncher = createAgentLauncher as ReturnType<typeof vi.fn>;
 
