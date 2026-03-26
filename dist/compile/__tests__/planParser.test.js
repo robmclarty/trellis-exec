@@ -1,6 +1,7 @@
-import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { describe, it, expect, afterEach } from "vitest";
+import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { tmpdir } from "node:os";
 import { parsePlan } from "../planParser.js";
 const FIXTURE_PATH = resolve(import.meta.dirname, "../../../test/fixtures/sample-plan.md");
 const SPEC_REF = "spec.md";
@@ -180,6 +181,127 @@ More text without any tasks.
         const task = result.tasksJson.phases[0].tasks[0];
         expect(task.targetPaths).toContain("src/real/file.ts");
         expect(task.targetPaths).not.toContain("src/internal/secret.ts");
+    });
+    describe("requiresBrowserTest", () => {
+        const dirs = [];
+        function tmp() {
+            const d = mkdtempSync(join(tmpdir(), "parser-browser-"));
+            dirs.push(d);
+            return d;
+        }
+        afterEach(() => {
+            for (const d of dirs) {
+                rmSync(d, { recursive: true, force: true });
+            }
+            dirs.length = 0;
+        });
+        it("sets true for phase with UI keywords in task titles", () => {
+            const content = `## Phase 1: UI
+
+- Build dashboard component
+  Create the main dashboard view with sidebar navigation.
+`;
+            const result = parsePlan(content, SPEC_REF, PLAN_REF);
+            expect(result.success).toBe(true);
+            expect(result.tasksJson.phases[0].requiresBrowserTest).toBe(true);
+        });
+        it("sets true for phase with UI extension target paths", () => {
+            const content = `## Phase 1: Components
+
+- Create app shell
+  Set up \`src/App.tsx\` and \`src/main.tsx\` entry points.
+`;
+            const result = parsePlan(content, SPEC_REF, PLAN_REF);
+            expect(result.success).toBe(true);
+            expect(result.tasksJson.phases[0].requiresBrowserTest).toBe(true);
+        });
+        it("sets false for backend-only phase without projectRoot", () => {
+            const content = `## Phase 1: Data Layer
+
+- Create database module
+  Set up \`src/db/connection.ts\` with PostgreSQL pooling.
+`;
+            const result = parsePlan(content, SPEC_REF, PLAN_REF);
+            expect(result.success).toBe(true);
+            expect(result.tasksJson.phases[0].requiresBrowserTest).toBe(false);
+        });
+        it("sets last phase true for web app with no UI keywords", () => {
+            const d = tmp();
+            writeFileSync(join(d, "vite.config.ts"), "export default {}");
+            const content = `## Phase 1: Data Layer
+
+- Create data models
+  Set up \`src/models/habit.ts\` with TypeScript interfaces.
+
+## Phase 2: Behaviors
+
+- Add habit tracking logic
+  Implement \`src/logic/tracker.ts\` with streak calculation.
+
+## Phase 3: Integration
+
+- Wire up modules
+  Connect data layer to behavior layer in \`src/index.ts\`.
+`;
+            const result = parsePlan(content, SPEC_REF, PLAN_REF, d);
+            expect(result.success).toBe(true);
+            const phases = result.tasksJson.phases;
+            expect(phases).toHaveLength(3);
+            expect(phases[0].requiresBrowserTest).toBe(false);
+            expect(phases[1].requiresBrowserTest).toBe(false);
+            expect(phases[2].requiresBrowserTest).toBe(true);
+        });
+        it("applies sticky propagation from phase with UI keywords", () => {
+            const d = tmp();
+            writeFileSync(join(d, "package.json"), JSON.stringify({ dependencies: { react: "^18.0.0" } }));
+            const content = `## Phase 1: Data Layer
+
+- Create data models
+  Set up \`src/models/habit.ts\` with TypeScript interfaces.
+
+## Phase 2: Components
+
+- Build habit form component
+  Create \`src/components/HabitForm.tsx\` for adding habits.
+
+## Phase 3: Integration
+
+- Wire up state management
+  Connect store to components in \`src/store/index.ts\`.
+`;
+            const result = parsePlan(content, SPEC_REF, PLAN_REF, d);
+            expect(result.success).toBe(true);
+            const phases = result.tasksJson.phases;
+            expect(phases).toHaveLength(3);
+            expect(phases[0].requiresBrowserTest).toBe(false);
+            expect(phases[1].requiresBrowserTest).toBe(true);
+            expect(phases[2].requiresBrowserTest).toBe(true);
+        });
+        it("does not propagate without projectRoot", () => {
+            const content = `## Phase 1: Data Layer
+
+- Create data models
+  Set up \`src/models/habit.ts\` with TypeScript interfaces.
+
+## Phase 2: Components
+
+- Build dashboard component
+  Create the main dashboard view.
+
+## Phase 3: Integration
+
+- Wire up state management
+  Connect store to components in \`src/store/index.ts\`.
+`;
+            const result = parsePlan(content, SPEC_REF, PLAN_REF);
+            expect(result.success).toBe(true);
+            const phases = result.tasksJson.phases;
+            expect(phases).toHaveLength(3);
+            expect(phases[0].requiresBrowserTest).toBe(false);
+            expect(phases[1].requiresBrowserTest).toBe(true);
+            // Phase 3 has no UI keywords and no projectRoot → no propagation
+            expect(phases[2].requiresBrowserTest).toBe(false);
+        });
     });
 });
 //# sourceMappingURL=planParser.test.js.map

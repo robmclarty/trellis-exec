@@ -76,6 +76,9 @@ The `requiresBrowserTest` flag on phases is set by the compiler:
 
 - **LLM decomposition path**: The prompt instructs the LLM to set `requiresBrowserTest: true` on phases that produce visible UI output (pages, components, views, layouts, routes, templates).
 - **Deterministic parser path**: A heuristic scans task titles, descriptions, and target paths for UI-related keywords and file extensions (`.tsx`, `.jsx`, `.vue`, `.svelte`, `.html`, `.ejs`, `.hbs`, `.erb`).
+- **Web app detection**: When `projectRoot` is provided, the compiler checks for frontend framework dependencies in `package.json` (React, Vue, Svelte, Angular, Next, Nuxt, SolidJS, Astro), build-tool config files (`vite.config.*`, `webpack.config.*`, etc.), and HTML entry points (`index.html` in root, `public/`, or `src/`). If the project is detected as a web app:
+  - **Sticky propagation**: Once any phase has `requiresBrowserTest: true` (from the per-task heuristic), all subsequent phases inherit the flag. This ensures that phases modifying UI code (e.g., "add form validation") are tested even if their titles lack UI keywords.
+  - **Last-phase guarantee**: The final phase always gets `requiresBrowserTest: true`, ensuring end-of-build acceptance tests run for web app projects.
 
 ## Graceful Degradation
 

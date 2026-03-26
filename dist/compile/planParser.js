@@ -1,3 +1,4 @@
+import { detectWebApp } from "./detectWebApp.js";
 // --- Phase heading detection ---
 const PHASE_HEADING_PATTERNS = [
     // "## Phase 1: Scaffolding" or "# Phase 1 — Scaffolding"
@@ -319,6 +320,27 @@ function buildTasksJson(rawPhases, specRef, planRef, projectRoot) {
             requiresBrowserTest,
             tasks,
         });
+    }
+    // Web app propagation: if the project is a web app, apply sticky
+    // propagation (once a phase has requiresBrowserTest, all subsequent do too)
+    // and ensure the last phase always gets browser testing.
+    if (projectRoot) {
+        const isWebApp = detectWebApp(projectRoot);
+        if (isWebApp) {
+            let sawBrowserPhase = false;
+            for (const phase of phases) {
+                if (phase.requiresBrowserTest) {
+                    sawBrowserPhase = true;
+                }
+                else if (sawBrowserPhase) {
+                    phase.requiresBrowserTest = true;
+                }
+            }
+            const lastPhase = phases[phases.length - 1];
+            if (lastPhase) {
+                lastPhase.requiresBrowserTest = true;
+            }
+        }
     }
     // Infer dependencies across all tasks
     const deps = inferDependencies(allTaskMeta);

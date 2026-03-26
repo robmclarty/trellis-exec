@@ -1,5 +1,6 @@
 import type { TasksJson, Task, Phase } from "../types/tasks.js";
 import type { EnrichmentFlag, ParseResult } from "../types/compile.js";
+import { detectWebApp } from "./detectWebApp.js";
 
 // --- Phase heading detection ---
 
@@ -406,6 +407,27 @@ function buildTasksJson(
       requiresBrowserTest,
       tasks,
     });
+  }
+
+  // Web app propagation: if the project is a web app, apply sticky
+  // propagation (once a phase has requiresBrowserTest, all subsequent do too)
+  // and ensure the last phase always gets browser testing.
+  if (projectRoot) {
+    const isWebApp = detectWebApp(projectRoot);
+    if (isWebApp) {
+      let sawBrowserPhase = false;
+      for (const phase of phases) {
+        if (phase.requiresBrowserTest) {
+          sawBrowserPhase = true;
+        } else if (sawBrowserPhase) {
+          phase.requiresBrowserTest = true;
+        }
+      }
+      const lastPhase = phases[phases.length - 1];
+      if (lastPhase) {
+        lastPhase.requiresBrowserTest = true;
+      }
+    }
   }
 
   // Infer dependencies across all tasks
