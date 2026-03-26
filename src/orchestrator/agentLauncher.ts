@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { resolve } from "node:path";
 import type { SubAgentConfig, SubAgentResult } from "../types/agents.js";
+import { extractResultText } from "../ui/streamParser.js";
 
 const DEFAULT_TIMEOUT = 300_000; // 5 minutes for sub-agent execution
 const ORCHESTRATOR_TIMEOUT = 1_800_000; // 30 minutes for phase orchestration
@@ -88,7 +89,7 @@ export function buildSubAgentArgs(
   return [
     "--agent",
     agentFile,
-    "--print",
+    "--output-format", "stream-json",
     "--dangerously-skip-permissions",
     "--model",
     model,
@@ -202,10 +203,12 @@ export function createAgentLauncher(config: AgentLauncherConfig): AgentLauncher 
       };
     }
 
+    const output = extractResultText(result.stdout) || result.stdout;
+
     if (result.exitCode !== 0) {
       return {
         success: false,
-        output: result.stdout,
+        output,
         filesModified: [],
         error: result.stderr || `claude exited with code ${result.exitCode}`,
       };
@@ -213,7 +216,7 @@ export function createAgentLauncher(config: AgentLauncherConfig): AgentLauncher 
 
     return {
       success: true,
-      output: result.stdout,
+      output,
       filesModified: [],
     };
   }
@@ -227,12 +230,10 @@ export function createAgentLauncher(config: AgentLauncherConfig): AgentLauncher 
     const args = [
       "--agent",
       agentFile,
-      "--print",
+      "--output-format", "stream-json",
       "--dangerously-skip-permissions",
       ...(model ? ["--model", model] : []),
-      ...(options?.verbose
-        ? ["--output-format", "stream-json", "--verbose"]
-        : []),
+      ...(options?.verbose ? ["--verbose"] : []),
     ];
 
     if (dryRun) {

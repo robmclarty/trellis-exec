@@ -20,7 +20,8 @@ import {
 } from "./scheduler.js";
 import { createTrajectoryLogger } from "../logging/trajectoryLogger.js";
 import { startSpinner } from "../ui/spinner.js";
-import { createStreamHandler, extractResultText } from "../ui/streamParser.js";
+import { createStreamHandler, extractResultText, extractUsage } from "../ui/streamParser.js";
+import type { UsageStats } from "../ui/streamParser.js";
 import {
   getChangedFiles,
   getDiffContent,
@@ -74,11 +75,15 @@ export type PhaseRunnerResult = {
   phasesCompleted: string[];
   phasesFailed: string[];
   finalState: SharedState;
+  phaseDurations: Record<string, number>;
+  totalDuration: number;
+  phaseTokens: Record<string, UsageStats>;
 };
 
 type PhaseExecResult = {
   status: "complete" | "partial" | "failed";
   report: PhaseReport;
+  usage?: UsageStats | undefined;
 };
 
 // ---------------------------------------------------------------------------
@@ -1333,10 +1338,9 @@ async function executePhase(
     const duration = Date.now() - startTime;
     spinner.stop();
 
-    // When streaming, stdout is raw NDJSON — extract the result text
-    const outputText = ctx.verbose
-      ? extractResultText(result.stdout)
-      : result.stdout;
+    // stdout is NDJSON — extract the result text and usage
+    const outputText = extractResultText(result.stdout) || result.stdout;
+    const orchestratorUsage = extractUsage(result.stdout);
 
     logger.append({
       phaseId: phase.id,
@@ -1364,10 +1368,11 @@ async function executePhase(
       return {
         status: "failed",
         report: { ...buildPartialReport(phase.id, phase, reason), startSha },
+        usage: orchestratorUsage,
       };
     }
 
-    return parsed;
+    return { ...parsed, usage: orchestratorUsage };
   } catch (err) {
     spinner.stop();
     const reason =
@@ -1489,10 +1494,13 @@ export async function runPhases(
     }
   }
 
+  const runStartTime = Date.now();
   let state = loadState(ctx.statePath) ?? initState(mutableTasksJson);
   const logger = createTrajectoryLogger(ctx.trajectoryPath);
   const phasesCompleted: string[] = [];
   const phasesFailed: string[] = [];
+  const phaseDurations: Record<string, number> = {};
+  const phaseTokens: Record<string, UsageStats> = {};
 
   const projectRoot = ctx.projectRoot;
   warnIfProjectRootSuspect(projectRoot);
@@ -1507,6 +1515,9 @@ export async function runPhases(
       phasesCompleted: [],
       phasesFailed: [],
       finalState: state,
+      phaseDurations: {},
+      totalDuration: 0,
+      phaseTokens: {},
     };
   }
 
@@ -1526,6 +1537,7 @@ export async function runPhases(
       }
 
       state = { ...state, currentPhase: phase.id, phaseReport: null };
+      const phaseStartTime = Date.now();
 
       const taskCount = phase.tasks.length;
       console.log(
@@ -1548,6 +1560,18 @@ export async function runPhases(
         projectRoot,
         logger,
       );
+
+      // Accumulate token usage
+      if (phaseResult.usage) {
+        const prev = phaseTokens[phase.id];
+        phaseTokens[phase.id] = prev
+          ? {
+              inputTokens: prev.inputTokens + phaseResult.usage.inputTokens,
+              outputTokens: prev.outputTokens + phaseResult.usage.outputTokens,
+              costUsd: prev.costUsd + phaseResult.usage.costUsd,
+            }
+          : { ...phaseResult.usage };
+      }
 
       let report = phaseResult.report;
 
@@ -1658,6 +1682,7 @@ export async function runPhases(
         });
         if (userChoice === "quit") {
           // Save report to state before exiting
+          phaseDurations[phase.id] = (phaseDurations[phase.id] ?? 0) + (Date.now() - phaseStartTime);
           state = {
             ...state,
             phaseReports: [...state.phaseReports, report],
@@ -1702,9 +1727,11 @@ export async function runPhases(
           }
           saveState(localCtx.statePath, state);
           // Don't increment phaseIndex — re-enter same phase
+          phaseDurations[phase.id] = (phaseDurations[phase.id] ?? 0) + (Date.now() - phaseStartTime);
           continue;
         }
         // Max retries exceeded — halt
+        phaseDurations[phase.id] = (phaseDurations[phase.id] ?? 0) + (Date.now() - phaseStartTime);
         console.log(
           `Max retries (${localCtx.maxRetries}) exceeded for phase "${phase.id}". Halting.`,
         );
@@ -1718,6 +1745,7 @@ export async function runPhases(
       }
 
       if (action === "skip") {
+        phaseDurations[phase.id] = (phaseDurations[phase.id] ?? 0) + (Date.now() - phaseStartTime);
         phasesCompleted.push(phase.id);
         state = {
           ...state,
@@ -1730,6 +1758,7 @@ export async function runPhases(
       }
 
       if (action === "halt") {
+        phaseDurations[phase.id] = (phaseDurations[phase.id] ?? 0) + (Date.now() - phaseStartTime);
         phasesFailed.push(phase.id);
         state = {
           ...state,
@@ -1740,6 +1769,7 @@ export async function runPhases(
       }
 
       // action === "advance"
+      phaseDurations[phase.id] = (phaseDurations[phase.id] ?? 0) + (Date.now() - phaseStartTime);
       // Commit any remaining uncommitted changes as a phase-level commit
       makePhaseCommit(projectRoot, phase, report);
       report = { ...report, endSha: getCurrentSha(projectRoot) ?? report.startSha };
@@ -1763,6 +1793,9 @@ export async function runPhases(
     phasesCompleted,
     phasesFailed,
     finalState: state,
+    phaseDurations,
+    totalDuration: Date.now() - runStartTime,
+    phaseTokens,
   };
 }
 
@@ -1804,6 +1837,7 @@ export async function runSinglePhase(
   // Shallow-copy ctx so auto-detected checkCommand doesn't mutate the caller's object
   const localCtx = { ...ctx };
 
+  const runStartTime = Date.now();
   let state = loadState(localCtx.statePath) ?? initState(tasksJson);
   const logger = createTrajectoryLogger(localCtx.trajectoryPath);
   const phasesCompleted: string[] = [];
@@ -1811,6 +1845,8 @@ export async function runSinglePhase(
 
   const projectRoot = localCtx.projectRoot;
   warnIfProjectRootSuspect(projectRoot);
+
+  let phaseUsage: UsageStats | undefined;
 
   try {
     state = { ...state, currentPhase: phase.id };
@@ -1832,6 +1868,7 @@ export async function runSinglePhase(
       logger,
     );
 
+    phaseUsage = phaseResult.usage;
     let report = phaseResult.report;
 
     // Lightweight completion verification before judge
@@ -1943,10 +1980,14 @@ export async function runSinglePhase(
     logger.close();
   }
 
+  const totalDuration = Date.now() - runStartTime;
   return {
     success: phasesFailed.length === 0,
     phasesCompleted,
     phasesFailed,
     finalState: state,
+    phaseDurations: { [phaseId]: totalDuration },
+    totalDuration,
+    phaseTokens: phaseUsage ? { [phaseId]: phaseUsage } : {},
   };
 }

@@ -17,6 +17,7 @@ import {
   dryRunReport,
 } from "./runner/phaseRunner.js";
 import { startSpinner } from "./ui/spinner.js";
+import { formatSummaryReport } from "./ui/summaryReport.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -357,16 +358,12 @@ async function handleRun(args: string[]): Promise<void> {
     ? await runSinglePhase(context, tasksJson, phaseId)
     : await runPhases(context, tasksJson);
 
+  console.log("");
+  console.log(formatSummaryReport(result));
+
   if (!result.success) {
-    console.error(
-      `Execution failed. Phases completed: ${result.phasesCompleted.join(", ") || "none"}`,
-    );
     process.exit(1);
   }
-
-  console.log(
-    `Execution complete. Phases completed: ${result.phasesCompleted.join(", ")}`,
-  );
 }
 
 async function handleCompile(args: string[]): Promise<void> {

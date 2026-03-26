@@ -79,7 +79,7 @@ describe("buildSubAgentArgs", () => {
     expect(args).toEqual([
       "--agent",
       "/path/to/agent.md",
-      "--print",
+      "--output-format", "stream-json",
       "--dangerously-skip-permissions",
       "--model",
       "sonnet",
