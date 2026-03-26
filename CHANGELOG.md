@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.5
+
+- Add end-of-run summary report showing per-phase time, task completion, judge results, retries, token usage, and cost
+- Switch CLI subprocess output from `--print` to `--output-format stream-json` to capture token usage from Claude CLI result events
+- Extract and accumulate token usage (input/output tokens, cost) per phase
+
 ## 0.7.4
 
 - Randomize orchestrator spinner message from 10 fun labels instead of always showing "Orchestrating…"
