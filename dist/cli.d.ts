@@ -19,6 +19,9 @@ export type RunContext = {
     timeout?: number;
     judgeMode: "always" | "on-failure" | "never";
     judgeModel?: string;
+    devServerCommand?: string;
+    saveE2eTests: boolean;
+    browserTestRetries: number;
 };
 export declare function buildRunContext(args: string[], env?: Record<string, string | undefined>): {
     context: RunContext;

@@ -520,6 +520,14 @@ describe("phaseRunner", () => {
       expect(result.passed).toBe(false);
       expect(result.issues).toHaveLength(1);
     });
+
+    it("returns failure for empty string (e.g. CLI process failed with no output)", () => {
+      const result = parseJudgeResult("");
+
+      expect(result.passed).toBe(false);
+      expect(result.issues).toHaveLength(1);
+      expect(result.issues[0]).toMatch(/unparseable/i);
+    });
   });
 
   describe("buildFixPrompt", () => {

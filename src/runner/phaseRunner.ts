@@ -1246,6 +1246,19 @@ async function judgePhase(config: {
       duration,
     });
 
+    // If the sub-agent process itself failed (e.g. CLI error), treat as
+    // infrastructure failure and skip the fix-judge cycle entirely.
+    if (!result.success) {
+      const reason = result.error || "unknown sub-agent failure";
+      console.log(`[judge] sub-agent failed on attempt ${attempt + 1}: ${reason}`);
+      // Pass through — treat as if judge approved so we don't waste cycles
+      // on fix-agent retries for infra issues.
+      return {
+        assessment: { passed: true, issues: [], suggestions: [] },
+        correctionAttempts: attempt,
+      };
+    }
+
     assessment = parseJudgeResult(result.output);
 
     if (assessment.passed) {

@@ -307,10 +307,16 @@ function buildTasksJson(rawPhases, specRef, planRef, projectRoot) {
                 status: "pending",
             });
         }
+        // Heuristic: flag phases that produce visible UI output
+        const UI_KEYWORDS = /\b(component|page|view|route|layout|frontend|template|html|css|style|form|button|modal|dialog|sidebar|navbar|header|footer|dashboard|ui)\b/i;
+        const UI_EXTENSIONS = /\.(tsx|jsx|vue|svelte|html|ejs|hbs|erb)$/;
+        const requiresBrowserTest = tasks.some((t) => UI_KEYWORDS.test(t.title) || UI_KEYWORDS.test(t.description) ||
+            t.targetPaths.some((p) => UI_EXTENSIONS.test(p)));
         phases.push({
             id: phaseId,
             name: rawPhase.name,
             description: "",
+            requiresBrowserTest,
             tasks,
         });
     }

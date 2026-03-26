@@ -69,6 +69,8 @@ function makeDefaultConfig(tmpDir) {
         dryRun: false,
         pluginRoot: join(tmpDir, "plugin"),
         judgeMode: "always",
+        saveE2eTests: false,
+        browserTestRetries: 3,
     };
 }
 function setupTmpDir(tasksJson) {
@@ -203,6 +205,8 @@ describe("e2e integration tests", () => {
                 dryRun: true,
                 pluginRoot: ".",
                 judgeMode: "always",
+                saveE2eTests: false,
+                browserTestRetries: 3,
             };
             const report = dryRunReport(tasksJson, ctx);
             // Contains phase and task info

@@ -3,6 +3,7 @@ import type { SharedState, PhaseReport, JudgeAssessment, JudgeIssue, CheckResult
 import type { RunContext } from "../cli.js";
 import type { UsageStats } from "../ui/streamParser.js";
 import type { ChangedFile } from "../git.js";
+import type { BrowserAcceptanceReport } from "../types/state.js";
 export type PhaseRunnerResult = {
     success: boolean;
     phasesCompleted: string[];
@@ -10,6 +11,7 @@ export type PhaseRunnerResult = {
     finalState: SharedState;
     phaseDurations: Record<string, number>;
     totalDuration: number;
+    browserAcceptanceReport?: BrowserAcceptanceReport;
     phaseTokens: Record<string, UsageStats>;
 };
 export declare function collectLearnings(state: SharedState): {

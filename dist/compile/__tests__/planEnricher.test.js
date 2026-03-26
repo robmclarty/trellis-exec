@@ -16,6 +16,7 @@ function makeTasksJson(overrides) {
                 id: "phase-1",
                 name: "Setup",
                 description: "",
+                requiresBrowserTest: false,
                 tasks: [
                     {
                         id: "phase-1-task-1",

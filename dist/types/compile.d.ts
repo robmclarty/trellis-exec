@@ -17,6 +17,7 @@ export declare const ParseResultSchema: z.ZodObject<{
             id: z.ZodString;
             name: z.ZodString;
             description: z.ZodString;
+            requiresBrowserTest: z.ZodDefault<z.ZodOptional<z.ZodBoolean>>;
             tasks: z.ZodArray<z.ZodObject<{
                 id: z.ZodString;
                 title: z.ZodString;

@@ -90,6 +90,7 @@ export function buildSubAgentArgs(
     "--agent",
     agentFile,
     "--output-format", "stream-json",
+    "--verbose",
     "--dangerously-skip-permissions",
     "--model",
     model,

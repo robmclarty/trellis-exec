@@ -45,6 +45,7 @@ function makeTasksJson() {
                 id: "phase-1",
                 name: "scaffolding",
                 description: "Set up project",
+                requiresBrowserTest: false,
                 tasks: [
                     {
                         id: "task-1-1",
@@ -74,6 +75,7 @@ function makeTasksJson() {
                 id: "phase-2",
                 name: "implementation",
                 description: "Build features",
+                requiresBrowserTest: false,
                 tasks: [
                     {
                         id: "task-2-1",
@@ -132,6 +134,8 @@ function makeDefaultConfig(tmpDir) {
         dryRun: false,
         pluginRoot: join(tmpDir, "plugin"),
         judgeMode: "always",
+        saveE2eTests: false,
+        browserTestRetries: 3,
     };
 }
 function setupTmpDir(tasksJson) {
@@ -393,6 +397,12 @@ describe("phaseRunner", () => {
             const result = parseJudgeResult("This is not JSON at all.");
             expect(result.passed).toBe(false);
             expect(result.issues).toHaveLength(1);
+        });
+        it("returns failure for empty string (e.g. CLI process failed with no output)", () => {
+            const result = parseJudgeResult("");
+            expect(result.passed).toBe(false);
+            expect(result.issues).toHaveLength(1);
+            expect(result.issues[0]).toMatch(/unparseable/i);
         });
     });
     describe("buildFixPrompt", () => {

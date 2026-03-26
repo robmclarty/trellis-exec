@@ -62,10 +62,18 @@ describe("buildSubAgentArgs", () => {
             "--agent",
             "/path/to/agent.md",
             "--output-format", "stream-json",
+            "--verbose",
             "--dangerously-skip-permissions",
             "--model",
             "sonnet",
         ]);
+    });
+    it("includes --verbose when using stream-json (required by CLI for piped stdin)", () => {
+        const args = buildSubAgentArgs("/any/agent.md", "opus");
+        const fmtIndex = args.indexOf("stream-json");
+        const verboseIndex = args.indexOf("--verbose");
+        expect(fmtIndex).toBeGreaterThan(-1);
+        expect(verboseIndex).toBeGreaterThan(-1);
     });
 });
 describe("execClaude", () => {
@@ -153,6 +161,23 @@ describe("createAgentLauncher", () => {
         expect(result.stdout).toBe("[dry-run]");
         expect(result.exitCode).toBe(0);
         expect(mockedSpawn).not.toHaveBeenCalled();
+    });
+    it("dispatchSubAgent returns success:false with stderr when CLI exits non-zero", async () => {
+        const proc = createMockProcess();
+        mockedSpawn.mockReturnValueOnce(proc);
+        const launcher = createAgentLauncher({
+            pluginRoot: "/plugin",
+            projectRoot: "/project",
+        });
+        const promise = launcher.dispatchSubAgent(makeSubAgentConfig());
+        // Simulate CLI failing with empty stdout and an error on stderr
+        // (e.g. missing --verbose for stream-json)
+        proc.stderr.emit("data", Buffer.from("Error: --output-format=stream-json requires --verbose"));
+        proc.emit("close", 1);
+        const result = await promise;
+        expect(result.success).toBe(false);
+        expect(result.error).toContain("stream-json requires --verbose");
+        expect(result.output).toBe(""); // no useful output captured
     });
     it("runPhaseOrchestrator with verbose includes stream-json args", async () => {
         const proc = createMockProcess();

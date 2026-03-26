@@ -22,6 +22,25 @@ export const DecisionEntrySchema = z.object({
 });
 export const PhaseReportStatusSchema = z.enum(["complete", "partial", "failed"]);
 export const RecommendedActionSchema = z.enum(["advance", "retry", "halt"]);
+export const BrowserSmokeReportSchema = z.object({
+    passed: z.boolean(),
+    skipped: z.boolean(),
+    reason: z.string().optional(),
+    consoleErrors: z.array(z.string()),
+    interactionFailures: z.array(z.string()),
+    screenshot: z.string().optional(),
+});
+export const BrowserAcceptanceResultSchema = z.object({
+    criterion: z.string(),
+    passed: z.boolean(),
+    detail: z.string().optional(),
+});
+export const BrowserAcceptanceReportSchema = z.object({
+    passed: z.boolean(),
+    results: z.array(BrowserAcceptanceResultSchema),
+    retries: z.number(),
+    generatedTestPath: z.string().optional(),
+});
 export const PhaseReportSchema = z.object({
     phaseId: z.string(),
     status: PhaseReportStatusSchema,
@@ -29,6 +48,7 @@ export const PhaseReportSchema = z.object({
     tasksCompleted: z.array(z.string()),
     tasksFailed: z.array(z.string()),
     judgeAssessment: JudgeAssessmentSchema.optional(),
+    browserSmokeReport: BrowserSmokeReportSchema.optional(),
     orchestratorAnalysis: z.string(),
     recommendedAction: RecommendedActionSchema,
     correctiveTasks: z.array(z.string()),

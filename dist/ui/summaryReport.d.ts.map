@@ -1,1 +1,1 @@
-{"version":3,"file":"summaryReport.d.ts","sourceRoot":"","sources":["../../src/ui/summaryReport.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,EAAE,iBAAiB,EAAE,MAAM,0BAA0B,CAAC;AAgBlE,wBAAgB,gBAAgB,CAAC,KAAK,EAAE,MAAM,GAAG,MAAM,CAQtD;AAyED,wBAAgB,mBAAmB,CAAC,MAAM,EAAE,iBAAiB,GAAG,MAAM,CA2ErE"}
+{"version":3,"file":"summaryReport.d.ts","sourceRoot":"","sources":["../../src/ui/summaryReport.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,EAAE,iBAAiB,EAAE,MAAM,0BAA0B,CAAC;AAgBlE,wBAAgB,gBAAgB,CAAC,KAAK,EAAE,MAAM,GAAG,MAAM,CAQtD;AAyED,wBAAgB,mBAAmB,CAAC,MAAM,EAAE,iBAAiB,GAAG,MAAM,CAuGrE"}
