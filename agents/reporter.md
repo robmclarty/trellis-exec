@@ -12,6 +12,7 @@ You generate a phase completion report for the Trellis execution system. The orc
 ## Input
 
 You receive:
+
 - Phase metadata (ID, tasks with acceptance criteria)
 - Git diff showing all changes made during this phase
 - List of changed files

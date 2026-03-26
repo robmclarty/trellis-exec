@@ -41,6 +41,7 @@ Cleanup                     →  logger.close()
 The orchestrator is spawned as a single `claude --agent --print` subprocess that runs to completion. It receives the full phase context via stdin and uses native Claude tools (Read, Write, Edit, Bash, Glob, Grep) to execute tasks. The orchestrator signals completion by writing a `.trellis-phase-report.json` file to the project root.
 
 The phase context includes:
+
 - Phase name, description, and all tasks with acceptance criteria
 - Prior phase handoff briefing
 - Shared state summary (completed phases, learnings)
@@ -57,7 +58,8 @@ The orchestrator writes a `.trellis-phase-report.json` file to the project root 
 ### Git commit protocol
 
 The orchestrator creates **per-task commits** using conventional commit format during execution:
-```
+
+```text
 <type>(<scope>): <summary>
 
 - <change 1>
@@ -65,7 +67,8 @@ The orchestrator creates **per-task commits** using conventional commit format d
 ```
 
 After the phase advances, the runner creates a **phase-level commit** for any remaining uncommitted changes:
-```
+
+```text
 feat(auth,api): [trellis phase-2] Implemented user authentication
 
 - Created LoginForm component
@@ -81,6 +84,7 @@ After the orchestrator completes a phase, the runner dispatches a **judge agent*
 #### Judge model selection
 
 The judge uses **adaptive model selection** based on diff size:
+
 - Small diffs (<150 lines) with few tasks (<3) → Sonnet
 - Larger diffs or more tasks → Opus
 - Explicit `--judge-model` override takes precedence
@@ -107,6 +111,7 @@ The judge returns a `JudgeAssessment`:
 ```
 
 Where `JudgeIssue` is either a plain string or a structured object:
+
 ```typescript
 { task?: string; severity?: string; description: string }
 ```
@@ -160,6 +165,7 @@ In `runSinglePhase()`: Same behavior, but also downgrades the status to `"partia
 ### Test auto-detection
 
 If no `--check` command is provided, the runner automatically detects test suites when new test files appear:
+
 - Checks `package.json` for a `test` script → `npm test`
 - Checks for common config files (`vitest.config.ts`, `jest.config.js`, etc.) → appropriate `npx` command
 

@@ -8,7 +8,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import type { TasksJson } from "../../types/tasks.js";
+import type { TasksJson, Task } from "../../types/tasks.js";
 import type { PhaseReport } from "../../types/state.js";
 import {
   initState,
@@ -324,7 +324,7 @@ describe("stateManager", () => {
       };
 
       const updated = applyReportToTasks(tasks, "phase-1", report);
-      const task = updated.phases[0]?.tasks.find((t) => t.id === "task-1-1");
+      const task = updated.phases[0]?.tasks.find((t: Task) => t.id === "task-1-1");
       expect(task?.status).toBe("complete");
     });
 
@@ -337,7 +337,7 @@ describe("stateManager", () => {
       };
 
       const updated = applyReportToTasks(tasks, "phase-1", report);
-      const task = updated.phases[0]?.tasks.find((t) => t.id === "task-1-1");
+      const task = updated.phases[0]?.tasks.find((t: Task) => t.id === "task-1-1");
       expect(task?.status).toBe("failed");
     });
 
@@ -350,7 +350,7 @@ describe("stateManager", () => {
       };
 
       const updated = applyReportToTasks(tasks, "phase-1", report);
-      const task = updated.phases[0]?.tasks.find((t) => t.id === "task-1-1");
+      const task = updated.phases[0]?.tasks.find((t: Task) => t.id === "task-1-1");
       expect(task?.status).toBe("complete");
       // No error thrown for unknown task
     });
@@ -364,7 +364,7 @@ describe("stateManager", () => {
       };
 
       applyReportToTasks(tasks, "phase-1", report);
-      const task = tasks.phases[0]?.tasks.find((t) => t.id === "task-1-1");
+      const task = tasks.phases[0]?.tasks.find((t: Task) => t.id === "task-1-1");
       expect(task?.status).toBe("pending");
     });
   });
