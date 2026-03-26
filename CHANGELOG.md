@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.3
+
+- Start judge attempt count at 1 instead of 0 for user-friendly output
+- Use descriptive log message when orchestrator starts, keep spinner as "Orchestrating…"
+- Adjust spinner frames so bounce endpoints show 1 bar instead of 0
+
 ## 0.7.2
 
 - Fix false projectRoot/git-root mismatch warning on case-insensitive filesystems (macOS) by using `realpathSync` for path canonicalization
