@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, unlinkSync, statSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, unlinkSync, statSync, realpathSync } from "node:fs";
 import { resolve, basename, join } from "node:path";
 import { createInterface } from "node:readline";
 import { JudgeAssessmentSchema } from "../types/state.js";
@@ -28,7 +28,7 @@ function warnIfProjectRootSuspect(projectRoot) {
             `Set "projectRoot" in tasks.json to a relative path from the tasks.json directory to the actual project root (e.g. "../..").`);
     }
     const gitRoot = getGitRoot(resolved);
-    if (gitRoot && resolve(gitRoot) !== resolved) {
+    if (gitRoot && realpathSync(gitRoot) !== realpathSync(resolved)) {
         console.warn(`⚠ Warning: projectRoot (${resolved}) differs from git root (${gitRoot}). ` +
             `Files committed by the orchestrator may not be found by the completion verifier.`);
     }
@@ -1219,6 +1219,9 @@ export async function runPhases(ctx, tasksJson) {
                         correctiveTasks: [...report.correctiveTasks, ...verification.failures],
                     };
                 }
+                else {
+                    console.log(`Completion verification passed for "${phase.id}".`);
+                }
             }
             state = { ...state, phaseReport: report };
             saveState(localCtx.statePath, state);
@@ -1443,6 +1446,9 @@ export async function runSinglePhase(ctx, tasksJson, phaseId) {
                     recommendedAction: "retry",
                     correctiveTasks: [...report.correctiveTasks, ...verification.failures],
                 };
+            }
+            else {
+                console.log(`Completion verification passed for "${phase.id}".`);
             }
         }
         // Judge loop: runs based on judgeMode setting

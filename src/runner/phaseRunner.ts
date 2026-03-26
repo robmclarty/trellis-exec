@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, unlinkSync, statSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, unlinkSync, statSync, realpathSync } from "node:fs";
 import { resolve, basename, join } from "node:path";
 import { createInterface } from "node:readline";
 import type { TasksJson, Phase, Task } from "../types/tasks.js";
@@ -57,7 +57,7 @@ function warnIfProjectRootSuspect(projectRoot: string): void {
     );
   }
   const gitRoot = getGitRoot(resolved);
-  if (gitRoot && resolve(gitRoot) !== resolved) {
+  if (gitRoot && realpathSync(gitRoot) !== realpathSync(resolved)) {
     console.warn(
       `⚠ Warning: projectRoot (${resolved}) differs from git root (${gitRoot}). ` +
       `Files committed by the orchestrator may not be found by the completion verifier.`,
@@ -1550,6 +1550,8 @@ export async function runPhases(
             recommendedAction: "retry",
             correctiveTasks: [...report.correctiveTasks, ...verification.failures],
           };
+        } else {
+          console.log(`Completion verification passed for "${phase.id}".`);
         }
       }
 
@@ -1831,6 +1833,8 @@ export async function runSinglePhase(
           recommendedAction: "retry",
           correctiveTasks: [...report.correctiveTasks, ...verification.failures],
         };
+      } else {
+        console.log(`Completion verification passed for "${phase.id}".`);
       }
     }
 
