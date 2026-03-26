@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.2
+
+- Fix false projectRoot/git-root mismatch warning on case-insensitive filesystems (macOS) by using `realpathSync` for path canonicalization
+- Add success log for completion verifier so users can confirm it ran
+
 ## 0.7.1
 
 - Fix projectRoot resolution: auto-detect git root instead of defaulting to tasks.json directory, preventing infinite retry loops when tasks.json lives in a subdirectory like `.specs/feature/`
