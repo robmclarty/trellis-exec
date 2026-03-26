@@ -89,6 +89,60 @@ describe("verifyCompletion", () => {
       );
     });
 
+    it("returns single diagnostic when ALL target paths are missing (projectRoot misconfiguration)", () => {
+      mockExistsSync.mockReturnValue(false);
+
+      const phase = makePhase({
+        tasks: [
+          {
+            id: "task-1",
+            title: "Create module",
+            description: "Create a module",
+            dependsOn: [],
+            specSections: [],
+            targetPaths: ["src/foo.ts", "src/bar.ts"],
+            acceptanceCriteria: [],
+            subAgentType: "implement",
+            status: "pending",
+          },
+          {
+            id: "task-2",
+            title: "Create config",
+            description: "Create config",
+            dependsOn: [],
+            specSections: [],
+            targetPaths: ["config.json"],
+            acceptanceCriteria: [],
+            subAgentType: "implement",
+            status: "pending",
+          },
+        ],
+      });
+
+      const report = makeReport({
+        tasksCompleted: ["task-1", "task-2"],
+      });
+
+      const result = verifyCompletion("/wrong/root", phase, report);
+      expect(result.passed).toBe(false);
+      // Should return a single diagnostic, not per-file failures
+      expect(result.failures).toHaveLength(1);
+      expect(result.failures[0]).toContain("All 3 target paths missing");
+      expect(result.failures[0]).toContain("projectRoot may be misconfigured");
+    });
+
+    it("returns per-file failures when only some target paths are missing", () => {
+      mockExistsSync.mockImplementation((p) => {
+        return !String(p).endsWith("bar.ts");
+      });
+
+      const result = verifyCompletion("/project", makePhase(), makeReport());
+      expect(result.passed).toBe(false);
+      // Should have individual failure, not the blanket diagnostic
+      expect(result.failures).toHaveLength(1);
+      expect(result.failures[0]).toContain("target path missing: src/bar.ts");
+    });
+
     it("skips target path check for failed tasks", () => {
       mockExistsSync.mockReturnValue(false);
 

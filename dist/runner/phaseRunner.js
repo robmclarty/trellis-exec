@@ -7,7 +7,7 @@ import { validateDependencies, resolveExecutionOrder, detectTargetPathOverlaps, 
 import { createTrajectoryLogger } from "../logging/trajectoryLogger.js";
 import { startSpinner } from "../ui/spinner.js";
 import { createStreamHandler, extractResultText } from "../ui/streamParser.js";
-import { getChangedFiles, getDiffContent, getCurrentSha, ensureInitialCommit, commitAll, getChangedFilesRange, getDiffContentRange, } from "../git.js";
+import { getChangedFiles, getDiffContent, getCurrentSha, ensureInitialCommit, commitAll, getChangedFilesRange, getDiffContentRange, getGitRoot, } from "../git.js";
 import { createCheckRunner } from "../verification/checkRunner.js";
 import { verifyCompletion } from "../verification/completionVerifier.js";
 import { createAgentLauncher } from "../orchestrator/agentLauncher.js";
@@ -15,6 +15,24 @@ import { createAgentLauncher } from "../orchestrator/agentLauncher.js";
 // Constants
 // ---------------------------------------------------------------------------
 const REPORT_FILENAME = ".trellis-phase-report.json";
+/**
+ * Warn if projectRoot looks misconfigured (e.g. points inside .specs/).
+ * This is advisory — it doesn't block execution, but surfaces the problem
+ * early instead of waiting for the completion verifier to fail.
+ */
+function warnIfProjectRootSuspect(projectRoot) {
+    const resolved = resolve(projectRoot);
+    if (/[/\\]\.specs([/\\]|$)/.test(resolved)) {
+        console.warn(`⚠ Warning: projectRoot resolves inside .specs/ (${resolved}). ` +
+            `This is likely a misconfiguration — target path checks will fail. ` +
+            `Set "projectRoot" in tasks.json to a relative path from the tasks.json directory to the actual project root (e.g. "../..").`);
+    }
+    const gitRoot = getGitRoot(resolved);
+    if (gitRoot && resolve(gitRoot) !== resolved) {
+        console.warn(`⚠ Warning: projectRoot (${resolved}) differs from git root (${gitRoot}). ` +
+            `Files committed by the orchestrator may not be found by the completion verifier.`);
+    }
+}
 // ---------------------------------------------------------------------------
 // Pure helpers
 // ---------------------------------------------------------------------------
@@ -1148,6 +1166,7 @@ export async function runPhases(ctx, tasksJson) {
     const phasesCompleted = [];
     const phasesFailed = [];
     const projectRoot = ctx.projectRoot;
+    warnIfProjectRootSuspect(projectRoot);
     // Handle dry run early
     if (ctx.dryRun) {
         const report = dryRunReport(mutableTasksJson, ctx);
@@ -1397,6 +1416,7 @@ export async function runSinglePhase(ctx, tasksJson, phaseId) {
     const phasesCompleted = [];
     const phasesFailed = [];
     const projectRoot = localCtx.projectRoot;
+    warnIfProjectRootSuspect(projectRoot);
     try {
         state = { ...state, currentPhase: phase.id };
         // Pre-phase contract review (advisory only)

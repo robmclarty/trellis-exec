@@ -243,6 +243,31 @@ describe("parseCompileArgs", () => {
         ]);
         expect(result.guidelinesPath).toBeUndefined();
     });
+    it("defaults projectRoot to relative path from output dir to git root", () => {
+        // When output is in a subdirectory of the repo, projectRoot should
+        // be a relative path back to the git root, not "."
+        const result = parseCompileArgs([
+            "plan.md",
+            "--spec",
+            "spec.md",
+            "--output",
+            ".specs/feature/tasks.json",
+        ]);
+        // The output dir is .specs/feature/ which is 2 levels below the git root
+        expect(result.projectRoot).toBe("../..");
+    });
+    it("uses explicit --project-root over git root detection", () => {
+        const result = parseCompileArgs([
+            "plan.md",
+            "--spec",
+            "spec.md",
+            "--project-root",
+            "/some/explicit/path",
+        ]);
+        // Should be a relative path from the output dir to the explicit path
+        expect(result.projectRoot).toBeDefined();
+        expect(result.projectRoot).not.toBe(".");
+    });
 });
 describe("parseStatusArgs", () => {
     it("parses tasks.json path", () => {

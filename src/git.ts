@@ -1,5 +1,21 @@
 import { execFileSync } from "node:child_process";
 
+/**
+ * Returns the absolute path of the git repository root for the given directory,
+ * or null if the directory is not inside a git repository.
+ */
+export function getGitRoot(cwd: string): string | null {
+  try {
+    return execFileSync(
+      "git",
+      ["rev-parse", "--show-toplevel"],
+      { cwd, encoding: "utf-8", stdio: "pipe" },
+    ).trim();
+  } catch {
+    return null;
+  }
+}
+
 export type ChangedFile = {
   path: string;
   status: "A" | "M" | "D" | "R" | (string & {});

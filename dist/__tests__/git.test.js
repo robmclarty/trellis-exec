@@ -1,9 +1,9 @@
 import { describe, it, beforeEach, afterEach, expect } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
-import { getCurrentSha, ensureInitialCommit, commitAll, getChangedFiles, getChangedFilesRange, getDiffContent, getDiffContentRange, } from "../git.js";
+import { getGitRoot, getCurrentSha, ensureInitialCommit, commitAll, getChangedFiles, getChangedFilesRange, getDiffContent, getDiffContentRange, } from "../git.js";
 function git(cwd, ...args) {
     return execFileSync("git", args, {
         cwd,
@@ -23,6 +23,30 @@ describe("git utilities", () => {
     });
     afterEach(() => {
         rmSync(tmpDir, { recursive: true, force: true });
+    });
+    describe("getGitRoot", () => {
+        it("returns the repository root for a git repo", () => {
+            initRepo(tmpDir);
+            const root = getGitRoot(tmpDir);
+            // git returns the realpath (resolves symlinks like /tmp -> /private/tmp on macOS)
+            expect(root).toBe(realpathSync(tmpDir));
+        });
+        it("returns the repo root from a subdirectory", () => {
+            initRepo(tmpDir);
+            const sub = join(tmpDir, "a", "b");
+            execFileSync("mkdir", ["-p", sub]);
+            const root = getGitRoot(sub);
+            expect(root).toBe(realpathSync(tmpDir));
+        });
+        it("returns null for a non-git directory", () => {
+            const nonGit = mkdtempSync(join(tmpdir(), "no-git-"));
+            try {
+                expect(getGitRoot(nonGit)).toBeNull();
+            }
+            finally {
+                rmSync(nonGit, { recursive: true, force: true });
+            }
+        });
     });
     describe("getCurrentSha", () => {
         it("returns null for a repo with no commits", () => {

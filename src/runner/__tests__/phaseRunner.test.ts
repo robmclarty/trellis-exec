@@ -32,6 +32,7 @@ vi.mock("../../git.js", () => ({
   commitAll: vi.fn(() => null),
   getChangedFilesRange: vi.fn(() => []),
   getDiffContentRange: vi.fn(() => ""),
+  getGitRoot: vi.fn(() => null),
 }));
 
 // Import module under test and mocked modules AFTER vi.mock declarations

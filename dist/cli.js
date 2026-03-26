@@ -6,6 +6,7 @@ import { parseArgs } from "node:util";
 import { TasksJsonSchema } from "./types/tasks.js";
 import { loadState } from "./runner/stateManager.js";
 import { parsePlan } from "./compile/planParser.js";
+import { getGitRoot } from "./git.js";
 import { compilePlan } from "./compile/compilePlan.js";
 import { execClaude, COMPILE_TIMEOUT, LONG_RUN_TIMEOUT } from "./orchestrator/agentLauncher.js";
 import { runPhases, runSinglePhase, dryRunReport, } from "./runner/phaseRunner.js";
@@ -201,9 +202,10 @@ export function parseCompileArgs(args) {
     }
     const outputPath = resolve(values.output ?? "./tasks.json");
     // projectRoot stored as relative path from output dir to project root
+    const outputDir = dirname(outputPath);
     const projectRoot = values["project-root"]
-        ? relative(dirname(outputPath), resolve(values["project-root"])) || "."
-        : ".";
+        ? relative(outputDir, resolve(values["project-root"])) || "."
+        : relative(outputDir, getGitRoot(resolve(outputDir)) ?? resolve(".")) || ".";
     const timeout = values.timeout ? parseInt(values.timeout, 10) : undefined;
     if (timeout !== undefined && (isNaN(timeout) || timeout <= 0)) {
         console.error("Error: --timeout must be a positive integer (milliseconds).");

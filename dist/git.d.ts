@@ -1,3 +1,8 @@
+/**
+ * Returns the absolute path of the git repository root for the given directory,
+ * or null if the directory is not inside a git repository.
+ */
+export declare function getGitRoot(cwd: string): string | null;
 export type ChangedFile = {
     path: string;
     status: "A" | "M" | "D" | "R" | (string & {});

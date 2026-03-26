@@ -1,5 +1,17 @@
 import { execFileSync } from "node:child_process";
 /**
+ * Returns the absolute path of the git repository root for the given directory,
+ * or null if the directory is not inside a git repository.
+ */
+export function getGitRoot(cwd) {
+    try {
+        return execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf-8", stdio: "pipe" }).trim();
+    }
+    catch {
+        return null;
+    }
+}
+/**
  * Returns the list of files changed relative to HEAD.
  *
  * `git diff --name-status HEAD` captures what changed since the last commit.

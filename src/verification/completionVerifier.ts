@@ -24,16 +24,33 @@ export function verifyCompletion(
   const failures: string[] = [];
 
   // 1. Target path existence: completed tasks must have their targetPaths on disk
+  let totalTargetPaths = 0;
+  let missingTargetPaths = 0;
   for (const task of phase.tasks) {
     if (!report.tasksCompleted.includes(task.id)) continue;
     for (const targetPath of task.targetPaths) {
+      totalTargetPaths++;
       const absPath = resolve(projectRoot, targetPath);
       if (!existsSync(absPath)) {
+        missingTargetPaths++;
         failures.push(
           `[${task.id}] target path missing: ${targetPath}`,
         );
       }
     }
+  }
+
+  // If ALL target paths are missing, this is almost certainly a projectRoot
+  // misconfiguration rather than individual files not being created.
+  // Replace per-file failures with a single diagnostic to prevent corrective
+  // task snowball on retries.
+  if (totalTargetPaths > 0 && missingTargetPaths === totalTargetPaths) {
+    return {
+      passed: false,
+      failures: [
+        `All ${totalTargetPaths} target paths missing — projectRoot may be misconfigured (resolved to: ${resolve(projectRoot)})`,
+      ],
+    };
   }
 
   // 2. TODO/FIXME/HACK scan on newly added files
