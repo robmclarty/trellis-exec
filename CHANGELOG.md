@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.7.0
+
+- Relax sub-agent tool restrictions: implement agent gains Glob/Grep, scaffold agent gains Edit
+- Increase default orchestrator timeout to 30 minutes, add `--long-run` flag for 2-hour timeout
+- Add long-running phase protocol with intermediate commit reminders for reporter fallback safety
+- Add lightweight completion verification pass (target path existence, TODO/FIXME scan) before judge
+- Replace flat 20-entry decisionsLog cap with tiered learnings: architectural decisions never evicted
+- Add pre-phase contract review that flags missing or vague acceptance criteria before execution
+- Add long-running harness comparison doc analyzing Trellis against Anthropic research
+
 ## 0.6.2
 
 - Fix caller mutation: deep-clone tasksJson in runPhases and shallow-copy ctx to prevent side effects
