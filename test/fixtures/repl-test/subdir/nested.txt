@@ -1,3 +1,0 @@
-Nested file content
-with multiple lines
-searchable pattern here
