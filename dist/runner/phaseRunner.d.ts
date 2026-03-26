@@ -60,6 +60,11 @@ export declare function parseJudgeResult(output: string): JudgeAssessment;
 /** Format a JudgeIssue (string or object) to a display string. */
 export declare function formatIssue(issue: JudgeIssue): string;
 export declare function buildFixPrompt(issues: JudgeIssue[], phase: Phase): string;
+/**
+ * Builds a prompt for the reporter fallback agent that generates a phase
+ * report from git diff and task context when the orchestrator times out.
+ */
+export declare function buildReporterPrompt(phase: Phase, changedFiles: ChangedFile[], diffContent: string): string;
 export declare function createDefaultCheck(projectRoot: string, phase: Phase): {
     run: () => Promise<CheckResult>;
 };

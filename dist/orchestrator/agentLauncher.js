@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { resolve } from "node:path";
 const DEFAULT_TIMEOUT = 300_000; // 5 minutes for sub-agent execution
-const ORCHESTRATOR_TIMEOUT = 600_000; // 10 minutes for phase orchestration
+const ORCHESTRATOR_TIMEOUT = 900_000; // 15 minutes for phase orchestration
 export const COMPILE_TIMEOUT = 600_000; // 10 minutes for plan decomposition
 /**
  * Assembles the sub-agent prompt following the §5 input contract.
@@ -155,7 +155,7 @@ export function createAgentLauncher(config) {
         }
         return execClaude(args, projectRoot, {
             stdin: prompt,
-            timeout: ORCHESTRATOR_TIMEOUT,
+            timeout: options?.timeout ?? ORCHESTRATOR_TIMEOUT,
             onStdout: options?.onStdout,
             onStderr: options?.onStderr,
         });

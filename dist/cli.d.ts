@@ -16,6 +16,7 @@ export type RunContext = {
     dryRun: boolean;
     pluginRoot: string;
     tasksJsonPath: string;
+    timeout?: number;
     judgeMode: "always" | "on-failure" | "never";
     judgeModel?: string;
 };

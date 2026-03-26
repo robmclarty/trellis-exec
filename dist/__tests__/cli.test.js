@@ -143,6 +143,26 @@ describe("buildRunContext", () => {
         expect(result.context.statePath).toMatch(/^\//);
         expect(result.context.trajectoryPath).toMatch(/^\//);
     });
+    it("parses --timeout flag correctly", () => {
+        const { tmpDir, tasksJsonPath } = createTempTasksJson();
+        trackTmpDir(tmpDir);
+        const result = buildRunContext([tasksJsonPath, "--timeout", "900000"], emptyEnv);
+        expect(result.context.timeout).toBe(900000);
+    });
+    it("defaults to no timeout override when --timeout not provided", () => {
+        const { tmpDir, tasksJsonPath } = createTempTasksJson();
+        trackTmpDir(tmpDir);
+        const result = buildRunContext([tasksJsonPath], emptyEnv);
+        expect(result.context.timeout).toBeUndefined();
+    });
+    it("uses TRELLIS_EXEC_TIMEOUT env var as fallback", () => {
+        const { tmpDir, tasksJsonPath } = createTempTasksJson();
+        trackTmpDir(tmpDir);
+        const result = buildRunContext([tasksJsonPath], {
+            TRELLIS_EXEC_TIMEOUT: "1200000",
+        });
+        expect(result.context.timeout).toBe(1200000);
+    });
 });
 describe("parseCompileArgs", () => {
     it("parses plan path and --spec flag", () => {

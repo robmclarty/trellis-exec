@@ -13,6 +13,8 @@ export type AgentLauncherConfig = {
 export type OrchestratorOptions = {
     /** Stream NDJSON events via --output-format stream-json */
     verbose?: boolean;
+    /** Override the default orchestrator timeout (milliseconds) */
+    timeout?: number;
     onStdout?: ((chunk: string) => void) | undefined;
     onStderr?: ((chunk: string) => void) | undefined;
 };

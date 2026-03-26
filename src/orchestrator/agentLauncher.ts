@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import type { SubAgentConfig, SubAgentResult } from "../types/agents.js";
 
 const DEFAULT_TIMEOUT = 300_000; // 5 minutes for sub-agent execution
-const ORCHESTRATOR_TIMEOUT = 600_000; // 10 minutes for phase orchestration
+const ORCHESTRATOR_TIMEOUT = 900_000; // 15 minutes for phase orchestration
 export const COMPILE_TIMEOUT = 600_000; // 10 minutes for plan decomposition
 
 export type ExecClaudeResult = {
@@ -21,6 +21,8 @@ export type AgentLauncherConfig = {
 export type OrchestratorOptions = {
   /** Stream NDJSON events via --output-format stream-json */
   verbose?: boolean;
+  /** Override the default orchestrator timeout (milliseconds) */
+  timeout?: number;
   onStdout?: ((chunk: string) => void) | undefined;
   onStderr?: ((chunk: string) => void) | undefined;
 };
@@ -239,7 +241,7 @@ export function createAgentLauncher(config: AgentLauncherConfig): AgentLauncher 
 
     return execClaude(args, projectRoot, {
       stdin: prompt,
-      timeout: ORCHESTRATOR_TIMEOUT,
+      timeout: options?.timeout ?? ORCHESTRATOR_TIMEOUT,
       onStdout: options?.onStdout,
       onStderr: options?.onStderr,
     });

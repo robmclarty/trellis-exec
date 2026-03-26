@@ -657,6 +657,38 @@ export function buildFixPrompt(issues, phase) {
     lines.push("After fixing, print a brief summary of what you changed for each issue.");
     return lines.join("\n");
 }
+/**
+ * Builds a prompt for the reporter fallback agent that generates a phase
+ * report from git diff and task context when the orchestrator times out.
+ */
+export function buildReporterPrompt(phase, changedFiles, diffContent) {
+    const lines = [];
+    lines.push("# Phase Report Request");
+    lines.push("");
+    lines.push(`Phase: ${phase.name} (${phase.id})`);
+    lines.push("The orchestrator timed out after completing implementation work.");
+    lines.push("Generate a phase report based on the git changes below.");
+    lines.push("");
+    lines.push("## Tasks");
+    lines.push("");
+    for (const task of phase.tasks) {
+        lines.push(`### ${task.id}: ${task.title}`);
+        lines.push(`Target paths: ${task.targetPaths.join(", ")}`);
+        lines.push(`Acceptance criteria: ${task.acceptanceCriteria.join("; ")}`);
+        lines.push("");
+    }
+    lines.push("## Changed Files");
+    lines.push("");
+    for (const f of changedFiles) {
+        lines.push(`- [${f.status}] ${f.path}`);
+    }
+    lines.push("");
+    lines.push("## Diff");
+    lines.push("```");
+    lines.push(diffContent.slice(0, 50_000));
+    lines.push("```");
+    return lines.join("\n");
+}
 async function judgePhase(config) {
     const maxCorrections = config.maxCorrections ?? 2;
     const { phase, report, projectRoot, ctx, logger, startSha } = config;
@@ -819,6 +851,52 @@ export function createDefaultCheck(projectRoot, phase) {
         },
     };
 }
+/**
+ * Reads, parses, normalizes, and validates a `.trellis-phase-report.json` file.
+ * Returns a PhaseExecResult or null if the file is missing or unparseable.
+ * Cleans up the report file after reading.
+ */
+function parseReportFile(reportPath, phase, startSha) {
+    if (!existsSync(reportPath))
+        return null;
+    let rawReport;
+    try {
+        rawReport = JSON.parse(readFileSync(reportPath, "utf-8"));
+    }
+    catch {
+        return null;
+    }
+    const report = normalizeReport(rawReport, phase.id);
+    try {
+        unlinkSync(reportPath);
+    }
+    catch { /* ignore */ }
+    // Validate all task IDs are accounted for
+    const allTaskIds = phase.tasks.map((t) => t.id);
+    const accountedFor = new Set([...report.tasksCompleted, ...report.tasksFailed]);
+    const missing = allTaskIds.filter((id) => !accountedFor.has(id));
+    if (missing.length > 0) {
+        console.log(`Report missing ${missing.length} task(s): ${missing.join(", ")}. Marking as partial.`);
+        return {
+            status: "partial",
+            report: {
+                ...report,
+                startSha,
+                status: "partial",
+                recommendedAction: "retry",
+                tasksFailed: [...report.tasksFailed, ...missing],
+                correctiveTasks: [
+                    ...report.correctiveTasks,
+                    `Tasks not accounted for in report: ${missing.join(", ")}`,
+                ],
+            },
+        };
+    }
+    return {
+        status: report.status === "complete" ? "complete" : report.status,
+        report: { ...report, startSha },
+    };
+}
 // ---------------------------------------------------------------------------
 // Single phase execution
 // ---------------------------------------------------------------------------
@@ -847,20 +925,24 @@ async function executePhase(ctx, phase, state, projectRoot, logger) {
     const spinner = startSpinner("Orchestrating…");
     try {
         const startTime = Date.now();
-        const result = await launcher.runPhaseOrchestrator(phaseContext, agentFile, ctx.model, ctx.verbose
-            ? {
-                verbose: true,
-                onStdout: createStreamHandler((event) => {
-                    if (event.type === "text" && event.text.length > 0) {
-                        spinner.pause();
-                        process.stdout.write(event.text);
-                        if (!event.text.endsWith("\n"))
-                            process.stdout.write("\n");
-                        spinner.resume();
-                    }
-                }),
-            }
-            : undefined);
+        const orchestratorOptions = {
+            ...(ctx.verbose
+                ? {
+                    verbose: true,
+                    onStdout: createStreamHandler((event) => {
+                        if (event.type === "text" && event.text.length > 0) {
+                            spinner.pause();
+                            process.stdout.write(event.text);
+                            if (!event.text.endsWith("\n"))
+                                process.stdout.write("\n");
+                            spinner.resume();
+                        }
+                    }),
+                }
+                : {}),
+            ...(ctx.timeout !== undefined ? { timeout: ctx.timeout } : {}),
+        };
+        const result = await launcher.runPhaseOrchestrator(phaseContext, agentFile, ctx.model, Object.keys(orchestratorOptions).length > 0 ? orchestratorOptions : undefined);
         const duration = Date.now() - startTime;
         spinner.stop();
         // When streaming, stdout is raw NDJSON — extract the result text
@@ -881,64 +963,52 @@ async function executePhase(ctx, phase, state, projectRoot, logger) {
                 console.log(`[orchestrator] stderr: ${result.stderr.slice(0, 500)}`);
             }
         }
-        // Read the report file
-        if (!existsSync(reportPath)) {
+        // Read and parse the report file
+        const parsed = parseReportFile(reportPath, phase, startSha);
+        if (!parsed) {
             const reason = result.exitCode !== 0
                 ? `orchestrator exited with code ${result.exitCode}`
-                : "orchestrator did not write report file";
+                : "orchestrator did not write report file or it contained invalid JSON";
             console.log(`Warning: ${reason}`);
             return {
                 status: "failed",
                 report: { ...buildPartialReport(phase.id, phase, reason), startSha },
             };
         }
-        let rawReport;
-        try {
-            rawReport = JSON.parse(readFileSync(reportPath, "utf-8"));
-        }
-        catch {
-            return {
-                status: "failed",
-                report: { ...buildPartialReport(phase.id, phase, "report file contained invalid JSON"), startSha },
-            };
-        }
-        const report = normalizeReport(rawReport, phase.id);
-        // Clean up temp report file — data is now stored in state.phaseReport
-        try {
-            unlinkSync(reportPath);
-        }
-        catch { /* ignore */ }
-        // Validate all task IDs are accounted for
-        const allTaskIds = phase.tasks.map((t) => t.id);
-        const accountedFor = new Set([...report.tasksCompleted, ...report.tasksFailed]);
-        const missing = allTaskIds.filter((id) => !accountedFor.has(id));
-        if (missing.length > 0) {
-            console.log(`Report missing ${missing.length} task(s): ${missing.join(", ")}. Marking as partial.`);
-            return {
-                status: "partial",
-                report: {
-                    ...report,
-                    startSha,
-                    status: "partial",
-                    recommendedAction: "retry",
-                    tasksFailed: [...report.tasksFailed, ...missing],
-                    correctiveTasks: [
-                        ...report.correctiveTasks,
-                        `Tasks not accounted for in report: ${missing.join(", ")}`,
-                    ],
-                },
-            };
-        }
-        return {
-            status: report.status === "complete" ? "complete" : report.status,
-            report: { ...report, startSha },
-        };
+        return parsed;
     }
     catch (err) {
         spinner.stop();
         const reason = err instanceof Error ? err.message : "unexpected error";
         if (ctx.verbose) {
             console.error(`[executePhase] error:`, err);
+        }
+        // Reporter fallback: if orchestrator timed out but committed work,
+        // dispatch a lightweight reporter agent to generate the report
+        const isTimeout = reason.includes("timed out");
+        const changedFiles = startSha
+            ? getChangedFilesRange(projectRoot, startSha)
+            : [];
+        if (isTimeout && changedFiles.length > 0 && !existsSync(reportPath)) {
+            console.log("Orchestrator timed out with committed work. Dispatching reporter…");
+            try {
+                const diffContent = getDiffContentRange(projectRoot, startSha);
+                const reporterPrompt = buildReporterPrompt(phase, changedFiles, diffContent);
+                await launcher.dispatchSubAgent({
+                    type: "reporter",
+                    taskId: `${phase.id}-reporter`,
+                    instructions: reporterPrompt,
+                    filePaths: changedFiles.map((f) => f.path),
+                    outputPaths: [".trellis-phase-report.json"],
+                });
+                // If reporter wrote the report, parse it normally
+                const parsed = parseReportFile(reportPath, phase, startSha);
+                if (parsed)
+                    return parsed;
+            }
+            catch {
+                // Reporter failed — fall through to partial report
+            }
         }
         return {
             status: "failed",

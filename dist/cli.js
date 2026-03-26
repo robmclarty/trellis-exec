@@ -83,6 +83,7 @@ export function buildRunContext(args, env = process.env) {
             guidelines: { type: "string" },
             judge: { type: "string" },
             "judge-model": { type: "string" },
+            timeout: { type: "string" },
             headless: { type: "boolean", default: false },
             verbose: { type: "boolean", default: false },
         },
@@ -135,6 +136,12 @@ export function buildRunContext(args, env = process.env) {
     const judgeModel = values["judge-model"] ??
         env.TRELLIS_EXEC_JUDGE_MODEL ??
         undefined;
+    const timeoutRaw = values.timeout ?? env.TRELLIS_EXEC_TIMEOUT ?? undefined;
+    const timeout = timeoutRaw ? parseInt(timeoutRaw, 10) : undefined;
+    if (timeout !== undefined && (isNaN(timeout) || timeout <= 0)) {
+        console.error("Error: --timeout must be a positive integer (milliseconds).");
+        process.exit(1);
+    }
     const context = {
         projectRoot,
         specPath,
@@ -151,6 +158,7 @@ export function buildRunContext(args, env = process.env) {
         verbose: values.verbose ?? false,
         dryRun: values["dry-run"] ?? false,
         pluginRoot: env.CLAUDE_PLUGIN_ROOT ?? process.cwd(),
+        ...(timeout !== undefined ? { timeout } : {}),
         judgeMode,
         ...(judgeModel !== undefined ? { judgeModel } : {}),
     };
