@@ -99,6 +99,8 @@ function makeDefaultConfig(tmpDir: string): RunContext {
     dryRun: false,
     pluginRoot: join(tmpDir, "plugin"),
     judgeMode: "always",
+    saveE2eTests: false,
+    browserTestRetries: 3,
   };
 }
 
@@ -261,6 +263,8 @@ describe("e2e integration tests", () => {
         dryRun: true,
         pluginRoot: ".",
         judgeMode: "always",
+        saveE2eTests: false,
+        browserTestRetries: 3,
       };
       const report = dryRunReport(tasksJson, ctx);
 

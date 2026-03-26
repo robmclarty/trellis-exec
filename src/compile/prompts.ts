@@ -115,6 +115,7 @@ Produce a JSON object matching this exact schema:
       "id": "phase-<N>",
       "name": "<phase name>",
       "description": "<brief phase description>",
+      "requiresBrowserTest": false,
       "tasks": [
         {
           "id": "phase-<N>-task-<M>",
@@ -138,6 +139,7 @@ Produce a JSON object matching this exact schema:
 - Organize into logical build stages, NOT by mirroring the plan's section headings.
 - A typical ordering: project scaffolding → data layer (adapters, repositories) → business logic (behaviors) → UI (views, routing) → integration tests → polish.
 - Each phase should be completable independently once its dependencies are done.
+- Set \`requiresBrowserTest: true\` on any phase that produces visible UI output (pages, components, views, layouts, routes, templates, styles that affect rendering). Leave false for backend-only, data-layer, CLI, or tooling phases.
 
 ### Tasks
 - Each task must be **concrete and implementable**: specify exactly which files to create or modify.

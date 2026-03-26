@@ -31,6 +31,7 @@ function makeTasksJson(): TasksJson {
         id: "phase-1",
         name: "scaffolding",
         description: "Set up project",
+        requiresBrowserTest: false,
         tasks: [
           {
             id: "task-1-1",
@@ -49,6 +50,7 @@ function makeTasksJson(): TasksJson {
         id: "phase-2",
         name: "implementation",
         description: "Build features",
+        requiresBrowserTest: false,
         tasks: [
           {
             id: "task-2-1",

@@ -29,6 +29,7 @@ function makePhase(overrides: Partial<Phase> = {}): Phase {
     id: "phase-1",
     name: "Test Phase",
     description: "A test phase",
+    requiresBrowserTest: false,
     tasks: [
       {
         id: "task-1",

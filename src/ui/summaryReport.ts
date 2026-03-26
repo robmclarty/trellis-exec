@@ -169,5 +169,33 @@ export function formatSummaryReport(result: PhaseRunnerResult): string {
   lines.push("");
   lines.push(padColumns(rows, totals, hasAnyTokens));
 
+  // Browser acceptance test summary (Tier 2)
+  if (result.browserAcceptanceReport) {
+    const bar = result.browserAcceptanceReport;
+    const passedCount = bar.results.filter((r) => r.passed).length;
+    const totalCount = bar.results.length;
+    lines.push("");
+    lines.push("Browser Acceptance Tests");
+    lines.push(`  ${passedCount}/${totalCount} criteria passed (${bar.retries} retries)`);
+    for (const r of bar.results) {
+      if (!r.passed) {
+        lines.push(`  FAIL: ${r.criterion}${r.detail ? ` — ${r.detail}` : ""}`);
+      }
+    }
+    if (bar.generatedTestPath) {
+      lines.push(`  Generated tests saved to: ${bar.generatedTestPath}`);
+    }
+  }
+
+  // Check if browser smoke was skipped across all phases
+  const smokeReports = reports
+    .map((r) => r.browserSmokeReport)
+    .filter((s) => s !== undefined);
+  if (smokeReports.length > 0 && smokeReports.every((s) => s.skipped)) {
+    const reason = smokeReports[0]?.reason ?? "unknown";
+    lines.push("");
+    lines.push(`Browser smoke checks: skipped (${reason})`);
+  }
+
   return lines.join("\n");
 }

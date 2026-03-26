@@ -23,6 +23,7 @@ function makeTasksJson(overrides?: Partial<TasksJson>): TasksJson {
         id: "phase-1",
         name: "Setup",
         description: "",
+        requiresBrowserTest: false,
         tasks: [
           {
             id: "phase-1-task-1",

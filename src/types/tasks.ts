@@ -24,6 +24,7 @@ export const PhaseSchema = z.object({
   id: z.string(),
   name: z.string(),
   description: z.string(),
+  requiresBrowserTest: z.boolean().optional().default(false),
   tasks: z.array(TaskSchema),
 });
 

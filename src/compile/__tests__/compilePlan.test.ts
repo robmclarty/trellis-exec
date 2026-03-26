@@ -41,6 +41,7 @@ function makeValidTasksJson(overrides?: Partial<TasksJson>): TasksJson {
         id: "phase-1",
         name: "setup",
         description: "Set up project",
+        requiresBrowserTest: false,
         tasks: [
           {
             id: "task-1-1",

@@ -35,6 +35,10 @@ import {
 import type { ChangedFile } from "../git.js";
 import { createCheckRunner } from "../verification/checkRunner.js";
 import { verifyCompletion } from "../verification/completionVerifier.js";
+import { isPlaywrightAvailable, runBrowserSmoke } from "../verification/browserSmoke.js";
+import { detectDevServerCommand, startDevServer } from "../verification/devServer.js";
+import { runBrowserAcceptance } from "../verification/browserAcceptance.js";
+import type { BrowserSmokeReport, BrowserAcceptanceReport } from "../types/state.js";
 import { createAgentLauncher } from "../orchestrator/agentLauncher.js";
 
 // ---------------------------------------------------------------------------
@@ -77,6 +81,7 @@ export type PhaseRunnerResult = {
   finalState: SharedState;
   phaseDurations: Record<string, number>;
   totalDuration: number;
+  browserAcceptanceReport?: BrowserAcceptanceReport;
   phaseTokens: Record<string, UsageStats>;
 };
 
@@ -552,6 +557,112 @@ export function dryRunReport(tasksJson: TasksJson, ctx: RunContext): string {
 }
 
 // ---------------------------------------------------------------------------
+// Browser smoke check (Tier 1)
+// ---------------------------------------------------------------------------
+
+async function runBrowserSmokeForPhase(
+  ctx: RunContext,
+  phase: Phase,
+  projectRoot: string,
+): Promise<BrowserSmokeReport | null> {
+  if (!(await isPlaywrightAvailable())) {
+    if (ctx.verbose) console.log("Browser smoke: Playwright not available, skipping.");
+    return { passed: true, skipped: true, reason: "Playwright not available", consoleErrors: [], interactionFailures: [] };
+  }
+
+  const devCmd = ctx.devServerCommand ?? detectDevServerCommand(projectRoot);
+  if (!devCmd) {
+    if (ctx.verbose) console.log("Browser smoke: no dev server command found, skipping.");
+    return { passed: true, skipped: true, reason: "No dev server command", consoleErrors: [], interactionFailures: [] };
+  }
+
+  console.log(`Running browser smoke check for "${phase.id}"…`);
+
+  let handle;
+  try {
+    handle = await startDevServer({ command: devCmd, cwd: projectRoot });
+  } catch (err) {
+    console.log(`Browser smoke: dev server failed to start: ${err instanceof Error ? err.message : String(err)}`);
+    return { passed: true, skipped: true, reason: `Dev server failed: ${err instanceof Error ? err.message : String(err)}`, consoleErrors: [], interactionFailures: [] };
+  }
+
+  try {
+    const report = await runBrowserSmoke({
+      url: handle.url,
+      phaseId: phase.id,
+      screenshotDir: join(projectRoot, ".trellis", "screenshots"),
+    });
+    const status = report.passed ? "passed" : "failed";
+    console.log(`Browser smoke check ${status} for "${phase.id}".`);
+    if (!report.passed) {
+      if (report.consoleErrors.length > 0) {
+        console.log(`  Console errors: ${report.consoleErrors.length}`);
+      }
+      if (report.interactionFailures.length > 0) {
+        console.log(`  Interaction failures: ${report.interactionFailures.length}`);
+      }
+    }
+    return report;
+  } finally {
+    await handle.stop();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Browser acceptance tests (Tier 2) — end-of-build
+// ---------------------------------------------------------------------------
+
+async function runEndOfBuildAcceptance(
+  ctx: RunContext,
+  tasksJson: TasksJson,
+  projectRoot: string,
+): Promise<BrowserAcceptanceReport | null> {
+  const hasBrowserPhases = tasksJson.phases.some((p) => p.requiresBrowserTest);
+  if (!hasBrowserPhases) return null;
+
+  if (!(await isPlaywrightAvailable())) {
+    if (ctx.verbose) console.log("Browser acceptance: Playwright not available, skipping.");
+    return null;
+  }
+
+  const devCmd = ctx.devServerCommand ?? detectDevServerCommand(projectRoot);
+  if (!devCmd) {
+    if (ctx.verbose) console.log("Browser acceptance: no dev server command found, skipping.");
+    return null;
+  }
+
+  console.log("Starting end-of-build browser acceptance tests…");
+
+  let handle;
+  try {
+    handle = await startDevServer({ command: devCmd, cwd: projectRoot });
+  } catch (err) {
+    console.log(`Browser acceptance: dev server failed to start: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
+
+  try {
+    const launcher = createAgentLauncher({
+      pluginRoot: ctx.pluginRoot,
+      projectRoot,
+    });
+
+    const report = await runBrowserAcceptance({
+      specPath: ctx.specPath,
+      projectRoot,
+      devServerHandle: handle,
+      maxRetries: ctx.browserTestRetries,
+      saveTests: ctx.saveE2eTests,
+      agentLauncher: launcher,
+    });
+
+    return report;
+  } finally {
+    await handle.stop();
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Test auto-detection
 // ---------------------------------------------------------------------------
 
@@ -751,6 +862,31 @@ export function buildJudgePrompt(config: {
   lines.push(
     `Tasks failed: ${config.orchestratorReport.tasksFailed.join(", ") || "none"}`,
   );
+
+  // Browser smoke check results (if available)
+  const smoke = config.orchestratorReport.browserSmokeReport;
+  if (smoke && !smoke.skipped) {
+    lines.push("");
+    lines.push("## Browser Smoke Check Results (automated, no LLM)");
+    lines.push("");
+    lines.push(`- Passed: ${smoke.passed}`);
+    if (smoke.consoleErrors.length > 0) {
+      lines.push(`- Console errors:`);
+      for (const err of smoke.consoleErrors) lines.push(`  - ${err}`);
+    }
+    if (smoke.interactionFailures.length > 0) {
+      lines.push(`- Interaction failures:`);
+      for (const f of smoke.interactionFailures) lines.push(`  - ${f}`);
+    }
+    if (smoke.screenshot) {
+      lines.push(`- Screenshot: ${smoke.screenshot}`);
+    }
+    lines.push("");
+    lines.push(
+      "Use this evidence when evaluating spec compliance. Console errors and " +
+      "interaction failures may indicate bugs or missing requirements.",
+    );
+  }
 
   lines.push("");
   lines.push("## Instructions");
@@ -1611,6 +1747,14 @@ export async function runPhases(
         }
       }
 
+      // Browser smoke check (Tier 1) — before judge
+      if (phase.requiresBrowserTest && report.status !== "failed") {
+        const smokeReport = await runBrowserSmokeForPhase(localCtx, phase, projectRoot);
+        if (smokeReport) {
+          report = { ...report, browserSmokeReport: smokeReport };
+        }
+      }
+
       state = { ...state, phaseReport: report };
       saveState(localCtx.statePath, state);
 
@@ -1805,6 +1949,14 @@ export async function runPhases(
     logger.close();
   }
 
+  // Tier 2: End-of-build browser acceptance tests (runs once after all phases pass)
+  let browserAcceptanceReport: BrowserAcceptanceReport | undefined;
+  if (phasesFailed.length === 0) {
+    browserAcceptanceReport = await runEndOfBuildAcceptance(
+      localCtx, mutableTasksJson, projectRoot,
+    ) ?? undefined;
+  }
+
   return {
     success: phasesFailed.length === 0,
     phasesCompleted,
@@ -1813,6 +1965,7 @@ export async function runPhases(
     phaseDurations,
     totalDuration: Date.now() - runStartTime,
     phaseTokens,
+    ...(browserAcceptanceReport ? { browserAcceptanceReport } : {}),
   };
 }
 
@@ -1904,6 +2057,14 @@ export async function runSinglePhase(
         };
       } else {
         console.log(`Completion verification passed for "${phase.id}".`);
+      }
+    }
+
+    // Browser smoke check (Tier 1) — before judge
+    if (phase.requiresBrowserTest && report.status !== "failed") {
+      const smokeReport = await runBrowserSmokeForPhase(localCtx, phase, projectRoot);
+      if (smokeReport) {
+        report = { ...report, browserSmokeReport: smokeReport };
       }
     }
 

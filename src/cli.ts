@@ -45,6 +45,11 @@ export type RunContext = {
   timeout?: number;
   judgeMode: "always" | "on-failure" | "never";
   judgeModel?: string;
+
+  // Browser testing
+  devServerCommand?: string;
+  saveE2eTests: boolean;
+  browserTestRetries: number;
 };
 
 // ---------------------------------------------------------------------------
@@ -75,6 +80,9 @@ Run options:
   --headless             Disable interactive prompts
   --long-run             Set 2-hour timeout for complex phases
   --verbose              Print debug output
+  --dev-server <cmd>     Dev server start command for browser testing
+  --save-e2e-tests       Save generated acceptance tests to project
+  --browser-test-retries <n>  Max retries for browser acceptance (default: 3)
 
 Compile options:
   --spec <spec.md>       Path to the spec (required)
@@ -90,6 +98,8 @@ Environment variables:
   TRELLIS_EXEC_JUDGE_MODE           Judge mode (always|on-failure|never)
   TRELLIS_EXEC_JUDGE_MODEL          Override judge model
   TRELLIS_EXEC_LONG_RUN             Enable long-run mode (2-hour timeout)
+  TRELLIS_EXEC_DEV_SERVER           Dev server start command
+  TRELLIS_EXEC_BROWSER_TEST_RETRIES Max browser acceptance retries
 `;
 
 // ---------------------------------------------------------------------------
@@ -135,6 +145,9 @@ export function buildRunContext(
       headless: { type: "boolean", default: false },
       "long-run": { type: "boolean", default: false },
       verbose: { type: "boolean", default: false },
+      "dev-server": { type: "string" },
+      "save-e2e-tests": { type: "boolean", default: false },
+      "browser-test-retries": { type: "string" },
     },
     allowPositionals: true,
   });
@@ -213,6 +226,17 @@ export function buildRunContext(
   // Explicit --timeout wins over --long-run
   const timeout = explicitTimeout ?? (longRun ? LONG_RUN_TIMEOUT : undefined);
 
+  // Browser testing settings
+  const devServerCommand =
+    values["dev-server"] ??
+    env.TRELLIS_EXEC_DEV_SERVER ??
+    undefined;
+
+  const browserTestRetries =
+    (values["browser-test-retries"] !== undefined ? Number(values["browser-test-retries"]) : undefined) ??
+    (env.TRELLIS_EXEC_BROWSER_TEST_RETRIES !== undefined ? Number(env.TRELLIS_EXEC_BROWSER_TEST_RETRIES) : undefined) ??
+    3;
+
   const context: RunContext = {
     projectRoot,
     specPath,
@@ -232,6 +256,9 @@ export function buildRunContext(
     ...(timeout !== undefined ? { timeout } : {}),
     judgeMode,
     ...(judgeModel !== undefined ? { judgeModel } : {}),
+    ...(devServerCommand !== undefined ? { devServerCommand } : {}),
+    saveE2eTests: values["save-e2e-tests"] ?? false,
+    browserTestRetries,
   };
 
   return {

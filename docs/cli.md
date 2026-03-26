@@ -45,6 +45,9 @@ Reads a `tasks.json` file and executes its phases through the phase runner. By d
 | `--judge-model <model>` | string | *(adaptive)* | Override judge model (default: adaptive — Sonnet for small diffs, Opus for larger ones) |
 | `--headless` | boolean | `false` | Disable interactive prompts between phases |
 | `--verbose` | boolean | `false` | Print stream-json debug output from orchestrator |
+| `--dev-server <command>` | string | *(auto-detected)* | Dev server start command for browser testing |
+| `--save-e2e-tests` | boolean | `false` | Save generated acceptance tests to project test directory |
+| `--browser-test-retries <n>` | number | `3` | Max retries for end-of-build browser acceptance loop |
 
 **Examples:**
 

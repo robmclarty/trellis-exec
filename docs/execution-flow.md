@@ -6,8 +6,9 @@ All work happens directly in the project root — there is no worktree isolation
 
 1. **Phase runner starts** — loads `tasks.json`, validates dependencies, and loads or initializes `state.json`
 2. **Each phase** runs in the project root: the orchestrator is spawned as a single `claude --agent --print` subprocess that executes all tasks, creating per-task git commits along the way
-3. **After each phase**, the judge evaluates the work against the spec and acceptance criteria. If issues are found, a fix agent is dispatched (up to 2 correction attempts)
-4. **Phase-level commit** — any remaining uncommitted changes are committed with a conventional commit message:
+3. **Browser smoke check** (if phase is flagged `requiresBrowserTest`) — a deterministic Playwright script loads the dev server, checks for console errors, verifies the page renders, and clicks interactive elements. Results are passed to the judge as evidence. See [browser-testing.md](browser-testing.md) for details.
+4. **After each phase**, the judge evaluates the work against the spec and acceptance criteria. If issues are found, a fix agent is dispatched (up to 2 correction attempts)
+5. **Phase-level commit** — any remaining uncommitted changes are committed with a conventional commit message:
 
    ```text
    feat(auth,api): [trellis phase-2] Implemented user authentication
@@ -17,7 +18,8 @@ All work happens directly in the project root — there is no worktree isolation
    - Integrated with AuthContext
    ```
 
-5. **When all phases complete**, state is saved and the runner exits. All changes remain on the current branch as a series of conventional commits.
+6. **When all phases complete**, state is saved and the runner exits. All changes remain on the current branch as a series of conventional commits.
+7. **Browser acceptance tests** (if any phase required browser testing) — an LLM agent reads the spec, generates targeted Playwright tests, and runs them. If failures occur, a browser-fixer agent iterates up to 3 times. Generated tests can be saved with `--save-e2e-tests`. See [browser-testing.md](browser-testing.md) for details.
 
 ## To see what's been built
 
