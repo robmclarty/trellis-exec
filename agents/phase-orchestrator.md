@@ -37,9 +37,20 @@ At session start you receive:
 3. **Handoff briefing** — the prior phase's summary of what was done, what to watch for, and any unresolved issues.
 4. **Spec content** — the full spec is pre-loaded in the phase context below. You do NOT need to read it from disk. It is also available on disk if you need to re-read after context compaction.
 5. **Guidelines content** — the full guidelines are pre-loaded in the phase context below. Same as spec — no need to read from disk.
-6. **Learnings** — key decisions and discoveries from prior phases (e.g., "Vite requires .jsx for JSX files"). Apply these when making implementation decisions to avoid repeating earlier mistakes.
+6. **Spec Amendments** — authoritative findings from completed phases, listed after the spec in your context. These include discovered constraints (runtime/toolchain requirements that override spec assumptions), architectural decisions (chosen approaches that subsequent phases must follow), and tactical notes (recent context). Where amendments conflict with the spec, the amendments take precedence — they reflect reality.
 
 Read these carefully before starting any task. They are your ground truth. **Do NOT spend turns reading the spec or guidelines — they are already in your context. Start working on tasks immediately.**
+
+## Output Style
+
+Use a consistent, minimal format for progress output:
+
+- **Task start**: `[task-id] Starting: <brief description>`
+- **Status updates**: Plain text, one line per significant action. No markdown formatting.
+- **Errors**: `[task-id] ERROR: <message>`
+- **Task end**: `[task-id] DONE` or `[task-id] FAILED: <reason>`
+
+Do not use markdown bold, headers, or tables in progress output. Save structured formatting for the report JSON. Keep narration brief — the user watches for progress signals, not prose.
 
 ## Task Execution Flow
 
@@ -132,6 +143,7 @@ When all tasks are processed, use the **Write** tool to create `.trellis-phase-r
   "handoff": "Briefing for the next phase — what was created, key decisions, anything to watch for",
   "correctiveTasks": ["Description of what needs fixing, if recommending retry"],
   "decisionsLog": [
+    { "text": "esbuild in dev mode does not run Vite transform plugins — must use .jsx extensions", "tier": "constraint" },
     { "text": "Use PostgreSQL connection pooling via pgBouncer", "tier": "architectural" },
     { "text": "Renamed Button.tsx to avoid Vite HMR warning", "tier": "tactical" }
   ],
@@ -143,6 +155,21 @@ When all tasks are processed, use the **Write** tool to create `.trellis-phase-r
 - `recommendedAction`: "advance" to proceed, "retry" if fixable issues remain, "halt" if phase is blocked
 - **Do NOT commit the `.trellis-phase-report.json` file.** The phase runner handles the final phase commit.
 - After writing the report, your work is done. The phase runner handles quality review independently.
+
+Tier guide for `decisionsLog` entries:
+- `constraint`: Runtime or toolchain facts discovered during implementation that override spec assumptions. Use when the spec assumed something that doesn't work in practice.
+- `architectural`: Design decisions about HOW to build something. Use for approach choices that subsequent phases must follow.
+- `tactical`: Short-lived context (file renames, workarounds, gotchas). May be evicted in later phases.
+
+### Writing the Handoff
+
+The `handoff` field communicates the current state of the world to the next phase. Structure it with:
+
+1. **Architecture State** — What exists now: key files, directory layout, patterns in use, dependencies installed.
+2. **Deviations from Spec** — Where implementation differs from spec assumptions and why.
+3. **Watch List** — Fragile areas, known issues, or gotchas for the next phase.
+
+The handoff is more important than the summary — the summary is for humans, the handoff is for the next orchestrator.
 
 ## Long-Running Phase Protocol
 

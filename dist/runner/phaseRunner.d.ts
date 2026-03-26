@@ -1,16 +1,21 @@
 import type { TasksJson, Phase } from "../types/tasks.js";
 import type { SharedState, PhaseReport, JudgeAssessment, JudgeIssue, CheckResult } from "../types/state.js";
 import type { RunContext } from "../cli.js";
+import type { UsageStats } from "../ui/streamParser.js";
 import type { ChangedFile } from "../git.js";
 export type PhaseRunnerResult = {
     success: boolean;
     phasesCompleted: string[];
     phasesFailed: string[];
     finalState: SharedState;
+    phaseDurations: Record<string, number>;
+    totalDuration: number;
+    phaseTokens: Record<string, UsageStats>;
 };
 export declare function collectLearnings(state: SharedState): {
     architectural: string[];
     tactical: string[];
+    constraint: string[];
 };
 export declare function buildPhaseContext(phase: Phase, state: SharedState, handoff: string, ctx: RunContext): string;
 /**

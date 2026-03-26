@@ -11,6 +11,7 @@ import { compilePlan } from "./compile/compilePlan.js";
 import { execClaude, COMPILE_TIMEOUT, LONG_RUN_TIMEOUT } from "./orchestrator/agentLauncher.js";
 import { runPhases, runSinglePhase, dryRunReport, } from "./runner/phaseRunner.js";
 import { startSpinner } from "./ui/spinner.js";
+import { formatSummaryReport } from "./ui/summaryReport.js";
 // ---------------------------------------------------------------------------
 // Help text
 // ---------------------------------------------------------------------------
@@ -263,11 +264,11 @@ async function handleRun(args) {
     const result = typeof phaseId === "string"
         ? await runSinglePhase(context, tasksJson, phaseId)
         : await runPhases(context, tasksJson);
+    console.log("");
+    console.log(formatSummaryReport(result));
     if (!result.success) {
-        console.error(`Execution failed. Phases completed: ${result.phasesCompleted.join(", ") || "none"}`);
         process.exit(1);
     }
-    console.log(`Execution complete. Phases completed: ${result.phasesCompleted.join(", ")}`);
 }
 async function handleCompile(args) {
     const { planPath, specPath, guidelinesPath, projectRoot, outputPath, enrich, timeout } = parseCompileArgs(args);

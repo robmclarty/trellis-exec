@@ -20,7 +20,7 @@ export const JudgeAssessmentSchema = z.object({
   suggestions: z.array(JudgeIssueSchema),
 });
 
-export const DecisionTierSchema = z.enum(["architectural", "tactical"]);
+export const DecisionTierSchema = z.enum(["architectural", "tactical", "constraint"]);
 
 export const DecisionEntrySchema = z.object({
   text: z.string(),

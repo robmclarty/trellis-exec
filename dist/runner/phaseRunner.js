@@ -6,7 +6,7 @@ import { initState, loadState, saveState, updateStateAfterPhase, applyReportToTa
 import { validateDependencies, resolveExecutionOrder, detectTargetPathOverlaps, } from "./scheduler.js";
 import { createTrajectoryLogger } from "../logging/trajectoryLogger.js";
 import { startSpinner } from "../ui/spinner.js";
-import { createStreamHandler, extractResultText } from "../ui/streamParser.js";
+import { createStreamHandler, extractResultText, extractUsage } from "../ui/streamParser.js";
 import { getChangedFiles, getDiffContent, getCurrentSha, ensureInitialCommit, commitAll, getChangedFilesRange, getDiffContentRange, getGitRoot, } from "../git.js";
 import { createCheckRunner } from "../verification/checkRunner.js";
 import { verifyCompletion } from "../verification/completionVerifier.js";
@@ -44,10 +44,14 @@ const MAX_TACTICAL_LEARNINGS = 20;
 export function collectLearnings(state) {
     const architectural = [];
     const tactical = [];
+    const constraint = [];
     for (const report of state.phaseReports) {
         for (const entry of report.decisionsLog) {
             const label = `[${report.phaseId}] ${entry.text}`;
-            if (entry.tier === "architectural") {
+            if (entry.tier === "constraint") {
+                constraint.push(label);
+            }
+            else if (entry.tier === "architectural") {
                 architectural.push(label);
             }
             else {
@@ -55,11 +59,12 @@ export function collectLearnings(state) {
             }
         }
     }
-    // Architectural entries are never evicted. Tactical use a sliding window.
-    const tacticalBudget = Math.max(10, MAX_TACTICAL_LEARNINGS - architectural.length);
+    // Architectural and constraint entries are never evicted. Tactical use a sliding window.
+    const tacticalBudget = Math.max(10, MAX_TACTICAL_LEARNINGS - architectural.length - constraint.length);
     return {
         architectural,
         tactical: tactical.slice(-tacticalBudget),
+        constraint,
     };
 }
 export function buildPhaseContext(phase, state, handoff, ctx) {
@@ -85,32 +90,11 @@ export function buildPhaseContext(phase, state, handoff, ctx) {
         lines.push(`Description: ${task.description}`);
     }
     lines.push("");
-    lines.push("## Prior Phase Handoff");
+    lines.push("## Prior Phase Handoff (authoritative — reflects current codebase state)");
     lines.push(handoff || "This is the first phase.");
     lines.push("");
     lines.push("## Shared State Summary");
     lines.push(`Completed phases: ${state.completedPhases.length > 0 ? state.completedPhases.join(", ") : "none"}`);
-    const learnings = collectLearnings(state);
-    if (learnings.architectural.length > 0 || learnings.tactical.length > 0) {
-        lines.push("");
-        lines.push("## Learnings from Prior Phases");
-        lines.push("Important decisions and discoveries from earlier phases. " +
-            "Apply these to avoid repeating mistakes:");
-        if (learnings.architectural.length > 0) {
-            lines.push("");
-            lines.push("### Architectural (permanent)");
-            for (const entry of learnings.architectural) {
-                lines.push(`- ${entry}`);
-            }
-        }
-        if (learnings.tactical.length > 0) {
-            lines.push("");
-            lines.push("### Tactical (recent)");
-            for (const entry of learnings.tactical) {
-                lines.push(`- ${entry}`);
-            }
-        }
-    }
     // Pre-load spec and guidelines content so the orchestrator doesn't waste
     // turns reading these. They're still available on disk if the orchestrator
     // needs to re-read them after context compaction.
@@ -128,6 +112,36 @@ export function buildPhaseContext(phase, state, handoff, ctx) {
     }
     else {
         lines.push("none configured");
+    }
+    // Spec amendments appear AFTER spec/guidelines so they get "last word" authority.
+    const learnings = collectLearnings(state);
+    if (learnings.constraint.length > 0 || learnings.architectural.length > 0 || learnings.tactical.length > 0) {
+        lines.push("");
+        lines.push("## Spec Amendments from Prior Phases");
+        lines.push("Authoritative findings from completed phases. " +
+            "Where these conflict with the spec above, amendments take precedence — " +
+            "they reflect the actual codebase state and runtime constraints discovered during implementation.");
+        if (learnings.constraint.length > 0) {
+            lines.push("");
+            lines.push("### Discovered Constraints (binding — override spec assumptions)");
+            for (const entry of learnings.constraint) {
+                lines.push(`- ${entry}`);
+            }
+        }
+        if (learnings.architectural.length > 0) {
+            lines.push("");
+            lines.push("### Architectural Decisions (binding — chosen approaches)");
+            for (const entry of learnings.architectural) {
+                lines.push(`- ${entry}`);
+            }
+        }
+        if (learnings.tactical.length > 0) {
+            lines.push("");
+            lines.push("### Tactical Notes (recent — context for current work)");
+            for (const entry of learnings.tactical) {
+                lines.push(`- ${entry}`);
+            }
+        }
     }
     lines.push("");
     lines.push("## Check Command");
@@ -316,7 +330,7 @@ function asDecisionEntryArray(val) {
             return { text: v, tier: "tactical" };
         }
         if (v && typeof v === "object" && "text" in v && typeof v.text === "string") {
-            const tier = "tier" in v && (v.tier === "architectural" || v.tier === "tactical")
+            const tier = "tier" in v && (v.tier === "architectural" || v.tier === "tactical" || v.tier === "constraint")
                 ? v.tier
                 : "tactical";
             return { text: v.text, tier };
@@ -822,7 +836,7 @@ async function judgePhase(config) {
         const diffLineCount = diffForModel.split("\n").length;
         const judgeModel = selectJudgeModel(diffLineCount, phase.tasks.length, ctx.judgeModel);
         if (ctx.verbose) {
-            console.log(`[judge] attempt ${attempt}, reviewing ${changedFiles.length} changed file(s), model: ${judgeModel} (${diffLineCount} diff lines, ${phase.tasks.length} tasks)`);
+            console.log(`[judge] attempt ${attempt + 1}, reviewing ${changedFiles.length} changed file(s), model: ${judgeModel} (${diffLineCount} diff lines, ${phase.tasks.length} tasks)`);
         }
         const judgeSpinner = startSpinner("Judging");
         const startTime = Date.now();
@@ -1005,8 +1019,21 @@ async function executePhase(ctx, phase, state, projectRoot, logger) {
         // Ignore — file may not exist
     }
     const agentFile = resolve(ctx.pluginRoot, "agents/phase-orchestrator.md");
-    console.log("Orchestrating…");
-    const spinner = startSpinner("Orchestrating…");
+    const spinnerMessages = [
+        "Orchestrating…",
+        "Noodling…",
+        "Tinkering…",
+        "Pondering…",
+        "Cooking…",
+        "Mulling…",
+        "Conjuring…",
+        "Brewing…",
+        "Weaving…",
+        "Scheming…",
+    ];
+    const spinnerLabel = spinnerMessages[Math.floor(Math.random() * spinnerMessages.length)];
+    console.log("Starting phase orchestrator…");
+    const spinner = startSpinner(spinnerLabel);
     try {
         const startTime = Date.now();
         const orchestratorOptions = {
@@ -1029,10 +1056,9 @@ async function executePhase(ctx, phase, state, projectRoot, logger) {
         const result = await launcher.runPhaseOrchestrator(phaseContext, agentFile, ctx.model, Object.keys(orchestratorOptions).length > 0 ? orchestratorOptions : undefined);
         const duration = Date.now() - startTime;
         spinner.stop();
-        // When streaming, stdout is raw NDJSON — extract the result text
-        const outputText = ctx.verbose
-            ? extractResultText(result.stdout)
-            : result.stdout;
+        // stdout is NDJSON — extract the result text and usage
+        const outputText = extractResultText(result.stdout) || result.stdout;
+        const orchestratorUsage = extractUsage(result.stdout);
         logger.append({
             phaseId: phase.id,
             turnNumber: 0,
@@ -1057,9 +1083,10 @@ async function executePhase(ctx, phase, state, projectRoot, logger) {
             return {
                 status: "failed",
                 report: { ...buildPartialReport(phase.id, phase, reason), startSha },
+                usage: orchestratorUsage,
             };
         }
-        return parsed;
+        return { ...parsed, usage: orchestratorUsage };
     }
     catch (err) {
         spinner.stop();
@@ -1161,10 +1188,13 @@ export async function runPhases(ctx, tasksJson) {
             priorPhaseTaskIds.add(task.id);
         }
     }
+    const runStartTime = Date.now();
     let state = loadState(ctx.statePath) ?? initState(mutableTasksJson);
     const logger = createTrajectoryLogger(ctx.trajectoryPath);
     const phasesCompleted = [];
     const phasesFailed = [];
+    const phaseDurations = {};
+    const phaseTokens = {};
     const projectRoot = ctx.projectRoot;
     warnIfProjectRootSuspect(projectRoot);
     // Handle dry run early
@@ -1177,6 +1207,9 @@ export async function runPhases(ctx, tasksJson) {
             phasesCompleted: [],
             phasesFailed: [],
             finalState: state,
+            phaseDurations: {},
+            totalDuration: 0,
+            phaseTokens: {},
         };
     }
     // Shallow-copy ctx so auto-detected checkCommand doesn't mutate the caller's object
@@ -1192,6 +1225,7 @@ export async function runPhases(ctx, tasksJson) {
                 continue;
             }
             state = { ...state, currentPhase: phase.id, phaseReport: null };
+            const phaseStartTime = Date.now();
             const taskCount = phase.tasks.length;
             console.log(`\nStarting phase "${phase.id}" (${taskCount} task${taskCount === 1 ? "" : "s"})…`);
             // Pre-phase contract review (advisory only)
@@ -1204,6 +1238,17 @@ export async function runPhases(ctx, tasksJson) {
                 }
             }
             const phaseResult = await executePhase(localCtx, phase, state, projectRoot, logger);
+            // Accumulate token usage
+            if (phaseResult.usage) {
+                const prev = phaseTokens[phase.id];
+                phaseTokens[phase.id] = prev
+                    ? {
+                        inputTokens: prev.inputTokens + phaseResult.usage.inputTokens,
+                        outputTokens: prev.outputTokens + phaseResult.usage.outputTokens,
+                        costUsd: prev.costUsd + phaseResult.usage.costUsd,
+                    }
+                    : { ...phaseResult.usage };
+            }
             let report = phaseResult.report;
             // Lightweight completion verification before judge
             if (report.status === "complete" || report.status === "partial") {
@@ -1293,6 +1338,7 @@ export async function runPhases(ctx, tasksJson) {
                 });
                 if (userChoice === "quit") {
                     // Save report to state before exiting
+                    phaseDurations[phase.id] = (phaseDurations[phase.id] ?? 0) + (Date.now() - phaseStartTime);
                     state = {
                         ...state,
                         phaseReports: [...state.phaseReports, report],
@@ -1334,9 +1380,11 @@ export async function runPhases(ctx, tasksJson) {
                     }
                     saveState(localCtx.statePath, state);
                     // Don't increment phaseIndex — re-enter same phase
+                    phaseDurations[phase.id] = (phaseDurations[phase.id] ?? 0) + (Date.now() - phaseStartTime);
                     continue;
                 }
                 // Max retries exceeded — halt
+                phaseDurations[phase.id] = (phaseDurations[phase.id] ?? 0) + (Date.now() - phaseStartTime);
                 console.log(`Max retries (${localCtx.maxRetries}) exceeded for phase "${phase.id}". Halting.`);
                 phasesFailed.push(phase.id);
                 state = {
@@ -1347,6 +1395,7 @@ export async function runPhases(ctx, tasksJson) {
                 break;
             }
             if (action === "skip") {
+                phaseDurations[phase.id] = (phaseDurations[phase.id] ?? 0) + (Date.now() - phaseStartTime);
                 phasesCompleted.push(phase.id);
                 state = {
                     ...state,
@@ -1358,6 +1407,7 @@ export async function runPhases(ctx, tasksJson) {
                 continue;
             }
             if (action === "halt") {
+                phaseDurations[phase.id] = (phaseDurations[phase.id] ?? 0) + (Date.now() - phaseStartTime);
                 phasesFailed.push(phase.id);
                 state = {
                     ...state,
@@ -1367,6 +1417,7 @@ export async function runPhases(ctx, tasksJson) {
                 break;
             }
             // action === "advance"
+            phaseDurations[phase.id] = (phaseDurations[phase.id] ?? 0) + (Date.now() - phaseStartTime);
             // Commit any remaining uncommitted changes as a phase-level commit
             makePhaseCommit(projectRoot, phase, report);
             report = { ...report, endSha: getCurrentSha(projectRoot) ?? report.startSha };
@@ -1387,6 +1438,9 @@ export async function runPhases(ctx, tasksJson) {
         phasesCompleted,
         phasesFailed,
         finalState: state,
+        phaseDurations,
+        totalDuration: Date.now() - runStartTime,
+        phaseTokens,
     };
 }
 // ---------------------------------------------------------------------------
@@ -1414,12 +1468,14 @@ export async function runSinglePhase(ctx, tasksJson, phaseId) {
     }
     // Shallow-copy ctx so auto-detected checkCommand doesn't mutate the caller's object
     const localCtx = { ...ctx };
+    const runStartTime = Date.now();
     let state = loadState(localCtx.statePath) ?? initState(tasksJson);
     const logger = createTrajectoryLogger(localCtx.trajectoryPath);
     const phasesCompleted = [];
     const phasesFailed = [];
     const projectRoot = localCtx.projectRoot;
     warnIfProjectRootSuspect(projectRoot);
+    let phaseUsage;
     try {
         state = { ...state, currentPhase: phase.id };
         // Pre-phase contract review (advisory only)
@@ -1432,6 +1488,7 @@ export async function runSinglePhase(ctx, tasksJson, phaseId) {
             }
         }
         const phaseResult = await executePhase(localCtx, phase, state, projectRoot, logger);
+        phaseUsage = phaseResult.usage;
         let report = phaseResult.report;
         // Lightweight completion verification before judge
         if (report.status === "complete" || report.status === "partial") {
@@ -1524,11 +1581,15 @@ export async function runSinglePhase(ctx, tasksJson, phaseId) {
     finally {
         logger.close();
     }
+    const totalDuration = Date.now() - runStartTime;
     return {
         success: phasesFailed.length === 0,
         phasesCompleted,
         phasesFailed,
         finalState: state,
+        phaseDurations: { [phaseId]: totalDuration },
+        totalDuration,
+        phaseTokens: phaseUsage ? { [phaseId]: phaseUsage } : {},
     };
 }
 //# sourceMappingURL=phaseRunner.js.map

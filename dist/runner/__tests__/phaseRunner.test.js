@@ -578,6 +578,7 @@ describe("phaseRunner", () => {
             const learnings = collectLearnings(state);
             expect(learnings.architectural).toEqual([]);
             expect(learnings.tactical).toEqual([]);
+            expect(learnings.constraint).toEqual([]);
         });
         it("collects from multiple phases with phase ID prefix", () => {
             const state = {
@@ -637,7 +638,7 @@ describe("phaseRunner", () => {
             const learnings = collectLearnings(state);
             expect(learnings.tactical).toEqual(["[phase-2] Important finding"]);
         });
-        it("partitions architectural and tactical entries correctly", () => {
+        it("partitions architectural, tactical, and constraint entries correctly", () => {
             const state = {
                 currentPhase: "phase-2",
                 completedPhases: ["phase-1"],
@@ -646,6 +647,7 @@ describe("phaseRunner", () => {
                         decisionsLog: [
                             { text: "Use ESM modules", tier: "architectural" },
                             { text: "Renamed file to avoid warning", tier: "tactical" },
+                            { text: "Vite dev server requires .jsx extensions", tier: "constraint" },
                         ],
                     }),
                 ],
@@ -655,10 +657,29 @@ describe("phaseRunner", () => {
             const learnings = collectLearnings(state);
             expect(learnings.architectural).toEqual(["[phase-1] Use ESM modules"]);
             expect(learnings.tactical).toEqual(["[phase-1] Renamed file to avoid warning"]);
+            expect(learnings.constraint).toEqual(["[phase-1] Vite dev server requires .jsx extensions"]);
+        });
+        it("never evicts constraint learnings", () => {
+            const reports = Array.from({ length: 25 }, (_, i) => makePhaseReport(`phase-${i}`, {
+                decisionsLog: [{ text: `Decision from phase ${i}`, tier: "tactical" }],
+            }));
+            // Add an early constraint
+            reports[0].decisionsLog.push({ text: "esbuild requires .jsx", tier: "constraint" });
+            const state = {
+                currentPhase: "phase-25",
+                completedPhases: reports.map((r) => r.phaseId),
+                phaseReports: reports,
+                phaseRetries: {},
+                phaseReport: null,
+            };
+            const learnings = collectLearnings(state);
+            expect(learnings.constraint).toContain("[phase-0] esbuild requires .jsx");
+            // Constraint entries reduce tactical budget
+            expect(learnings.tactical.length).toBeLessThanOrEqual(19);
         });
     });
-    describe("buildPhaseContext — learnings section", () => {
-        it("includes learnings section when prior phases have decisionsLog entries", () => {
+    describe("buildPhaseContext — spec amendments section", () => {
+        it("includes amendments section when prior phases have decisionsLog entries", () => {
             const tasksJson = makeTasksJson();
             tmpDir = setupTmpDir(tasksJson);
             const config = makeDefaultConfig(tmpDir);
@@ -674,11 +695,11 @@ describe("phaseRunner", () => {
                 phaseReport: null,
             };
             const context = buildPhaseContext(tasksJson.phases[1], state, "Phase 1 done.", config);
-            expect(context).toContain("## Learnings from Prior Phases");
+            expect(context).toContain("## Spec Amendments from Prior Phases");
             expect(context).toContain("[phase-1] Vite requires .jsx extension for JSX files");
-            expect(context).toContain("Apply these to avoid repeating mistakes");
+            expect(context).toContain("amendments take precedence");
         });
-        it("omits learnings section when all decisionsLog arrays are empty", () => {
+        it("omits amendments section when all decisionsLog arrays are empty", () => {
             const tasksJson = makeTasksJson();
             tmpDir = setupTmpDir(tasksJson);
             const config = makeDefaultConfig(tmpDir);
@@ -692,7 +713,61 @@ describe("phaseRunner", () => {
                 phaseReport: null,
             };
             const context = buildPhaseContext(tasksJson.phases[1], state, "Phase 1 done.", config);
-            expect(context).not.toContain("Learnings from Prior Phases");
+            expect(context).not.toContain("Spec Amendments from Prior Phases");
+        });
+        it("positions amendments after spec content", () => {
+            const tasksJson = makeTasksJson();
+            tmpDir = setupTmpDir(tasksJson);
+            const config = makeDefaultConfig(tmpDir);
+            const state = {
+                currentPhase: "phase-2",
+                completedPhases: ["phase-1"],
+                phaseReports: [
+                    makePhaseReport("phase-1", {
+                        decisionsLog: [{ text: "Use .jsx extensions", tier: "architectural" }],
+                    }),
+                ],
+                phaseRetries: {},
+                phaseReport: null,
+            };
+            const context = buildPhaseContext(tasksJson.phases[1], state, "Phase 1 done.", config);
+            const specIndex = context.indexOf("## Spec Content");
+            const amendmentsIndex = context.indexOf("## Spec Amendments from Prior Phases");
+            expect(specIndex).toBeGreaterThan(-1);
+            expect(amendmentsIndex).toBeGreaterThan(specIndex);
+        });
+        it("renders constraint tier with binding label", () => {
+            const tasksJson = makeTasksJson();
+            tmpDir = setupTmpDir(tasksJson);
+            const config = makeDefaultConfig(tmpDir);
+            const state = {
+                currentPhase: "phase-2",
+                completedPhases: ["phase-1"],
+                phaseReports: [
+                    makePhaseReport("phase-1", {
+                        decisionsLog: [{ text: "esbuild requires .jsx", tier: "constraint" }],
+                    }),
+                ],
+                phaseRetries: {},
+                phaseReport: null,
+            };
+            const context = buildPhaseContext(tasksJson.phases[1], state, "Phase 1 done.", config);
+            expect(context).toContain("### Discovered Constraints (binding");
+            expect(context).toContain("[phase-1] esbuild requires .jsx");
+        });
+        it("handoff section includes authoritative framing", () => {
+            const tasksJson = makeTasksJson();
+            tmpDir = setupTmpDir(tasksJson);
+            const config = makeDefaultConfig(tmpDir);
+            const state = {
+                currentPhase: "phase-2",
+                completedPhases: ["phase-1"],
+                phaseReports: [],
+                phaseRetries: {},
+                phaseReport: null,
+            };
+            const context = buildPhaseContext(tasksJson.phases[1], state, "Phase 1 done.", config);
+            expect(context).toContain("## Prior Phase Handoff (authoritative");
         });
     });
     describe("runPhases — range-based judging", () => {

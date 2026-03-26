@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { parseStreamLine, extractResultText, createStreamHandler, } from "../streamParser.js";
+import { parseStreamLine, extractResultText, extractUsage, createStreamHandler, } from "../streamParser.js";
 describe("parseStreamLine", () => {
     it("parses a valid assistant event with text content", () => {
         const line = JSON.stringify({
@@ -25,9 +25,22 @@ describe("parseStreamLine", () => {
     });
     it("parses a valid result event", () => {
         const line = JSON.stringify({ type: "result", result: "final answer" });
-        expect(parseStreamLine(line)).toEqual({
+        const event = parseStreamLine(line);
+        expect(event).toMatchObject({ type: "result", text: "final answer" });
+    });
+    it("extracts usage from result event with token counts", () => {
+        const line = JSON.stringify({
             type: "result",
-            text: "final answer",
+            result: "done",
+            num_input_tokens: 5000,
+            num_output_tokens: 1200,
+            total_cost_usd: 0.05,
+        });
+        const event = parseStreamLine(line);
+        expect(event).toMatchObject({
+            type: "result",
+            text: "done",
+            usage: { inputTokens: 5000, outputTokens: 1200, costUsd: 0.05 },
         });
     });
     it("returns empty text for result event with non-string result", () => {
@@ -93,6 +106,33 @@ describe("extractResultText", () => {
     });
     it("returns empty string for empty input", () => {
         expect(extractResultText("")).toBe("");
+    });
+});
+describe("extractUsage", () => {
+    it("extracts usage from NDJSON with token fields", () => {
+        const lines = [
+            JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "hi" }] } }),
+            JSON.stringify({
+                type: "result",
+                result: "done",
+                num_input_tokens: 10000,
+                num_output_tokens: 3000,
+                total_cost_usd: 0.08,
+            }),
+        ].join("\n");
+        expect(extractUsage(lines)).toEqual({
+            inputTokens: 10000,
+            outputTokens: 3000,
+            costUsd: 0.08,
+        });
+    });
+    it("returns undefined when no result event exists", () => {
+        const lines = JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "hi" }] } });
+        expect(extractUsage(lines)).toBeUndefined();
+    });
+    it("returns undefined when result has no token fields", () => {
+        const lines = JSON.stringify({ type: "result", result: "done" });
+        expect(extractUsage(lines)).toBeUndefined();
     });
 });
 describe("createStreamHandler", () => {

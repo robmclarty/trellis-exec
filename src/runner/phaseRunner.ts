@@ -97,24 +97,32 @@ function getHandoffFromState(state: SharedState): string {
 
 const MAX_TACTICAL_LEARNINGS = 20;
 
-export function collectLearnings(state: SharedState): { architectural: string[]; tactical: string[] } {
+export function collectLearnings(state: SharedState): {
+  architectural: string[];
+  tactical: string[];
+  constraint: string[];
+} {
   const architectural: string[] = [];
   const tactical: string[] = [];
+  const constraint: string[] = [];
   for (const report of state.phaseReports) {
     for (const entry of report.decisionsLog) {
       const label = `[${report.phaseId}] ${entry.text}`;
-      if (entry.tier === "architectural") {
+      if (entry.tier === "constraint") {
+        constraint.push(label);
+      } else if (entry.tier === "architectural") {
         architectural.push(label);
       } else {
         tactical.push(label);
       }
     }
   }
-  // Architectural entries are never evicted. Tactical use a sliding window.
-  const tacticalBudget = Math.max(10, MAX_TACTICAL_LEARNINGS - architectural.length);
+  // Architectural and constraint entries are never evicted. Tactical use a sliding window.
+  const tacticalBudget = Math.max(10, MAX_TACTICAL_LEARNINGS - architectural.length - constraint.length);
   return {
     architectural,
     tactical: tactical.slice(-tacticalBudget),
+    constraint,
   };
 }
 
@@ -151,37 +159,13 @@ export function buildPhaseContext(
   }
 
   lines.push("");
-  lines.push("## Prior Phase Handoff");
+  lines.push("## Prior Phase Handoff (authoritative — reflects current codebase state)");
   lines.push(handoff || "This is the first phase.");
   lines.push("");
   lines.push("## Shared State Summary");
   lines.push(
     `Completed phases: ${state.completedPhases.length > 0 ? state.completedPhases.join(", ") : "none"}`,
   );
-
-  const learnings = collectLearnings(state);
-  if (learnings.architectural.length > 0 || learnings.tactical.length > 0) {
-    lines.push("");
-    lines.push("## Learnings from Prior Phases");
-    lines.push(
-      "Important decisions and discoveries from earlier phases. " +
-      "Apply these to avoid repeating mistakes:",
-    );
-    if (learnings.architectural.length > 0) {
-      lines.push("");
-      lines.push("### Architectural (permanent)");
-      for (const entry of learnings.architectural) {
-        lines.push(`- ${entry}`);
-      }
-    }
-    if (learnings.tactical.length > 0) {
-      lines.push("");
-      lines.push("### Tactical (recent)");
-      for (const entry of learnings.tactical) {
-        lines.push(`- ${entry}`);
-      }
-    }
-  }
 
   // Pre-load spec and guidelines content so the orchestrator doesn't waste
   // turns reading these. They're still available on disk if the orchestrator
@@ -203,6 +187,39 @@ export function buildPhaseContext(
     lines.push(readFileSync(ctx.guidelinesPath, "utf-8"));
   } else {
     lines.push("none configured");
+  }
+
+  // Spec amendments appear AFTER spec/guidelines so they get "last word" authority.
+  const learnings = collectLearnings(state);
+  if (learnings.constraint.length > 0 || learnings.architectural.length > 0 || learnings.tactical.length > 0) {
+    lines.push("");
+    lines.push("## Spec Amendments from Prior Phases");
+    lines.push(
+      "Authoritative findings from completed phases. " +
+      "Where these conflict with the spec above, amendments take precedence — " +
+      "they reflect the actual codebase state and runtime constraints discovered during implementation.",
+    );
+    if (learnings.constraint.length > 0) {
+      lines.push("");
+      lines.push("### Discovered Constraints (binding — override spec assumptions)");
+      for (const entry of learnings.constraint) {
+        lines.push(`- ${entry}`);
+      }
+    }
+    if (learnings.architectural.length > 0) {
+      lines.push("");
+      lines.push("### Architectural Decisions (binding — chosen approaches)");
+      for (const entry of learnings.architectural) {
+        lines.push(`- ${entry}`);
+      }
+    }
+    if (learnings.tactical.length > 0) {
+      lines.push("");
+      lines.push("### Tactical Notes (recent — context for current work)");
+      for (const entry of learnings.tactical) {
+        lines.push(`- ${entry}`);
+      }
+    }
   }
 
   lines.push("");
@@ -425,7 +442,7 @@ function asDecisionEntryArray(val: unknown): DecisionEntry[] {
         return { text: v, tier: "tactical" };
       }
       if (v && typeof v === "object" && "text" in v && typeof v.text === "string") {
-        const tier = "tier" in v && (v.tier === "architectural" || v.tier === "tactical")
+        const tier = "tier" in v && (v.tier === "architectural" || v.tier === "tactical" || v.tier === "constraint")
           ? v.tier
           : "tactical";
         return { text: v.text, tier };

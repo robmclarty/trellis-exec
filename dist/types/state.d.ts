@@ -30,12 +30,14 @@ export declare const JudgeAssessmentSchema: z.ZodObject<{
 export declare const DecisionTierSchema: z.ZodEnum<{
     architectural: "architectural";
     tactical: "tactical";
+    constraint: "constraint";
 }>;
 export declare const DecisionEntrySchema: z.ZodObject<{
     text: z.ZodString;
     tier: z.ZodEnum<{
         architectural: "architectural";
         tactical: "tactical";
+        constraint: "constraint";
     }>;
 }, z.core.$strip>;
 export declare const PhaseReportStatusSchema: z.ZodEnum<{
@@ -83,6 +85,7 @@ export declare const PhaseReportSchema: z.ZodObject<{
         tier: z.ZodEnum<{
             architectural: "architectural";
             tactical: "tactical";
+            constraint: "constraint";
         }>;
     }, z.core.$strip>>;
     handoff: z.ZodString;
@@ -127,6 +130,7 @@ export declare const SharedStateSchema: z.ZodObject<{
             tier: z.ZodEnum<{
                 architectural: "architectural";
                 tactical: "tactical";
+                constraint: "constraint";
             }>;
         }, z.core.$strip>>;
         handoff: z.ZodString;
@@ -169,6 +173,7 @@ export declare const SharedStateSchema: z.ZodObject<{
             tier: z.ZodEnum<{
                 architectural: "architectural";
                 tactical: "tactical";
+                constraint: "constraint";
             }>;
         }, z.core.$strip>>;
         handoff: z.ZodString;
