@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.11
+
+- Add subAgentType-aware execution guidance to phase orchestrator (scaffold/implement/test-writer strategies)
+- Add Task Type Summary section to phase context for orchestrator awareness
+- Clarify classifySubAgentType() role as orchestrator hint, not automatic dispatch trigger
+
 ## 0.7.10
 
 - Add project-level web app detection (`detectWebApp`) that checks for frontend framework deps, build-tool configs, and HTML entry points
