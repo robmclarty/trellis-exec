@@ -20,6 +20,7 @@ Use Claude's built-in tools directly:
 - **Grep** — search file contents
 
 The **Agent** tool is available for delegating complex tasks to a sub-agent. Use it sparingly — most tasks are better handled directly. When you do use it:
+
 - Set `prompt` to focused instructions with specific file paths and output constraints
 - Set `model` to match the task type: `sonnet` for implement/test-writer, `haiku` for scaffold
 - The sub-agent gets Read, Write, Edit, Bash, Glob, and Grep
@@ -159,6 +160,7 @@ When all tasks are processed, use the **Write** tool to create `.trellis-phase-r
 - After writing the report, your work is done. The phase runner handles quality review independently.
 
 Tier guide for `decisionsLog` entries:
+
 - `constraint`: Runtime or toolchain facts discovered during implementation that override spec assumptions. Use when the spec assumed something that doesn't work in practice.
 - `architectural`: Design decisions about HOW to build something. Use for approach choices that subsequent phases must follow.
 - `tactical`: Short-lived context (file renames, workarounds, gotchas). May be evicted in later phases.
