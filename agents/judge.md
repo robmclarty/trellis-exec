@@ -38,6 +38,9 @@ Return a structured JSON assessment. **Output only the JSON block — no prose b
   ],
   "suggestions": [
     { "task": "phase-1-task-1", "severity": "minor", "description": "Consider extracting the color map to a shared constant" }
+  ],
+  "corrections": [
+    { "type": "targetPath", "taskId": "phase-5-task-1", "old": "src/views/Nav/Nav.css", "new": "src/views/Nav/Nav.module.css", "reason": "CSS Modules convention requires .module.css suffix" }
   ]
 }
 ```
@@ -54,3 +57,15 @@ Each issue/suggestion is an object with:
 - **Suggestions** (nice to have): Style improvements, optional enhancements, readability tweaks.
 
 Set `passed` to `false` only if there are issues that would prevent the implementation from meeting spec requirements. Style suggestions alone do not cause a failure.
+
+### Corrections (optional)
+
+If task targetPaths in the spec differ from actual filenames on disk (e.g., `Nav.css` vs `Nav.module.css`, or `App.js` vs `App.jsx`), include a `corrections` array. Each correction has:
+
+- `type` — currently only `"targetPath"`
+- `taskId` — the task whose targetPaths need updating
+- `old` — the original path from the task description
+- `new` — the actual path on disk
+- `reason` — why the name differs (e.g., toolchain convention)
+
+Corrections reconcile task metadata with reality — they are **NOT** issues and do not affect the `passed` verdict. Only include corrections when the file exists at a different path, not when a file is genuinely missing.

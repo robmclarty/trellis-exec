@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, renameSync } from "node:fs";
 import { SharedStateSchema } from "../types/state.js";
-import type { SharedState, PhaseReport } from "../types/state.js";
+import type { SharedState, PhaseReport, JudgeCorrection, DecisionEntry } from "../types/state.js";
 import type { TasksJson, Phase, TaskStatus } from "../types/tasks.js";
 
 /**
@@ -139,6 +139,52 @@ export function applyReportToTasks(
     } catch { /* skip */ }
   }
   return updated;
+}
+
+/**
+ * Applies judge-provided corrections to tasks.json.
+ * Currently supports targetPath renames — replacing stale spec paths
+ * with the actual paths the orchestrator created on disk.
+ *
+ * Returns the updated TasksJson and auto-generated constraint-tier
+ * decision entries so corrections propagate to future phases.
+ */
+export function applyCorrections(
+  tasksJson: TasksJson,
+  corrections: JudgeCorrection[],
+): { tasksJson: TasksJson; decisions: DecisionEntry[] } {
+  if (corrections.length === 0) {
+    return { tasksJson, decisions: [] };
+  }
+
+  const decisions: DecisionEntry[] = [];
+  let updated = tasksJson;
+
+  for (const correction of corrections) {
+    if (correction.type === "targetPath") {
+      updated = {
+        ...updated,
+        phases: updated.phases.map((phase) => ({
+          ...phase,
+          tasks: phase.tasks.map((task) => {
+            if (task.id !== correction.taskId) return task;
+            return {
+              ...task,
+              targetPaths: task.targetPaths.map((tp) =>
+                tp === correction.old ? correction.new : tp,
+              ),
+            };
+          }),
+        })),
+      };
+      decisions.push({
+        text: `[${correction.taskId}] targetPath renamed: ${correction.old} → ${correction.new} (${correction.reason})`,
+        tier: "constraint",
+      });
+    }
+  }
+
+  return { tasksJson: updated, decisions };
 }
 
 /**

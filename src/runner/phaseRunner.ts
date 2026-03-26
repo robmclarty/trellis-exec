@@ -11,6 +11,7 @@ import {
   saveState,
   updateStateAfterPhase,
   applyReportToTasks,
+  applyCorrections,
 } from "./stateManager.js";
 import {
   validateDependencies,
@@ -495,7 +496,7 @@ async function judgePhase(config: {
   let changedFiles = getChangedFiles(projectRoot, startSha);
   if (changedFiles.length === 0) {
     return {
-      assessment: { passed: true, issues: [], suggestions: [] },
+      assessment: { passed: true, issues: [], suggestions: [], corrections: [] },
       correctionAttempts: 0,
     };
   }
@@ -506,7 +507,7 @@ async function judgePhase(config: {
     dryRun: ctx.dryRun,
   });
 
-  let assessment: JudgeAssessment = { passed: true, issues: [], suggestions: [] };
+  let assessment: JudgeAssessment = { passed: true, issues: [], suggestions: [], corrections: [] };
   let previousIssues: JudgeIssue[] | undefined;
   let fixDiffContent: string | undefined;
   let fixChangedFiles: ChangedFile[] | undefined;
@@ -573,7 +574,7 @@ async function judgePhase(config: {
       // Pass through — treat as if judge approved so we don't waste cycles
       // on fix-agent retries for infra issues.
       return {
-        assessment: { passed: true, issues: [], suggestions: [] },
+        assessment: { passed: true, issues: [], suggestions: [], corrections: [] },
         correctionAttempts: attempt,
       };
     }
@@ -1054,25 +1055,6 @@ export async function runPhases(
 
       let report = phaseResult.report;
 
-      // Lightweight completion verification before judge
-      if (report.status === "complete" || report.status === "partial") {
-        const verification = verifyCompletion(
-          projectRoot, phase, report, report.startSha,
-        );
-        if (!verification.passed) {
-          console.log(`Completion verification failed for "${phase.id}":`);
-          for (const f of verification.failures) console.log(`  - ${f}`);
-          report = {
-            ...report,
-            status: "partial",
-            recommendedAction: "retry",
-            correctiveTasks: [...report.correctiveTasks, ...verification.failures],
-          };
-        } else {
-          console.log(`Completion verification passed for "${phase.id}".`);
-        }
-      }
-
       // Browser smoke check (Tier 1) — before judge
       if (phase.requiresBrowserTest && report.status !== "failed") {
         const smokeReport = await runBrowserSmokeForPhase(localCtx, phase, projectRoot);
@@ -1103,6 +1085,18 @@ export async function runPhases(
         });
 
         report = { ...report, judgeAssessment: judgeResult.assessment };
+
+        // Apply judge corrections to tasks.json (e.g., targetPath renames)
+        const corrections = judgeResult.assessment.corrections ?? [];
+        if (corrections.length > 0) {
+          const result = applyCorrections(mutableTasksJson, corrections);
+          mutableTasksJson = result.tasksJson;
+          writeFileSync(localCtx.tasksJsonPath, JSON.stringify(mutableTasksJson, null, 2), "utf-8");
+          report = { ...report, decisionsLog: [...report.decisionsLog, ...result.decisions] };
+          if (localCtx.verbose) {
+            console.log(`Applied ${corrections.length} judge correction(s) to tasks.json`);
+          }
+        }
 
         // Upgrade: orchestrator failed/partial but judge confirms work is correct
         if (
@@ -1136,6 +1130,26 @@ export async function runPhases(
               ...judgeResult.assessment.issues.map(formatIssue),
             ],
           };
+        }
+      }
+
+      // Completion verification — runs after judge so corrected targetPaths are used
+      const correctedPhase = mutableTasksJson.phases[phaseIndex]!;
+      if (report.status === "complete" || report.status === "partial") {
+        const verification = verifyCompletion(
+          projectRoot, correctedPhase, report, report.startSha,
+        );
+        if (!verification.passed) {
+          console.log(`Completion verification failed for "${phase.id}":`);
+          for (const f of verification.failures) console.log(`  - ${f}`);
+          report = {
+            ...report,
+            status: "partial",
+            recommendedAction: "retry",
+            correctiveTasks: [...report.correctiveTasks, ...verification.failures],
+          };
+        } else {
+          console.log(`Completion verification passed for "${phase.id}".`);
         }
       }
 
@@ -1364,25 +1378,7 @@ export async function runSinglePhase(
 
     phaseUsage = phaseResult.usage;
     let report = phaseResult.report;
-
-    // Lightweight completion verification before judge
-    if (report.status === "complete" || report.status === "partial") {
-      const verification = verifyCompletion(
-        projectRoot, phase, report, report.startSha,
-      );
-      if (!verification.passed) {
-        console.log(`Completion verification failed for "${phase.id}":`);
-        for (const f of verification.failures) console.log(`  - ${f}`);
-        report = {
-          ...report,
-          status: "partial",
-          recommendedAction: "retry",
-          correctiveTasks: [...report.correctiveTasks, ...verification.failures],
-        };
-      } else {
-        console.log(`Completion verification passed for "${phase.id}".`);
-      }
-    }
+    let correctedTasksJson = tasksJson;
 
     // Browser smoke check (Tier 1) — before judge
     if (phase.requiresBrowserTest && report.status !== "failed") {
@@ -1411,6 +1407,18 @@ export async function runSinglePhase(
       });
 
       report = { ...report, judgeAssessment: judgeResult.assessment };
+
+      // Apply judge corrections to tasks.json (e.g., targetPath renames)
+      const corrections = judgeResult.assessment.corrections ?? [];
+      if (corrections.length > 0) {
+        const result = applyCorrections(correctedTasksJson, corrections);
+        correctedTasksJson = result.tasksJson;
+        writeFileSync(localCtx.tasksJsonPath, JSON.stringify(correctedTasksJson, null, 2), "utf-8");
+        report = { ...report, decisionsLog: [...report.decisionsLog, ...result.decisions] };
+        if (localCtx.verbose) {
+          console.log(`Applied ${corrections.length} judge correction(s) to tasks.json`);
+        }
+      }
 
       // Upgrade: orchestrator failed/partial but judge confirms work is correct
       if (
@@ -1448,6 +1456,26 @@ export async function runSinglePhase(
       }
     }
 
+    // Completion verification — runs after judge so corrected targetPaths are used
+    const correctedPhase = correctedTasksJson.phases.find((p) => p.id === phase.id) ?? phase;
+    if (report.status === "complete" || report.status === "partial") {
+      const verification = verifyCompletion(
+        projectRoot, correctedPhase, report, report.startSha,
+      );
+      if (!verification.passed) {
+        console.log(`Completion verification failed for "${phase.id}":`);
+        for (const f of verification.failures) console.log(`  - ${f}`);
+        report = {
+          ...report,
+          status: "partial",
+          recommendedAction: "retry",
+          correctiveTasks: [...report.correctiveTasks, ...verification.failures],
+        };
+      } else {
+        console.log(`Completion verification passed for "${phase.id}".`);
+      }
+    }
+
     // Auto-detect test suites if no --check was provided
     if (!localCtx.checkCommand && hasNewTestFiles(projectRoot, report.startSha)) {
       const detected = detectTestCommand(projectRoot);
@@ -1462,10 +1490,10 @@ export async function runSinglePhase(
       report = { ...report, endSha: getCurrentSha(projectRoot) ?? report.startSha };
 
       phasesCompleted.push(phase.id);
-      state = updateStateAfterPhase(state, report, tasksJson.phases);
+      state = updateStateAfterPhase(state, report, correctedTasksJson.phases);
 
       // Sync task statuses back to tasks.json
-      const updatedTasks = applyReportToTasks(tasksJson, phase.id, report);
+      const updatedTasks = applyReportToTasks(correctedTasksJson, phase.id, report);
       writeFileSync(localCtx.tasksJsonPath, JSON.stringify(updatedTasks, null, 2), "utf-8");
     } else {
       phasesFailed.push(phase.id);

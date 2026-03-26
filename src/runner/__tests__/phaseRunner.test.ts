@@ -6,7 +6,7 @@ import {
   readFileSync,
   mkdirSync,
 } from "node:fs";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import type { TasksJson } from "../../types/tasks.js";
 import type { PhaseReport, SharedState } from "../../types/state.js";
@@ -201,8 +201,22 @@ function setupTmpDir(tasksJson: TasksJson): string {
 function setupMocksForSuccess(
   tmpDir: string,
   phaseReports: Map<string, PhaseReport>,
+  tasksJson?: TasksJson,
 ): void {
   const mockCreateAgentLauncher = createAgentLauncher as ReturnType<typeof vi.fn>;
+
+  // Create target files on disk so completion verifier passes
+  if (tasksJson) {
+    for (const phase of tasksJson.phases) {
+      for (const task of phase.tasks) {
+        for (const targetPath of task.targetPaths) {
+          const fullPath = join(tmpDir, targetPath);
+          mkdirSync(dirname(fullPath), { recursive: true });
+          writeFileSync(fullPath, "", "utf-8");
+        }
+      }
+    }
+  }
 
   let launchCount = 0;
   const phaseIds = [...phaseReports.keys()];
@@ -266,7 +280,7 @@ describe("phaseRunner", () => {
           }),
         ],
       ]);
-      setupMocksForSuccess(tmpDir, reports);
+      setupMocksForSuccess(tmpDir, reports, tasksJson);
 
       const result = await runPhases(config, tasksJson);
 
@@ -1031,7 +1045,7 @@ describe("phaseRunner", () => {
           }),
         ],
       ]);
-      setupMocksForSuccess(tmpDir, reports);
+      setupMocksForSuccess(tmpDir, reports, tasksJson);
 
       await runPhases(config, tasksJson);
 
@@ -1073,7 +1087,7 @@ describe("phaseRunner", () => {
           }),
         ],
       ]);
-      setupMocksForSuccess(tmpDir, reports);
+      setupMocksForSuccess(tmpDir, reports, tasksJson);
 
       const result = await runPhases(config, tasksJson);
 
@@ -1211,7 +1225,7 @@ describe("phaseRunner", () => {
           }),
         ],
       ]);
-      setupMocksForSuccess(tmpDir, reports);
+      setupMocksForSuccess(tmpDir, reports, tasksJson);
 
       await runPhases(config, tasksJson);
 
@@ -1252,6 +1266,15 @@ describe("phaseRunner", () => {
       tasksJson.phases = [tasksJson.phases[0]!];
       tmpDir = setupTmpDir(tasksJson);
       const config = { ...makeDefaultConfig(tmpDir), maxRetries: 1 };
+
+      // Create target files so completion verifier passes
+      for (const task of tasksJson.phases[0]!.tasks) {
+        for (const tp of task.targetPaths) {
+          const fullPath = join(tmpDir, tp);
+          mkdirSync(dirname(fullPath), { recursive: true });
+          writeFileSync(fullPath, "", "utf-8");
+        }
+      }
 
       mockedEnsureInitialCommit.mockReturnValue("baseline-sha");
       mockedGetChangedFiles.mockReturnValue([

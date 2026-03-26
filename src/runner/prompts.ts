@@ -471,6 +471,9 @@ export function buildJudgePrompt(config: {
   lines.push('  ],');
   lines.push('  "suggestions": [');
   lines.push('    { "task": "phase-1-task-1", "severity": "minor", "description": "..." }');
+  lines.push('  ],');
+  lines.push('  "corrections": [');
+  lines.push('    { "type": "targetPath", "taskId": "phase-1-task-2", "old": "src/Nav.css", "new": "src/Nav.module.css", "reason": "CSS Modules convention requires .module.css suffix" }');
   lines.push('  ]');
   lines.push('}');
   lines.push("```");
@@ -478,6 +481,14 @@ export function buildJudgePrompt(config: {
   lines.push(
     "Set `passed` to false only for must-fix problems: spec violations, bugs, " +
       "missing requirements, incomplete tasks. Style suggestions alone do not cause failure.",
+  );
+  lines.push("");
+  lines.push(
+    "If a task's targetPaths don't match the actual filenames on disk " +
+      "(e.g., `Nav.css` specified but `Nav.module.css` created, or `App.js` but `App.jsx` on disk), " +
+      "add a `corrections` entry. Corrections reconcile task metadata with reality — " +
+      "they are NOT issues and do not affect the `passed` verdict. " +
+      "Only include corrections when the file exists at a different path, not when a file is genuinely missing.",
   );
 
   return lines.join("\n");
@@ -563,6 +574,9 @@ export function buildRejudgePrompt(config: {
   lines.push('  ],');
   lines.push('  "suggestions": [');
   lines.push('    { "task": "phase-1-task-1", "severity": "minor", "description": "..." }');
+  lines.push('  ],');
+  lines.push('  "corrections": [');
+  lines.push('    { "type": "targetPath", "taskId": "phase-1-task-2", "old": "src/Nav.css", "new": "src/Nav.module.css", "reason": "CSS Modules convention" }');
   lines.push('  ]');
   lines.push('}');
   lines.push("```");
@@ -570,6 +584,12 @@ export function buildRejudgePrompt(config: {
   lines.push(
     "Set `passed` to false only for must-fix problems: spec violations, bugs, " +
       "missing requirements, regressions. Style suggestions alone do not cause failure.",
+  );
+  lines.push("");
+  lines.push(
+    "If a task's targetPaths don't match the actual filenames on disk, " +
+      "add a `corrections` entry to reconcile the metadata. " +
+      "Corrections are NOT issues and do not affect the `passed` verdict.",
   );
 
   return lines.join("\n");
@@ -643,6 +663,7 @@ export function parseJudgeResult(output: string): JudgeAssessment {
       `Judge output was unparseable: ${output.slice(0, 200)}`,
     ],
     suggestions: [],
+    corrections: [],
   };
 }
 

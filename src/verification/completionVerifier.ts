@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { resolve, extname } from "node:path";
+import { resolve } from "node:path";
 import type { Phase } from "../types/tasks.js";
 import type { PhaseReport } from "../types/state.js";
 import { getChangedFiles } from "../git.js";
@@ -12,31 +12,12 @@ export type CompletionVerification = {
 const TODO_PATTERN = /\b(TODO|FIXME|HACK)\b/;
 
 /**
- * Extension variants to try when a target path doesn't exist on disk.
- * Handles common mismatches like .js specified but .jsx created (Vite requires
- * explicit .jsx for files containing JSX).
- */
-const EXTENSION_VARIANTS: Record<string, string[]> = {
-  ".js": [".jsx", ".ts", ".tsx"],
-  ".jsx": [".js", ".tsx", ".ts"],
-  ".ts": [".tsx", ".js", ".jsx"],
-  ".tsx": [".ts", ".jsx", ".js"],
-};
-
-function targetPathExists(projectRoot: string, targetPath: string): boolean {
-  if (existsSync(resolve(projectRoot, targetPath))) return true;
-
-  const ext = extname(targetPath);
-  const variants = EXTENSION_VARIANTS[ext];
-  if (!variants) return false;
-
-  const base = targetPath.slice(0, -ext.length);
-  return variants.some((v) => existsSync(resolve(projectRoot, base + v)));
-}
-
-/**
- * Lightweight deterministic verification after orchestrator reports "complete."
- * Catches lazy-completion patterns before the expensive judge invocation.
+ * Lightweight deterministic verification after judge corrections are applied.
+ * Catches lazy-completion patterns (missing files, leftover TODOs).
+ *
+ * Target path mismatches (e.g., .css vs .module.css, .js vs .jsx) are handled
+ * upstream by the judge's corrections mechanism, which updates tasks.json
+ * before this function runs. No extension-variant guessing needed here.
  */
 export function verifyCompletion(
   projectRoot: string,
@@ -53,7 +34,7 @@ export function verifyCompletion(
     if (!report.tasksCompleted.includes(task.id)) continue;
     for (const targetPath of task.targetPaths) {
       totalTargetPaths++;
-      if (!targetPathExists(projectRoot, targetPath)) {
+      if (!existsSync(resolve(projectRoot, targetPath))) {
         missingTargetPaths++;
         failures.push(
           `[${task.id}] target path missing: ${targetPath}`,
