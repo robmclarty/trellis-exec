@@ -154,6 +154,7 @@ export function execClaude(
     });
 
     if (stdin !== undefined) {
+      child.stdin.on("error", (err) => reject(err));
       child.stdin.write(stdin);
       child.stdin.end();
     }

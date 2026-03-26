@@ -140,11 +140,7 @@ export function buildPhaseContext(
     `(Pre-loaded from \`${basename(ctx.specPath)}\`. Also available on disk via the Read tool.)`,
   );
   lines.push("");
-  try {
-    lines.push(readFileSync(ctx.specPath, "utf-8"));
-  } catch {
-    lines.push("[ERROR: Could not read spec file]");
-  }
+  lines.push(readFileSync(ctx.specPath, "utf-8"));
   lines.push("");
   lines.push("## Guidelines Content");
   if (ctx.guidelinesPath) {
@@ -152,11 +148,7 @@ export function buildPhaseContext(
       `(Pre-loaded from \`${basename(ctx.guidelinesPath)}\`. Also available on disk via the Read tool.)`,
     );
     lines.push("");
-    try {
-      lines.push(readFileSync(ctx.guidelinesPath, "utf-8"));
-    } catch {
-      lines.push("[ERROR: Could not read guidelines file]");
-    }
+    lines.push(readFileSync(ctx.guidelinesPath, "utf-8"));
   } else {
     lines.push("none configured");
   }
@@ -1354,11 +1346,14 @@ export async function runPhases(
   ctx: RunContext,
   tasksJson: TasksJson,
 ): Promise<PhaseRunnerResult> {
-  console.log(`Starting phase runner with ${tasksJson.phases.length} phase(s)…`);
+  // Deep-clone to avoid mutating the caller's object (e.g. corrective task appends)
+  let mutableTasksJson = structuredClone(tasksJson);
+
+  console.log(`Starting phase runner with ${mutableTasksJson.phases.length} phase(s)…`);
 
   // Validate dependencies for all phases upfront, allowing cross-phase refs
   const priorPhaseTaskIds = new Set<string>();
-  for (const phase of tasksJson.phases) {
+  for (const phase of mutableTasksJson.phases) {
     const validation = validateDependencies(phase.tasks, priorPhaseTaskIds);
     if (!validation.valid) {
       throw new Error(
@@ -1370,7 +1365,7 @@ export async function runPhases(
     }
   }
 
-  let state = loadState(ctx.statePath) ?? initState(tasksJson);
+  let state = loadState(ctx.statePath) ?? initState(mutableTasksJson);
   const logger = createTrajectoryLogger(ctx.trajectoryPath);
   const phasesCompleted: string[] = [];
   const phasesFailed: string[] = [];
@@ -1379,7 +1374,7 @@ export async function runPhases(
 
   // Handle dry run early
   if (ctx.dryRun) {
-    const report = dryRunReport(tasksJson, ctx);
+    const report = dryRunReport(mutableTasksJson, ctx);
     console.log(report);
     logger.close();
     return {
@@ -1390,10 +1385,13 @@ export async function runPhases(
     };
   }
 
+  // Shallow-copy ctx so auto-detected checkCommand doesn't mutate the caller's object
+  const localCtx = { ...ctx };
+
   try {
     let phaseIndex = 0;
-    while (phaseIndex < tasksJson.phases.length) {
-      const phase = tasksJson.phases[phaseIndex]!;
+    while (phaseIndex < mutableTasksJson.phases.length) {
+      const phase = mutableTasksJson.phases[phaseIndex]!;
 
       // Skip completed phases (resume support)
       if (state.completedPhases.includes(phase.id)) {
@@ -1410,7 +1408,7 @@ export async function runPhases(
       );
 
       const phaseResult = await executePhase(
-        ctx,
+        localCtx,
         phase,
         state,
         projectRoot,
@@ -1419,16 +1417,16 @@ export async function runPhases(
 
       let report = phaseResult.report;
       state = { ...state, phaseReport: report };
-      saveState(ctx.statePath, state);
+      saveState(localCtx.statePath, state);
 
       // Judge loop: runs based on judgeMode setting
       const hasChanges = report.startSha
         ? getChangedFilesRange(projectRoot, report.startSha).length > 0
         : getChangedFiles(projectRoot).length > 0;
       const shouldJudge =
-        ctx.judgeMode !== "never" &&
-        (ctx.judgeMode === "always" ||
-          (ctx.judgeMode === "on-failure" && phaseResult.status !== "complete"));
+        localCtx.judgeMode !== "never" &&
+        (localCtx.judgeMode === "always" ||
+          (localCtx.judgeMode === "on-failure" && phaseResult.status !== "complete"));
       if (shouldJudge && (phaseResult.status !== "failed" || hasChanges)) {
         console.log(`Judging phase "${phase.id}"…`);
 
@@ -1436,7 +1434,7 @@ export async function runPhases(
           phase,
           report,
           projectRoot,
-          ctx,
+          ctx: localCtx,
           logger,
           ...(report.startSha ? { startSha: report.startSha } : {}),
         });
@@ -1479,11 +1477,11 @@ export async function runPhases(
       }
 
       // Auto-detect test suites if no --check was provided
-      if (!ctx.checkCommand && hasNewTestFiles(projectRoot, report.startSha)) {
+      if (!localCtx.checkCommand && hasNewTestFiles(projectRoot, report.startSha)) {
         const detected = detectTestCommand(projectRoot);
         if (detected) {
           console.log(`Detected new test files. Setting check command: ${detected}`);
-          ctx.checkCommand = detected;
+          localCtx.checkCommand = detected;
         }
       }
 
@@ -1495,12 +1493,12 @@ export async function runPhases(
             ? "retry"
             : "halt";
 
-      if (!ctx.headless) {
+      if (!localCtx.headless) {
         const retryCount = state.phaseRetries[phase.id] ?? 0;
         const userChoice = await promptForContinuation({
           phaseId: phase.id,
           retryCount,
-          maxRetries: ctx.maxRetries,
+          maxRetries: localCtx.maxRetries,
           recommendedAction: report.recommendedAction,
           reason: report.summary,
         });
@@ -1511,7 +1509,7 @@ export async function runPhases(
             phaseReports: [...state.phaseReports, report],
           };
           phasesFailed.push(phase.id);
-          saveState(ctx.statePath, state);
+          saveState(localCtx.statePath, state);
           break;
         }
         if (userChoice === "retry") {
@@ -1523,13 +1521,13 @@ export async function runPhases(
       }
 
       // In headless mode, follow the report's recommendation
-      if (ctx.headless && report.recommendedAction === "retry") {
+      if (localCtx.headless && report.recommendedAction === "retry") {
         action = "retry";
       }
 
       if (action === "retry") {
         const retryCount = state.phaseRetries[phase.id] ?? 0;
-        if (retryCount < ctx.maxRetries) {
+        if (retryCount < localCtx.maxRetries) {
           state = {
             ...state,
             phaseReports: [...state.phaseReports, report],
@@ -1543,25 +1541,25 @@ export async function runPhases(
             const newTasks = report.correctiveTasks.map((desc, i) =>
               makeCorrectiveTask(phase.id, desc, i + retryCount * 100),
             );
-            tasksJson.phases[phaseIndex] = {
+            mutableTasksJson.phases[phaseIndex] = {
               ...phase,
               tasks: [...phase.tasks, ...newTasks],
             };
           }
-          saveState(ctx.statePath, state);
+          saveState(localCtx.statePath, state);
           // Don't increment phaseIndex — re-enter same phase
           continue;
         }
         // Max retries exceeded — halt
         console.log(
-          `Max retries (${ctx.maxRetries}) exceeded for phase "${phase.id}". Halting.`,
+          `Max retries (${localCtx.maxRetries}) exceeded for phase "${phase.id}". Halting.`,
         );
         phasesFailed.push(phase.id);
         state = {
           ...state,
           phaseReports: [...state.phaseReports, report],
         };
-        saveState(ctx.statePath, state);
+        saveState(localCtx.statePath, state);
         break;
       }
 
@@ -1572,7 +1570,7 @@ export async function runPhases(
           completedPhases: [...state.completedPhases, phase.id],
           phaseReports: [...state.phaseReports, report],
         };
-        saveState(ctx.statePath, state);
+        saveState(localCtx.statePath, state);
         phaseIndex++;
         continue;
       }
@@ -1583,7 +1581,7 @@ export async function runPhases(
           ...state,
           phaseReports: [...state.phaseReports, report],
         };
-        saveState(ctx.statePath, state);
+        saveState(localCtx.statePath, state);
         break;
       }
 
@@ -1593,12 +1591,12 @@ export async function runPhases(
       report = { ...report, endSha: getCurrentSha(projectRoot) ?? report.startSha };
 
       phasesCompleted.push(phase.id);
-      state = updateStateAfterPhase(state, report, tasksJson.phases);
-      saveState(ctx.statePath, state);
+      state = updateStateAfterPhase(state, report, mutableTasksJson.phases);
+      saveState(localCtx.statePath, state);
 
       // Sync task statuses back to tasks.json
-      tasksJson = applyReportToTasks(tasksJson, phase.id, report);
-      writeFileSync(ctx.tasksJsonPath, JSON.stringify(tasksJson, null, 2), "utf-8");
+      mutableTasksJson = applyReportToTasks(mutableTasksJson, phase.id, report);
+      writeFileSync(localCtx.tasksJsonPath, JSON.stringify(mutableTasksJson, null, 2), "utf-8");
 
       phaseIndex++;
     }
@@ -1649,18 +1647,21 @@ export async function runSinglePhase(
     );
   }
 
-  let state = loadState(ctx.statePath) ?? initState(tasksJson);
-  const logger = createTrajectoryLogger(ctx.trajectoryPath);
+  // Shallow-copy ctx so auto-detected checkCommand doesn't mutate the caller's object
+  const localCtx = { ...ctx };
+
+  let state = loadState(localCtx.statePath) ?? initState(tasksJson);
+  const logger = createTrajectoryLogger(localCtx.trajectoryPath);
   const phasesCompleted: string[] = [];
   const phasesFailed: string[] = [];
 
-  const projectRoot = ctx.projectRoot;
+  const projectRoot = localCtx.projectRoot;
 
   try {
     state = { ...state, currentPhase: phase.id };
 
     const phaseResult = await executePhase(
-      ctx,
+      localCtx,
       phase,
       state,
       projectRoot,
@@ -1674,9 +1675,9 @@ export async function runSinglePhase(
       ? getChangedFilesRange(projectRoot, report.startSha).length > 0
       : getChangedFiles(projectRoot).length > 0;
     const shouldJudge =
-      ctx.judgeMode !== "never" &&
-      (ctx.judgeMode === "always" ||
-        (ctx.judgeMode === "on-failure" && phaseResult.status !== "complete"));
+      localCtx.judgeMode !== "never" &&
+      (localCtx.judgeMode === "always" ||
+        (localCtx.judgeMode === "on-failure" && phaseResult.status !== "complete"));
     if (shouldJudge && (phaseResult.status !== "failed" || hasChanges)) {
       console.log(`Judging phase "${phase.id}"…`);
 
@@ -1684,7 +1685,7 @@ export async function runSinglePhase(
         phase,
         report,
         projectRoot,
-        ctx,
+        ctx: localCtx,
         logger,
         ...(report.startSha ? { startSha: report.startSha } : {}),
       });
@@ -1728,11 +1729,11 @@ export async function runSinglePhase(
     }
 
     // Auto-detect test suites if no --check was provided
-    if (!ctx.checkCommand && hasNewTestFiles(projectRoot, report.startSha)) {
+    if (!localCtx.checkCommand && hasNewTestFiles(projectRoot, report.startSha)) {
       const detected = detectTestCommand(projectRoot);
       if (detected) {
         console.log(`Detected new test files. Setting check command: ${detected}`);
-        ctx.checkCommand = detected;
+        localCtx.checkCommand = detected;
       }
     }
 
@@ -1745,7 +1746,7 @@ export async function runSinglePhase(
 
       // Sync task statuses back to tasks.json
       const updatedTasks = applyReportToTasks(tasksJson, phase.id, report);
-      writeFileSync(ctx.tasksJsonPath, JSON.stringify(updatedTasks, null, 2), "utf-8");
+      writeFileSync(localCtx.tasksJsonPath, JSON.stringify(updatedTasks, null, 2), "utf-8");
     } else {
       phasesFailed.push(phase.id);
       state = {
@@ -1754,7 +1755,7 @@ export async function runSinglePhase(
       };
     }
 
-    saveState(ctx.statePath, state);
+    saveState(localCtx.statePath, state);
   } finally {
     logger.close();
   }

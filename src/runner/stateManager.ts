@@ -38,7 +38,13 @@ export function loadState(statePath: string): SharedState | null {
     throw err;
   }
 
-  const parsed: unknown = JSON.parse(raw);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to parse state file ${statePath}: ${message}`);
+  }
   return SharedStateSchema.parse(parsed);
 }
 

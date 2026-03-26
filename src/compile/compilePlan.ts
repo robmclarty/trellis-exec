@@ -79,6 +79,9 @@ export async function compilePlan(config: CompileConfig): Promise<TasksJson> {
       );
     }
     tasksJson = validation.data;
+    if (guidelinesRef) {
+      tasksJson = { ...tasksJson, guidelinesRef };
+    }
   }
 
   const finalValidation = TasksJsonSchema.safeParse(tasksJson);
