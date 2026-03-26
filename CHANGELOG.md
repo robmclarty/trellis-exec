@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.12
+
+- Consolidate `getChangedFiles`/`getChangedFilesRange` and `getDiffContent`/`getDiffContentRange` into single functions with optional `fromSha` parameter, eliminating duplication and simplifying callers
+- Extract 13 prompt-building and normalization functions from `phaseRunner.ts` into new `src/runner/prompts.ts`, reducing phaseRunner from 2,202 to 1,510 lines
+
 ## 0.7.11
 
 - Add subAgentType-aware execution guidance to phase orchestrator (scaffold/implement/test-writer strategies)
