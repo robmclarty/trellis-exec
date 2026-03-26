@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.8
+
+- Fix sub-agent CLI calls (judge, fix, etc.) failing silently due to missing `--verbose` flag required by Claude CLI for `stream-json` with piped stdin
+- Skip fix-judge retry loop when judge sub-agent process itself fails, avoiding wasted corrective task cycles on infrastructure errors
+- Add tests for sub-agent CLI failure handling and stream-json `--verbose` invariant
+
 ## 0.7.7
 
 - Add two-tier browser testing with Playwright (optional peer dependency)
