@@ -1287,8 +1287,23 @@ async function executePhase(
 
   const agentFile = resolve(ctx.pluginRoot, "agents/phase-orchestrator.md");
 
+  const spinnerMessages = [
+    "Orchestrating…",
+    "Noodling…",
+    "Tinkering…",
+    "Pondering…",
+    "Cooking…",
+    "Mulling…",
+    "Conjuring…",
+    "Brewing…",
+    "Weaving…",
+    "Scheming…",
+  ];
+  const spinnerLabel =
+    spinnerMessages[Math.floor(Math.random() * spinnerMessages.length)];
+
   console.log("Starting phase orchestrator…");
-  const spinner = startSpinner("Orchestrating…");
+  const spinner = startSpinner(spinnerLabel);
 
   try {
     const startTime = Date.now();
