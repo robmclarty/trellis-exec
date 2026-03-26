@@ -39,6 +39,7 @@ export type RunContext = {
   verbose: boolean;
   dryRun: boolean;
   pluginRoot: string;
+  tasksJsonPath: string;
   judgeMode: "always" | "on-failure" | "never";
   judgeModel?: string;
 };
@@ -201,6 +202,7 @@ export function buildRunContext(
     ...(guidelinesPath !== undefined ? { guidelinesPath } : {}),
     statePath,
     trajectoryPath,
+    tasksJsonPath,
     ...(values.check !== undefined ? { checkCommand: values.check } : {}),
     concurrency,
     ...(model !== undefined ? { model } : {}),

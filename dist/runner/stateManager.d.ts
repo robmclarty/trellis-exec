@@ -32,6 +32,13 @@ export declare function updateStateAfterPhase(state: SharedState, report: PhaseR
  */
 export declare function updateTaskStatus(tasksJson: TasksJson, phaseId: string, taskId: string, status: TaskStatus): TasksJson;
 /**
+ * Applies a phase report's task outcomes to a TasksJson structure.
+ * Marks completed tasks as "complete" and failed tasks as "failed".
+ * Silently skips task IDs not found in the phase (e.g., corrective tasks
+ * dynamically added during retries).
+ */
+export declare function applyReportToTasks(tasksJson: TasksJson, phaseId: string, report: PhaseReport): TasksJson;
+/**
  * Returns the commit range (startSha..endSha) for a completed phase,
  * or null if the phase has no recorded SHAs.
  */

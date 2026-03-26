@@ -3,6 +3,7 @@ import {
   mkdtempSync,
   rmSync,
   writeFileSync,
+  readFileSync,
   mkdirSync,
 } from "node:fs";
 import { join } from "node:path";
@@ -46,6 +47,7 @@ import {
   extractScopes,
   makePhaseCommit,
   collectLearnings,
+  hasNewTestFiles,
 } from "../phaseRunner.js";
 import type { RunContext } from "../../cli.js";
 import { createAgentLauncher } from "../../orchestrator/agentLauncher.js";
@@ -157,6 +159,7 @@ function makeDefaultConfig(tmpDir: string): RunContext {
     planPath: join(tmpDir, "plan.md"),
     statePath: join(tmpDir, "state.json"),
     trajectoryPath: join(tmpDir, "trajectory.jsonl"),
+    tasksJsonPath: join(tmpDir, "tasks.json"),
     concurrency: 3,
     maxRetries: 2,
     headless: true,
@@ -303,7 +306,7 @@ describe("phaseRunner", () => {
     it("marks phase as partial when report is missing tasks", async () => {
       const tasksJson = makeTasksJson();
       tmpDir = setupTmpDir(tasksJson);
-      const config = { ...makeDefaultConfig(tmpDir), maxRetries: 0 };
+      const config = { ...makeDefaultConfig(tmpDir), maxRetries: 0, judgeMode: "never" as const };
 
       const mockCreateAgentLauncher = createAgentLauncher as ReturnType<typeof vi.fn>;
       mockCreateAgentLauncher.mockImplementation(() => ({
@@ -934,6 +937,138 @@ describe("phaseRunner", () => {
         (r) => r.phaseId === "phase-1",
       );
       expect(phaseReport?.startSha).toBe("start-sha-aaa");
+    });
+  });
+
+  describe("hasNewTestFiles", () => {
+    it("uses getChangedFilesRange when startSha is provided", () => {
+      mockedGetChangedFilesRange.mockReturnValueOnce([
+        { path: "test/foo.test.ts", status: "A" },
+      ]);
+
+      const result = hasNewTestFiles("/tmp/project", "abc123");
+
+      expect(result).toBe(true);
+      expect(mockedGetChangedFilesRange).toHaveBeenCalledWith("/tmp/project", "abc123");
+    });
+
+    it("falls back to getChangedFiles without startSha", () => {
+      mockedGetChangedFiles.mockReturnValueOnce([
+        { path: "test/foo.test.ts", status: "A" },
+      ]);
+
+      const result = hasNewTestFiles("/tmp/project");
+
+      expect(result).toBe(true);
+      expect(mockedGetChangedFiles).toHaveBeenCalledWith("/tmp/project");
+    });
+
+    it("detects modified test files with startSha", () => {
+      mockedGetChangedFilesRange.mockReturnValueOnce([
+        { path: "src/__tests__/app.test.js", status: "M" },
+      ]);
+
+      const result = hasNewTestFiles("/tmp/project", "abc123");
+
+      expect(result).toBe(true);
+    });
+
+    it("returns false when no test files in changes", () => {
+      mockedGetChangedFilesRange.mockReturnValueOnce([
+        { path: "src/index.ts", status: "A" },
+      ]);
+
+      const result = hasNewTestFiles("/tmp/project", "abc123");
+
+      expect(result).toBe(false);
+    });
+  });
+
+  describe("runPhases — judge upgrade on timeout", () => {
+    it("advances when judge passes a timed-out phase with committed work", async () => {
+      const tasksJson = makeTasksJson();
+      // Only use phase-1 to keep it simple
+      tasksJson.phases = [tasksJson.phases[0]!];
+      tmpDir = setupTmpDir(tasksJson);
+      const config = { ...makeDefaultConfig(tmpDir), maxRetries: 1 };
+
+      mockedEnsureInitialCommit.mockReturnValue("baseline-sha");
+      // Phase has committed changes (so judge will run)
+      mockedGetChangedFilesRange.mockReturnValue([
+        { path: "package.json", status: "A" },
+      ]);
+      mockedGetDiffContentRange.mockReturnValue("diff content");
+      mockedGetCurrentSha.mockReturnValue("end-sha");
+      mockedCommitAll.mockReturnValue("commit-sha");
+
+      const mockCreateAgentLauncher = createAgentLauncher as ReturnType<typeof vi.fn>;
+
+      let orchestratorCalls = 0;
+      mockCreateAgentLauncher.mockImplementation(() => ({
+        dispatchSubAgent: async () => ({
+          success: true,
+          // Judge passes
+          output: '{"passed": true, "issues": [], "suggestions": []}',
+          filesModified: [],
+        }),
+        runPhaseOrchestrator: async (): Promise<ExecClaudeResult> => {
+          orchestratorCalls++;
+          if (orchestratorCalls === 1) {
+            // First call: simulate timeout (no report file written)
+            throw new Error("claude subprocess timed out after 600000ms");
+          }
+          // Should not reach here if judge upgrade works
+          const report = makePhaseReport("phase-1", {
+            tasksCompleted: ["task-1-1", "task-1-2"],
+          });
+          writeFileSync(
+            join(tmpDir, ".trellis-phase-report.json"),
+            JSON.stringify(report),
+          );
+          return { stdout: "done", stderr: "", exitCode: 0 };
+        },
+      }));
+
+      const result = await runPhases(config, tasksJson);
+
+      // Should succeed without needing a retry
+      expect(result.success).toBe(true);
+      expect(result.phasesCompleted).toContain("phase-1");
+      // Orchestrator should only be called once (no retry needed)
+      expect(orchestratorCalls).toBe(1);
+    });
+  });
+
+  describe("runPhases — tasks.json status sync", () => {
+    it("writes updated task statuses to tasks.json after phase advance", async () => {
+      const tasksJson = makeTasksJson();
+      tmpDir = setupTmpDir(tasksJson);
+      const config = makeDefaultConfig(tmpDir);
+
+      const reports = new Map<string, PhaseReport>([
+        [
+          "phase-1",
+          makePhaseReport("phase-1", {
+            tasksCompleted: ["task-1-1", "task-1-2"],
+          }),
+        ],
+        [
+          "phase-2",
+          makePhaseReport("phase-2", {
+            tasksCompleted: ["task-2-1", "task-2-2"],
+          }),
+        ],
+      ]);
+      setupMocksForSuccess(tmpDir, reports);
+
+      await runPhases(config, tasksJson);
+
+      // Read tasks.json from disk and verify statuses were updated
+      const written = JSON.parse(readFileSync(join(tmpDir, "tasks.json"), "utf-8"));
+      const phase1Task = written.phases[0].tasks.find((t: { id: string }) => t.id === "task-1-1");
+      const phase2Task = written.phases[1].tasks.find((t: { id: string }) => t.id === "task-2-1");
+      expect(phase1Task.status).toBe("complete");
+      expect(phase2Task.status).toBe("complete");
     });
   });
 });

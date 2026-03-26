@@ -111,6 +111,31 @@ export function updateTaskStatus(
 }
 
 /**
+ * Applies a phase report's task outcomes to a TasksJson structure.
+ * Marks completed tasks as "complete" and failed tasks as "failed".
+ * Silently skips task IDs not found in the phase (e.g., corrective tasks
+ * dynamically added during retries).
+ */
+export function applyReportToTasks(
+  tasksJson: TasksJson,
+  phaseId: string,
+  report: PhaseReport,
+): TasksJson {
+  let updated = tasksJson;
+  for (const taskId of report.tasksCompleted) {
+    try {
+      updated = updateTaskStatus(updated, phaseId, taskId, "complete");
+    } catch { /* corrective/dynamic task IDs may not exist in original tasks.json */ }
+  }
+  for (const taskId of report.tasksFailed) {
+    try {
+      updated = updateTaskStatus(updated, phaseId, taskId, "failed");
+    } catch { /* skip */ }
+  }
+  return updated;
+}
+
+/**
  * Returns the commit range (startSha..endSha) for a completed phase,
  * or null if the phase has no recorded SHAs.
  */

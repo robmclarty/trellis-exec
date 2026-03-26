@@ -1,5 +1,5 @@
 import { describe, it, beforeEach, afterEach, expect, vi } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync, } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, mkdirSync, } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 // ---------------------------------------------------------------------------
@@ -21,7 +21,7 @@ vi.mock("../../git.js", () => ({
     getDiffContentRange: vi.fn(() => ""),
 }));
 // Import module under test and mocked modules AFTER vi.mock declarations
-import { runPhases, dryRunReport, buildPhaseContext, buildJudgePrompt, parseJudgeResult, buildFixPrompt, normalizeReport, createDefaultCheck, extractScopes, makePhaseCommit, collectLearnings, } from "../phaseRunner.js";
+import { runPhases, dryRunReport, buildPhaseContext, buildJudgePrompt, parseJudgeResult, buildFixPrompt, normalizeReport, createDefaultCheck, extractScopes, makePhaseCommit, collectLearnings, hasNewTestFiles, } from "../phaseRunner.js";
 import { createAgentLauncher } from "../../orchestrator/agentLauncher.js";
 import { getChangedFiles, commitAll, getChangedFilesRange, getDiffContentRange, ensureInitialCommit, getCurrentSha } from "../../git.js";
 const mockedGetChangedFiles = vi.mocked(getChangedFiles);
@@ -123,6 +123,7 @@ function makeDefaultConfig(tmpDir) {
         planPath: join(tmpDir, "plan.md"),
         statePath: join(tmpDir, "state.json"),
         trajectoryPath: join(tmpDir, "trajectory.jsonl"),
+        tasksJsonPath: join(tmpDir, "tasks.json"),
         concurrency: 3,
         maxRetries: 2,
         headless: true,
@@ -237,7 +238,7 @@ describe("phaseRunner", () => {
         it("marks phase as partial when report is missing tasks", async () => {
             const tasksJson = makeTasksJson();
             tmpDir = setupTmpDir(tasksJson);
-            const config = { ...makeDefaultConfig(tmpDir), maxRetries: 0 };
+            const config = { ...makeDefaultConfig(tmpDir), maxRetries: 0, judgeMode: "never" };
             const mockCreateAgentLauncher = createAgentLauncher;
             mockCreateAgentLauncher.mockImplementation(() => ({
                 dispatchSubAgent: async () => ({
@@ -732,6 +733,113 @@ describe("phaseRunner", () => {
             // Phase reports should include SHA tracking
             const phaseReport = result.finalState.phaseReports.find((r) => r.phaseId === "phase-1");
             expect(phaseReport?.startSha).toBe("start-sha-aaa");
+        });
+    });
+    describe("hasNewTestFiles", () => {
+        it("uses getChangedFilesRange when startSha is provided", () => {
+            mockedGetChangedFilesRange.mockReturnValueOnce([
+                { path: "test/foo.test.ts", status: "A" },
+            ]);
+            const result = hasNewTestFiles("/tmp/project", "abc123");
+            expect(result).toBe(true);
+            expect(mockedGetChangedFilesRange).toHaveBeenCalledWith("/tmp/project", "abc123");
+        });
+        it("falls back to getChangedFiles without startSha", () => {
+            mockedGetChangedFiles.mockReturnValueOnce([
+                { path: "test/foo.test.ts", status: "A" },
+            ]);
+            const result = hasNewTestFiles("/tmp/project");
+            expect(result).toBe(true);
+            expect(mockedGetChangedFiles).toHaveBeenCalledWith("/tmp/project");
+        });
+        it("detects modified test files with startSha", () => {
+            mockedGetChangedFilesRange.mockReturnValueOnce([
+                { path: "src/__tests__/app.test.js", status: "M" },
+            ]);
+            const result = hasNewTestFiles("/tmp/project", "abc123");
+            expect(result).toBe(true);
+        });
+        it("returns false when no test files in changes", () => {
+            mockedGetChangedFilesRange.mockReturnValueOnce([
+                { path: "src/index.ts", status: "A" },
+            ]);
+            const result = hasNewTestFiles("/tmp/project", "abc123");
+            expect(result).toBe(false);
+        });
+    });
+    describe("runPhases — judge upgrade on timeout", () => {
+        it("advances when judge passes a timed-out phase with committed work", async () => {
+            const tasksJson = makeTasksJson();
+            // Only use phase-1 to keep it simple
+            tasksJson.phases = [tasksJson.phases[0]];
+            tmpDir = setupTmpDir(tasksJson);
+            const config = { ...makeDefaultConfig(tmpDir), maxRetries: 1 };
+            mockedEnsureInitialCommit.mockReturnValue("baseline-sha");
+            // Phase has committed changes (so judge will run)
+            mockedGetChangedFilesRange.mockReturnValue([
+                { path: "package.json", status: "A" },
+            ]);
+            mockedGetDiffContentRange.mockReturnValue("diff content");
+            mockedGetCurrentSha.mockReturnValue("end-sha");
+            mockedCommitAll.mockReturnValue("commit-sha");
+            const mockCreateAgentLauncher = createAgentLauncher;
+            let orchestratorCalls = 0;
+            mockCreateAgentLauncher.mockImplementation(() => ({
+                dispatchSubAgent: async () => ({
+                    success: true,
+                    // Judge passes
+                    output: '{"passed": true, "issues": [], "suggestions": []}',
+                    filesModified: [],
+                }),
+                runPhaseOrchestrator: async () => {
+                    orchestratorCalls++;
+                    if (orchestratorCalls === 1) {
+                        // First call: simulate timeout (no report file written)
+                        throw new Error("claude subprocess timed out after 600000ms");
+                    }
+                    // Should not reach here if judge upgrade works
+                    const report = makePhaseReport("phase-1", {
+                        tasksCompleted: ["task-1-1", "task-1-2"],
+                    });
+                    writeFileSync(join(tmpDir, ".trellis-phase-report.json"), JSON.stringify(report));
+                    return { stdout: "done", stderr: "", exitCode: 0 };
+                },
+            }));
+            const result = await runPhases(config, tasksJson);
+            // Should succeed without needing a retry
+            expect(result.success).toBe(true);
+            expect(result.phasesCompleted).toContain("phase-1");
+            // Orchestrator should only be called once (no retry needed)
+            expect(orchestratorCalls).toBe(1);
+        });
+    });
+    describe("runPhases — tasks.json status sync", () => {
+        it("writes updated task statuses to tasks.json after phase advance", async () => {
+            const tasksJson = makeTasksJson();
+            tmpDir = setupTmpDir(tasksJson);
+            const config = makeDefaultConfig(tmpDir);
+            const reports = new Map([
+                [
+                    "phase-1",
+                    makePhaseReport("phase-1", {
+                        tasksCompleted: ["task-1-1", "task-1-2"],
+                    }),
+                ],
+                [
+                    "phase-2",
+                    makePhaseReport("phase-2", {
+                        tasksCompleted: ["task-2-1", "task-2-2"],
+                    }),
+                ],
+            ]);
+            setupMocksForSuccess(tmpDir, reports);
+            await runPhases(config, tasksJson);
+            // Read tasks.json from disk and verify statuses were updated
+            const written = JSON.parse(readFileSync(join(tmpDir, "tasks.json"), "utf-8"));
+            const phase1Task = written.phases[0].tasks.find((t) => t.id === "task-1-1");
+            const phase2Task = written.phases[1].tasks.find((t) => t.id === "task-2-1");
+            expect(phase1Task.status).toBe("complete");
+            expect(phase2Task.status).toBe("complete");
         });
     });
 });

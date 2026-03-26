@@ -142,6 +142,7 @@ export function buildRunContext(args, env = process.env) {
         ...(guidelinesPath !== undefined ? { guidelinesPath } : {}),
         statePath,
         trajectoryPath,
+        tasksJsonPath,
         ...(values.check !== undefined ? { checkCommand: values.check } : {}),
         concurrency,
         ...(model !== undefined ? { model } : {}),

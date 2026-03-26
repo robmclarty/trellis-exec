@@ -16,6 +16,7 @@ import {
   saveState,
   updateStateAfterPhase,
   updateTaskStatus,
+  applyReportToTasks,
   getPhaseCommitRange,
 } from "../stateManager.js";
 
@@ -310,6 +311,61 @@ describe("stateManager", () => {
 
       const range = getPhaseCommitRange(stateWithReport, "phase-1");
       expect(range).toBeNull();
+    });
+  });
+
+  describe("applyReportToTasks", () => {
+    it("marks completed tasks as complete", () => {
+      const tasks = makeTasksJson();
+      const report: PhaseReport = {
+        ...makePhaseReport("phase-1"),
+        tasksCompleted: ["task-1-1"],
+        tasksFailed: [],
+      };
+
+      const updated = applyReportToTasks(tasks, "phase-1", report);
+      const task = updated.phases[0]?.tasks.find((t) => t.id === "task-1-1");
+      expect(task?.status).toBe("complete");
+    });
+
+    it("marks failed tasks as failed", () => {
+      const tasks = makeTasksJson();
+      const report: PhaseReport = {
+        ...makePhaseReport("phase-1"),
+        tasksCompleted: [],
+        tasksFailed: ["task-1-1"],
+      };
+
+      const updated = applyReportToTasks(tasks, "phase-1", report);
+      const task = updated.phases[0]?.tasks.find((t) => t.id === "task-1-1");
+      expect(task?.status).toBe("failed");
+    });
+
+    it("silently skips unknown task IDs", () => {
+      const tasks = makeTasksJson();
+      const report: PhaseReport = {
+        ...makePhaseReport("phase-1"),
+        tasksCompleted: ["task-1-1", "corrective-task-99"],
+        tasksFailed: [],
+      };
+
+      const updated = applyReportToTasks(tasks, "phase-1", report);
+      const task = updated.phases[0]?.tasks.find((t) => t.id === "task-1-1");
+      expect(task?.status).toBe("complete");
+      // No error thrown for unknown task
+    });
+
+    it("does not mutate the original TasksJson", () => {
+      const tasks = makeTasksJson();
+      const report: PhaseReport = {
+        ...makePhaseReport("phase-1"),
+        tasksCompleted: ["task-1-1"],
+        tasksFailed: [],
+      };
+
+      applyReportToTasks(tasks, "phase-1", report);
+      const task = tasks.phases[0]?.tasks.find((t) => t.id === "task-1-1");
+      expect(task?.status).toBe("pending");
     });
   });
 });

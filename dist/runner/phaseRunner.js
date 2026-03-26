@@ -1,8 +1,8 @@
-import { readFileSync, existsSync, unlinkSync, statSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, unlinkSync, statSync } from "node:fs";
 import { resolve, basename, join } from "node:path";
 import { createInterface } from "node:readline";
 import { JudgeAssessmentSchema } from "../types/state.js";
-import { initState, loadState, saveState, updateStateAfterPhase, } from "./stateManager.js";
+import { initState, loadState, saveState, updateStateAfterPhase, applyReportToTasks, } from "./stateManager.js";
 import { validateDependencies, resolveExecutionOrder, detectTargetPathOverlaps, } from "./scheduler.js";
 import { createTrajectoryLogger } from "../logging/trajectoryLogger.js";
 import { startSpinner } from "../ui/spinner.js";
@@ -331,9 +331,11 @@ const TEST_FILE_PATTERNS = [
 /**
  * Returns true if any newly added files look like test files.
  */
-export function hasNewTestFiles(projectRoot) {
-    const changed = getChangedFiles(projectRoot);
-    return changed.some((f) => (f.status === "A" || f.status === "?") &&
+export function hasNewTestFiles(projectRoot, startSha) {
+    const changed = startSha
+        ? getChangedFilesRange(projectRoot, startSha)
+        : getChangedFiles(projectRoot);
+    return changed.some((f) => (f.status === "A" || f.status === "?" || f.status === "M") &&
         TEST_FILE_PATTERNS.some((re) => re.test(f.path)));
 }
 /**
@@ -1055,6 +1057,18 @@ export async function runPhases(ctx, tasksJson) {
                     ...(report.startSha ? { startSha: report.startSha } : {}),
                 });
                 report = { ...report, judgeAssessment: judgeResult.assessment };
+                // Upgrade: orchestrator failed/partial but judge confirms work is correct
+                if (judgeResult.assessment.passed &&
+                    report.recommendedAction === "retry" &&
+                    phaseResult.status !== "complete") {
+                    console.log(`Judge passed phase "${phase.id}" despite orchestrator failure. Advancing.`);
+                    report = {
+                        ...report,
+                        status: "complete",
+                        recommendedAction: "advance",
+                    };
+                }
+                // Downgrade: orchestrator said advance but judge found issues
                 if (!judgeResult.assessment.passed &&
                     report.recommendedAction === "advance") {
                     console.log(`Judge found unresolved issues in phase "${phase.id}". Recommending retry.`);
@@ -1069,7 +1083,7 @@ export async function runPhases(ctx, tasksJson) {
                 }
             }
             // Auto-detect test suites if no --check was provided
-            if (!ctx.checkCommand && hasNewTestFiles(projectRoot)) {
+            if (!ctx.checkCommand && hasNewTestFiles(projectRoot, report.startSha)) {
                 const detected = detectTestCommand(projectRoot);
                 if (detected) {
                     console.log(`Detected new test files. Setting check command: ${detected}`);
@@ -1173,6 +1187,9 @@ export async function runPhases(ctx, tasksJson) {
             phasesCompleted.push(phase.id);
             state = updateStateAfterPhase(state, report, tasksJson.phases);
             saveState(ctx.statePath, state);
+            // Sync task statuses back to tasks.json
+            tasksJson = applyReportToTasks(tasksJson, phase.id, report);
+            writeFileSync(ctx.tasksJsonPath, JSON.stringify(tasksJson, null, 2), "utf-8");
             phaseIndex++;
         }
     }
@@ -1219,10 +1236,13 @@ export async function runSinglePhase(ctx, tasksJson, phaseId) {
         const phaseResult = await executePhase(ctx, phase, state, projectRoot, logger);
         let report = phaseResult.report;
         // Judge loop: runs based on judgeMode setting
+        const hasChanges = report.startSha
+            ? getChangedFilesRange(projectRoot, report.startSha).length > 0
+            : getChangedFiles(projectRoot).length > 0;
         const shouldJudge = ctx.judgeMode !== "never" &&
             (ctx.judgeMode === "always" ||
                 (ctx.judgeMode === "on-failure" && phaseResult.status !== "complete"));
-        if (shouldJudge && phaseResult.status !== "failed") {
+        if (shouldJudge && (phaseResult.status !== "failed" || hasChanges)) {
             console.log(`Judging phase "${phase.id}"…`);
             const judgeResult = await judgePhase({
                 phase,
@@ -1233,6 +1253,18 @@ export async function runSinglePhase(ctx, tasksJson, phaseId) {
                 ...(report.startSha ? { startSha: report.startSha } : {}),
             });
             report = { ...report, judgeAssessment: judgeResult.assessment };
+            // Upgrade: orchestrator failed/partial but judge confirms work is correct
+            if (judgeResult.assessment.passed &&
+                report.recommendedAction === "retry" &&
+                phaseResult.status !== "complete") {
+                console.log(`Judge passed phase "${phase.id}" despite orchestrator failure. Advancing.`);
+                report = {
+                    ...report,
+                    status: "complete",
+                    recommendedAction: "advance",
+                };
+            }
+            // Downgrade: orchestrator said advance but judge found issues
             if (!judgeResult.assessment.passed &&
                 report.recommendedAction === "advance") {
                 console.log(`Judge found unresolved issues in phase "${phase.id}". Downgrading to partial.`);
@@ -1247,11 +1279,22 @@ export async function runSinglePhase(ctx, tasksJson, phaseId) {
                 };
             }
         }
+        // Auto-detect test suites if no --check was provided
+        if (!ctx.checkCommand && hasNewTestFiles(projectRoot, report.startSha)) {
+            const detected = detectTestCommand(projectRoot);
+            if (detected) {
+                console.log(`Detected new test files. Setting check command: ${detected}`);
+                ctx.checkCommand = detected;
+            }
+        }
         if (report.status === "complete" && report.recommendedAction === "advance") {
             makePhaseCommit(projectRoot, phase, report);
             report = { ...report, endSha: getCurrentSha(projectRoot) ?? report.startSha };
             phasesCompleted.push(phase.id);
             state = updateStateAfterPhase(state, report, tasksJson.phases);
+            // Sync task statuses back to tasks.json
+            const updatedTasks = applyReportToTasks(tasksJson, phase.id, report);
+            writeFileSync(ctx.tasksJsonPath, JSON.stringify(updatedTasks, null, 2), "utf-8");
         }
         else {
             phasesFailed.push(phase.id);
