@@ -92,6 +92,20 @@ export function buildPhaseContext(phase, state, handoff, ctx) {
         }
         lines.push(`Description: ${task.description}`);
     }
+    // Task type summary — helps orchestrator plan execution strategy
+    const typeCounts = new Map();
+    for (const task of phase.tasks) {
+        const list = typeCounts.get(task.subAgentType) ?? [];
+        list.push(task.id);
+        typeCounts.set(task.subAgentType, list);
+    }
+    if (typeCounts.size > 0) {
+        lines.push("");
+        lines.push("## Task Type Summary");
+        for (const [type, ids] of typeCounts) {
+            lines.push(`- **${type}**: ${ids.join(", ")}`);
+        }
+    }
     lines.push("");
     lines.push("## Prior Phase Handoff (authoritative — reflects current codebase state)");
     lines.push(handoff || "This is the first phase.");

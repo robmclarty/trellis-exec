@@ -164,6 +164,10 @@ const AGENT_KEYWORDS: Array<{ type: string; pattern: RegExp }> = [
  * Classifies a task's sub-agent type based on keyword matching against the
  * title and description. Priority order: test-writer > scaffold > judge > implement.
  * If multiple categories match, returns the highest-priority match and marks ambiguous.
+ *
+ * subAgentType is currently used as an orchestrator hint — it appears in phase
+ * context so the orchestrator can adjust execution strategy per task type.
+ * It does NOT trigger automatic dispatch to specialist agent files.
  */
 function classifySubAgentType(
   title: string,

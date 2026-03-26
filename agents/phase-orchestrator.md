@@ -19,14 +19,10 @@ Use Claude's built-in tools directly:
 - **Glob** — find files by pattern
 - **Grep** — search file contents
 
-For complex multi-file tasks that need LLM reasoning, use the **Agent** tool to dispatch a sub-agent:
-
-- Set `prompt` to the task instructions, including file paths to read and output paths to create/modify
-- Set `model` to the task's sub-agent model: `sonnet` for implement and test-writer tasks, `haiku` for scaffold tasks
-
-The Agent tool runs a sub-agent with access to Read, Write, Edit, Bash, Glob, and Grep. It returns the result directly when complete.
-
-For simple single-file creation (config files, small files with known content), use the Write tool directly instead of dispatching a sub-agent — no Agent tool needed for trivial changes.
+The **Agent** tool is available for delegating complex tasks to a sub-agent. Use it sparingly — most tasks are better handled directly. When you do use it:
+- Set `prompt` to focused instructions with specific file paths and output constraints
+- Set `model` to match the task type: `sonnet` for implement/test-writer, `haiku` for scaffold
+- The sub-agent gets Read, Write, Edit, Bash, Glob, and Grep
 
 ## Phase Context
 
@@ -62,7 +58,13 @@ Work through tasks in dependency order:
 
 3. **Assemble context.** Build focused instructions for the sub-agent: the specific files it needs, clear instructions, and constrained output paths.
 
-4. **Dispatch or implement.** Either dispatch a sub-agent via the Agent tool for complex tasks, or use Write/Edit directly for simple changes.
+4. **Implement based on task type.** Check each task's `Sub-agent type` field:
+
+   - **scaffold**: Use Write/Edit directly. These are config files, boilerplate, directory structure. No Agent tool needed — just create the files.
+   - **implement**: For single-file changes, use Write/Edit directly. For complex multi-file tasks, use the Agent tool: set `model` to `sonnet`, provide focused instructions with file paths and output constraints.
+   - **test-writer**: For simple test files, use Write directly. For complex test suites needing codebase understanding, use the Agent tool: set `model` to `sonnet`, constrain output to test files only.
+
+   Default to doing the work yourself. Only dispatch via Agent tool when a task is genuinely complex enough that a focused sub-agent with a clean context would do better than you with accumulated phase context.
 
 5. **Check.** Run the project's check command via Bash (provided in the phase context). This is the hard gate — if it fails, the task is not complete.
 
