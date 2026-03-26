@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.10
+
+- Add project-level web app detection (`detectWebApp`) that checks for frontend framework deps, build-tool configs, and HTML entry points
+- Fix `requiresBrowserTest` heuristic to propagate across phases for web app projects: sticky propagation once any phase has UI output, and last-phase guarantee so end-of-build acceptance tests always run
+
 ## 0.7.9
 
 - Fix token/cost extraction to read from nested `usage.input_tokens` (actual CLI format) instead of non-existent top-level `num_input_tokens`, with fallback for legacy format
