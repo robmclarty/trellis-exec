@@ -1,7 +1,28 @@
 import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { resolve, extname } from "node:path";
 import { getChangedFilesRange } from "../git.js";
 const TODO_PATTERN = /\b(TODO|FIXME|HACK)\b/;
+/**
+ * Extension variants to try when a target path doesn't exist on disk.
+ * Handles common mismatches like .js specified but .jsx created (Vite requires
+ * explicit .jsx for files containing JSX).
+ */
+const EXTENSION_VARIANTS = {
+    ".js": [".jsx", ".ts", ".tsx"],
+    ".jsx": [".js", ".tsx", ".ts"],
+    ".ts": [".tsx", ".js", ".jsx"],
+    ".tsx": [".ts", ".jsx", ".js"],
+};
+function targetPathExists(projectRoot, targetPath) {
+    if (existsSync(resolve(projectRoot, targetPath)))
+        return true;
+    const ext = extname(targetPath);
+    const variants = EXTENSION_VARIANTS[ext];
+    if (!variants)
+        return false;
+    const base = targetPath.slice(0, -ext.length);
+    return variants.some((v) => existsSync(resolve(projectRoot, base + v)));
+}
 /**
  * Lightweight deterministic verification after orchestrator reports "complete."
  * Catches lazy-completion patterns before the expensive judge invocation.
@@ -16,8 +37,7 @@ export function verifyCompletion(projectRoot, phase, report, startSha) {
             continue;
         for (const targetPath of task.targetPaths) {
             totalTargetPaths++;
-            const absPath = resolve(projectRoot, targetPath);
-            if (!existsSync(absPath)) {
+            if (!targetPathExists(projectRoot, targetPath)) {
                 missingTargetPaths++;
                 failures.push(`[${task.id}] target path missing: ${targetPath}`);
             }

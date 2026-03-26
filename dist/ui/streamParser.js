@@ -46,12 +46,15 @@ export function parseStreamLine(line) {
 }
 /**
  * Extract usage stats from a parsed result JSON object.
- * Claude CLI result events include: num_turns, is_error, total_cost_usd,
- * usage: { input_tokens, output_tokens }.
+ * Claude CLI result events include: total_cost_usd at top level,
+ * and usage: { input_tokens, output_tokens } nested under a usage object.
  */
 function extractUsageFromParsed(parsed) {
-    const inputTokens = parsed.num_input_tokens;
-    const outputTokens = parsed.num_output_tokens;
+    // Try nested usage object first (current CLI format),
+    // then top-level fields (legacy/future-proofing)
+    const usage = parsed.usage;
+    const inputTokens = usage?.input_tokens ?? parsed.num_input_tokens;
+    const outputTokens = usage?.output_tokens ?? parsed.num_output_tokens;
     const costUsd = parsed.total_cost_usd;
     if (typeof inputTokens !== "number" && typeof outputTokens !== "number") {
         return undefined;

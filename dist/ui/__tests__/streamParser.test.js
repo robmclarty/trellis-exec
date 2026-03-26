@@ -28,7 +28,21 @@ describe("parseStreamLine", () => {
         const event = parseStreamLine(line);
         expect(event).toMatchObject({ type: "result", text: "final answer" });
     });
-    it("extracts usage from result event with token counts", () => {
+    it("extracts usage from result event with nested usage object", () => {
+        const line = JSON.stringify({
+            type: "result",
+            result: "done",
+            total_cost_usd: 0.05,
+            usage: { input_tokens: 5000, output_tokens: 1200 },
+        });
+        const event = parseStreamLine(line);
+        expect(event).toMatchObject({
+            type: "result",
+            text: "done",
+            usage: { inputTokens: 5000, outputTokens: 1200, costUsd: 0.05 },
+        });
+    });
+    it("extracts usage from result event with legacy top-level token fields", () => {
         const line = JSON.stringify({
             type: "result",
             result: "done",
@@ -109,7 +123,23 @@ describe("extractResultText", () => {
     });
 });
 describe("extractUsage", () => {
-    it("extracts usage from NDJSON with token fields", () => {
+    it("extracts usage from NDJSON with nested usage object", () => {
+        const lines = [
+            JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "hi" }] } }),
+            JSON.stringify({
+                type: "result",
+                result: "done",
+                total_cost_usd: 0.08,
+                usage: { input_tokens: 10000, output_tokens: 3000 },
+            }),
+        ].join("\n");
+        expect(extractUsage(lines)).toEqual({
+            inputTokens: 10000,
+            outputTokens: 3000,
+            costUsd: 0.08,
+        });
+    });
+    it("extracts usage from NDJSON with legacy top-level token fields", () => {
         const lines = [
             JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "hi" }] } }),
             JSON.stringify({

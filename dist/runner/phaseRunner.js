@@ -349,6 +349,9 @@ function asDecisionEntryArray(val) {
 export function reviewPhaseContract(phase) {
     const warnings = [];
     for (const task of phase.tasks) {
+        // Corrective tasks are auto-generated with empty criteria/paths — skip them
+        if (task.id.includes("-corrective-"))
+            continue;
         // Flag tasks with no acceptance criteria
         if (task.acceptanceCriteria.length === 0) {
             warnings.push(`[${task.id}] has no acceptance criteria`);

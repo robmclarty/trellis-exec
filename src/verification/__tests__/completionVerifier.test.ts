@@ -80,7 +80,8 @@ describe("verifyCompletion", () => {
 
     it("fails when a target path is missing", () => {
       mockExistsSync.mockImplementation((p) => {
-        return !String(p).endsWith("bar.ts");
+        // Reject bar.ts and all extension variants
+        return !String(p).includes("bar.");
       });
 
       const result = verifyCompletion("/project", makePhase(), makeReport());
@@ -134,7 +135,8 @@ describe("verifyCompletion", () => {
 
     it("returns per-file failures when only some target paths are missing", () => {
       mockExistsSync.mockImplementation((p) => {
-        return !String(p).endsWith("bar.ts");
+        // Reject bar.ts and all extension variants
+        return !String(p).includes("bar.");
       });
 
       const result = verifyCompletion("/project", makePhase(), makeReport());
@@ -142,6 +144,67 @@ describe("verifyCompletion", () => {
       // Should have individual failure, not the blanket diagnostic
       expect(result.failures).toHaveLength(1);
       expect(result.failures[0]).toContain("target path missing: src/bar.ts");
+    });
+
+    it("passes when target path has .js extension but .jsx variant exists", () => {
+      mockExistsSync.mockImplementation((p) => {
+        const s = String(p);
+        // .js doesn't exist, but .jsx does
+        if (s.endsWith("foo.ts")) return true;
+        if (s.endsWith("bar.ts")) return true;
+        return false;
+      });
+
+      const phase = makePhase({
+        tasks: [
+          {
+            id: "task-1",
+            title: "Create component",
+            description: "Create a component",
+            dependsOn: [],
+            specSections: [],
+            targetPaths: ["src/context/AppContext.js"],
+            acceptanceCriteria: [],
+            subAgentType: "implement",
+            status: "pending",
+          },
+        ],
+      });
+
+      // .js missing, .jsx exists
+      mockExistsSync.mockImplementation((p) => {
+        const s = String(p);
+        if (s.endsWith("AppContext.js")) return false;
+        if (s.endsWith("AppContext.jsx")) return true;
+        return true;
+      });
+
+      const result = verifyCompletion("/project", phase, makeReport());
+      expect(result.passed).toBe(true);
+      expect(result.failures).toHaveLength(0);
+    });
+
+    it("still fails when neither .js nor any variant exists", () => {
+      mockExistsSync.mockReturnValue(false);
+
+      const phase = makePhase({
+        tasks: [
+          {
+            id: "task-1",
+            title: "Create component",
+            description: "Create a component",
+            dependsOn: [],
+            specSections: [],
+            targetPaths: ["src/context/AppContext.js"],
+            acceptanceCriteria: [],
+            subAgentType: "implement",
+            status: "pending",
+          },
+        ],
+      });
+
+      const result = verifyCompletion("/project", phase, makeReport());
+      expect(result.passed).toBe(false);
     });
 
     it("skips target path check for failed tasks", () => {
