@@ -1062,7 +1062,7 @@ async function judgePhase(config: {
 
     if (ctx.verbose) {
       console.log(
-        `[judge] attempt ${attempt}, reviewing ${changedFiles.length} changed file(s), model: ${judgeModel} (${diffLineCount} diff lines, ${phase.tasks.length} tasks)`,
+        `[judge] attempt ${attempt + 1}, reviewing ${changedFiles.length} changed file(s), model: ${judgeModel} (${diffLineCount} diff lines, ${phase.tasks.length} tasks)`,
       );
     }
 
@@ -1287,7 +1287,7 @@ async function executePhase(
 
   const agentFile = resolve(ctx.pluginRoot, "agents/phase-orchestrator.md");
 
-  console.log("Orchestrating…");
+  console.log("Starting phase orchestrator…");
   const spinner = startSpinner("Orchestrating…");
 
   try {

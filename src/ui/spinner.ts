@@ -1,10 +1,9 @@
 // Bouncing-bar spinner ("Cylon eye") for indicating LLM thinking.
 //
 // Frames animate a lit segment bouncing left-to-right then right-to-left:
-//   [    ] → [=   ] → … → [   =] → [  ==] → … → [    ] (ping-pong)
+//   [=   ] → [==  ] → … → [  ==] → [   =] → [  ==] → … → [=   ] (ping-pong)
 
 const FRAMES = [
-  "[    ]",
   "[=   ]",
   "[==  ]",
   "[=== ]",
@@ -12,7 +11,6 @@ const FRAMES = [
   "[ ===]",
   "[  ==]",
   "[   =]",
-  "[    ]",
 ];
 
 const DEFAULT_INTERVAL_MS = 120;
