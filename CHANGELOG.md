@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.9
+
+- Fix token/cost extraction to read from nested `usage.input_tokens` (actual CLI format) instead of non-existent top-level `num_input_tokens`, with fallback for legacy format
+- Add extension-variant tolerance to completion verifier so `.js` target paths resolve when `.jsx` exists on disk, preventing infinite retry loops
+- Skip corrective tasks in contract review to suppress false warnings about missing acceptance criteria and target paths
+
 ## 0.7.8
 
 - Fix sub-agent CLI calls (judge, fix, etc.) failing silently due to missing `--verbose` flag required by Claude CLI for `stream-json` with piped stdin
