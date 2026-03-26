@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.6
+
+- Upgrade phase learnings to authoritative "Spec Amendments" that take precedence over spec assumptions
+- Add `constraint` decision tier for runtime/toolchain facts discovered during implementation (never evicted)
+- Reorder phase context so amendments appear after spec/guidelines, giving discovered constraints last-word authority
+- Add structured handoff template (Architecture State / Deviations from Spec / Watch List) to orchestrator prompt
+- Add consistent output style instructions to phase-orchestrator for `[task-id]` progress format
+
 ## 0.7.5
 
 - Add end-of-run summary report showing per-phase time, task completion, judge results, retries, token usage, and cost
