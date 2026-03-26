@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.2
+
+- Fix caller mutation: deep-clone tasksJson in runPhases and shallow-copy ctx to prevent side effects
+- Add stdin error handler in execClaude to surface backpressure/early close as a proper rejection
+- Fail fast on unreadable spec/guidelines files instead of silently injecting error text into prompts
+- Add guidelinesRef to LLM decompose fallback path in compilePlan
+- Wrap loadState JSON.parse in try/catch with file path in error message
+- Increase default orchestrator timeout to 15m, add --timeout CLI flag and reporter fallback sub-agent
+- Allow judge to upgrade timed-out phases when committed work passes review
+- Sync task statuses back to tasks.json after each phase completes
+- Fix check command auto-detection to use range-based diff for committed test files
+
 ## 0.6.1
 
 - Validate and rewrite all docs to match current native-tools architecture
