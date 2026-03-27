@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.16
+
+- Update README with browser testing architecture, auto-detection, verification pipeline, new CLI flags, and new agents
+- Sync all docs with current implementation: fix orchestrator timeouts, remove stale REPL/worktree references, add browser and verification coverage to phase-runner and harness-comparison docs
+
 ## 0.7.15
 
 - Fix browser acceptance empty-results loop: break on unparseable tester output instead of dispatching fixer on nothing
