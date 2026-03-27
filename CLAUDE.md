@@ -22,7 +22,7 @@ Always run `npm run typecheck && npm run lint` before committing. Run `npm test`
 
 ## Architecture
 
-```
+```text
 src/
   cli.ts                   # CLI entry point
   git.ts                   # Git utilities (diff, changed files, commit)
@@ -51,7 +51,7 @@ hooks/                     # Plugin hooks
 
 ### Execution flow
 
-```
+```text
 orchestrator → browser smoke → judge (+ apply corrections) → completion verifier → advance/retry
 ```
 

@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { TasksJsonSchema } from "../types/tasks.js";
-import type { TasksJson } from "../types/tasks.js";
+import type { TasksJson, Task } from "../types/tasks.js";
 import { parsePlan } from "./planParser.js";
 import { enrichPlan } from "./planEnricher.js";
 import { buildDecomposePrompt } from "./prompts.js";
@@ -84,6 +84,8 @@ export async function compilePlan(config: CompileConfig): Promise<TasksJson> {
     }
   }
 
+  tasksJson = injectClaudeMdTask(tasksJson);
+
   const finalValidation = TasksJsonSchema.safeParse(tasksJson);
   if (!finalValidation.success) {
     throw new Error(
@@ -95,4 +97,53 @@ export async function compilePlan(config: CompileConfig): Promise<TasksJson> {
   writeFileSync(config.outputPath, JSON.stringify(tasksJson, null, 2), "utf-8");
 
   return tasksJson;
+}
+
+/**
+ * Injects a CLAUDE.md scaffolding task into the first phase.
+ * CLAUDE.md is auto-loaded by Claude Code at session start and survives
+ * context compaction, giving all agents (orchestrator, judge, fix) persistent
+ * project orientation derived from the spec and guidelines.
+ */
+export function injectClaudeMdTask(tasksJson: TasksJson): TasksJson {
+  if (!Array.isArray(tasksJson.phases) || tasksJson.phases.length === 0) return tasksJson;
+
+  const firstPhase = tasksJson.phases[0]!;
+
+  // Don't inject if a CLAUDE.md task already exists
+  const hasClaudeMd = firstPhase.tasks.some((t) =>
+    t.targetPaths.some((p) => p.endsWith("CLAUDE.md")),
+  );
+  if (hasClaudeMd) return tasksJson;
+
+  const claudeMdTask: Task = {
+    id: `${firstPhase.id}-task-claude-md`,
+    title: "Generate CLAUDE.md project orientation",
+    description:
+      "Create a CLAUDE.md file in the project root. This file is auto-loaded by Claude Code " +
+      "at session start and survives context compaction, providing persistent orientation for " +
+      "all agents (orchestrator, judge, fix). Derive content from the spec and guidelines. " +
+      "Include: project purpose (1-2 sentences), dev commands (build, test, lint), directory " +
+      "layout with one-line descriptions, code conventions (language, module system, naming, " +
+      "export style), testing patterns (framework, file location), and git commit format. " +
+      "Keep it under 80 lines — concise enough to scan, detailed enough to orient.",
+    dependsOn: [],
+    specSections: [],
+    targetPaths: ["CLAUDE.md"],
+    acceptanceCriteria: [
+      "CLAUDE.md exists in project root",
+      "Contains project purpose, dev commands, directory layout, and code conventions",
+      "Under 80 lines",
+    ],
+    subAgentType: "scaffold",
+    status: "pending",
+  };
+
+  const updatedPhases = tasksJson.phases.map((phase, i) =>
+    i === 0
+      ? { ...phase, tasks: [...phase.tasks, claudeMdTask] }
+      : phase,
+  );
+
+  return { ...tasksJson, phases: updatedPhases };
 }
