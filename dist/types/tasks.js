@@ -6,6 +6,17 @@ export const TaskStatusSchema = z.enum([
     "failed",
     "skipped",
 ]);
+export const KNOWN_AGENT_TYPES = [
+    "implement",
+    "test-writer",
+    "scaffold",
+    "judge",
+    "fix",
+    "reporter",
+    "browser-tester",
+    "browser-fixer",
+];
+const KnownAgentTypeSchema = z.enum(KNOWN_AGENT_TYPES);
 export const TaskSchema = z.object({
     id: z.string(),
     title: z.string(),
@@ -14,7 +25,7 @@ export const TaskSchema = z.object({
     specSections: z.array(z.string()),
     targetPaths: z.array(z.string()),
     acceptanceCriteria: z.array(z.string()),
-    subAgentType: z.string(),
+    subAgentType: z.union([KnownAgentTypeSchema, z.string()]),
     status: TaskStatusSchema,
 });
 export const PhaseSchema = z.object({

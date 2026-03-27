@@ -147,6 +147,15 @@ export declare const PhaseReportSchema: z.ZodObject<{
         }>;
     }, z.core.$strip>>;
     handoff: z.ZodString;
+    corrections: z.ZodDefault<z.ZodOptional<z.ZodArray<z.ZodObject<{
+        type: z.ZodEnum<{
+            targetPath: "targetPath";
+        }>;
+        taskId: z.ZodString;
+        old: z.ZodString;
+        new: z.ZodString;
+        reason: z.ZodString;
+    }, z.core.$strip>>>>;
     startSha: z.ZodOptional<z.ZodString>;
     endSha: z.ZodOptional<z.ZodString>;
     judgeFixCycles: z.ZodOptional<z.ZodNumber>;
@@ -210,6 +219,15 @@ export declare const SharedStateSchema: z.ZodObject<{
             }>;
         }, z.core.$strip>>;
         handoff: z.ZodString;
+        corrections: z.ZodDefault<z.ZodOptional<z.ZodArray<z.ZodObject<{
+            type: z.ZodEnum<{
+                targetPath: "targetPath";
+            }>;
+            taskId: z.ZodString;
+            old: z.ZodString;
+            new: z.ZodString;
+            reason: z.ZodString;
+        }, z.core.$strip>>>>;
         startSha: z.ZodOptional<z.ZodString>;
         endSha: z.ZodOptional<z.ZodString>;
         judgeFixCycles: z.ZodOptional<z.ZodNumber>;

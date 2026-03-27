@@ -59,7 +59,7 @@ export function createAgentLauncher(config) {
     const { pluginRoot, projectRoot, dryRun } = config;
     async function dispatchSubAgent(subAgentConfig) {
         const agentFile = resolve(pluginRoot, "agents", subAgentConfig.type + ".md");
-        const model = subAgentConfig.model ?? "sonnet";
+        const model = subAgentConfig.model ?? "opus";
         const args = [
             "--agent",
             agentFile,

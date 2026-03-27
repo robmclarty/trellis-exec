@@ -11,6 +11,7 @@ function makeReport(overrides = {}) {
         recommendedAction: "advance",
         correctiveTasks: [],
         decisionsLog: [],
+        corrections: [],
         handoff: "",
         ...overrides,
     };

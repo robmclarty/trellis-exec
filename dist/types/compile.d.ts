@@ -26,7 +26,16 @@ export declare const ParseResultSchema: z.ZodObject<{
                 specSections: z.ZodArray<z.ZodString>;
                 targetPaths: z.ZodArray<z.ZodString>;
                 acceptanceCriteria: z.ZodArray<z.ZodString>;
-                subAgentType: z.ZodString;
+                subAgentType: z.ZodUnion<readonly [z.ZodEnum<{
+                    implement: "implement";
+                    "test-writer": "test-writer";
+                    scaffold: "scaffold";
+                    judge: "judge";
+                    fix: "fix";
+                    reporter: "reporter";
+                    "browser-tester": "browser-tester";
+                    "browser-fixer": "browser-fixer";
+                }>, z.ZodString]>;
                 status: z.ZodEnum<{
                     pending: "pending";
                     "in-progress": "in-progress";

@@ -1,1 +1,1 @@
-{"version":3,"file":"detectWebApp.d.ts","sourceRoot":"","sources":["../../src/compile/detectWebApp.ts"],"names":[],"mappings":"AAsCA;;;;;;;GAOG;AACH,wBAAgB,YAAY,CAAC,WAAW,EAAE,MAAM,GAAG,OAAO,CAuCzD"}
+{"version":3,"file":"detectWebApp.d.ts","sourceRoot":"","sources":["../../src/compile/detectWebApp.ts"],"names":[],"mappings":"AAsCA;;;;;;;;;GASG;AACH,wBAAgB,YAAY,CAAC,WAAW,EAAE,MAAM,GAAG,OAAO,CAsEzD"}

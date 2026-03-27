@@ -20,6 +20,8 @@ npm run build              # tsc (compile to dist/)
 
 Always run `npm run typecheck && npm run lint` before committing. Run `npm test` to verify nothing is broken.
 
+**Important:** `dist/` is checked into the repo — it is the actual script that gets distributed and run. After making source changes, run `npm run build` and commit the updated `dist/` directory.
+
 ## Architecture
 
 ```text

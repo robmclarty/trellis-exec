@@ -6,6 +6,7 @@ export declare const TaskStatusSchema: z.ZodEnum<{
     failed: "failed";
     skipped: "skipped";
 }>;
+export declare const KNOWN_AGENT_TYPES: readonly ["implement", "test-writer", "scaffold", "judge", "fix", "reporter", "browser-tester", "browser-fixer"];
 export declare const TaskSchema: z.ZodObject<{
     id: z.ZodString;
     title: z.ZodString;
@@ -14,7 +15,16 @@ export declare const TaskSchema: z.ZodObject<{
     specSections: z.ZodArray<z.ZodString>;
     targetPaths: z.ZodArray<z.ZodString>;
     acceptanceCriteria: z.ZodArray<z.ZodString>;
-    subAgentType: z.ZodString;
+    subAgentType: z.ZodUnion<readonly [z.ZodEnum<{
+        implement: "implement";
+        "test-writer": "test-writer";
+        scaffold: "scaffold";
+        judge: "judge";
+        fix: "fix";
+        reporter: "reporter";
+        "browser-tester": "browser-tester";
+        "browser-fixer": "browser-fixer";
+    }>, z.ZodString]>;
     status: z.ZodEnum<{
         pending: "pending";
         "in-progress": "in-progress";
@@ -36,7 +46,16 @@ export declare const PhaseSchema: z.ZodObject<{
         specSections: z.ZodArray<z.ZodString>;
         targetPaths: z.ZodArray<z.ZodString>;
         acceptanceCriteria: z.ZodArray<z.ZodString>;
-        subAgentType: z.ZodString;
+        subAgentType: z.ZodUnion<readonly [z.ZodEnum<{
+            implement: "implement";
+            "test-writer": "test-writer";
+            scaffold: "scaffold";
+            judge: "judge";
+            fix: "fix";
+            reporter: "reporter";
+            "browser-tester": "browser-tester";
+            "browser-fixer": "browser-fixer";
+        }>, z.ZodString]>;
         status: z.ZodEnum<{
             pending: "pending";
             "in-progress": "in-progress";
@@ -65,7 +84,16 @@ export declare const TasksJsonSchema: z.ZodObject<{
             specSections: z.ZodArray<z.ZodString>;
             targetPaths: z.ZodArray<z.ZodString>;
             acceptanceCriteria: z.ZodArray<z.ZodString>;
-            subAgentType: z.ZodString;
+            subAgentType: z.ZodUnion<readonly [z.ZodEnum<{
+                implement: "implement";
+                "test-writer": "test-writer";
+                scaffold: "scaffold";
+                judge: "judge";
+                fix: "fix";
+                reporter: "reporter";
+                "browser-tester": "browser-tester";
+                "browser-fixer": "browser-fixer";
+            }>, z.ZodString]>;
             status: z.ZodEnum<{
                 pending: "pending";
                 "in-progress": "in-progress";

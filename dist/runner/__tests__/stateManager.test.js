@@ -62,6 +62,7 @@ function makePhaseReport(phaseId) {
         recommendedAction: "advance",
         correctiveTasks: [],
         decisionsLog: [],
+        corrections: [],
         handoff: "# Handoff\nDone.",
     };
 }

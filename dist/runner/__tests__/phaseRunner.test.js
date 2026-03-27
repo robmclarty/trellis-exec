@@ -18,7 +18,10 @@ vi.mock("../../git.js", () => ({
     getGitRoot: vi.fn(() => null),
 }));
 // Import module under test and mocked modules AFTER vi.mock declarations
-import { runPhases, dryRunReport, buildPhaseContext, buildJudgePrompt, parseJudgeResult, buildFixPrompt, buildReporterPrompt, normalizeReport, createDefaultCheck, extractScopes, makePhaseCommit, collectLearnings, hasNewTestFiles, reviewPhaseContract, detectTestCommand, selectJudgeModel, } from "../phaseRunner.js";
+import { runPhases, dryRunReport, createDefaultCheck, extractScopes, makePhaseCommit, reviewPhaseContract, } from "../phaseRunner.js";
+import { buildPhaseContext, buildJudgePrompt, parseJudgeResult, buildFixPrompt, buildReporterPrompt, normalizeReport, collectLearnings, } from "../prompts.js";
+import { selectJudgeModel } from "../judgeRunner.js";
+import { hasNewTestFiles, detectTestCommand } from "../testDetector.js";
 import { createAgentLauncher } from "../../orchestrator/agentLauncher.js";
 import { getChangedFiles, getDiffContent, commitAll, ensureInitialCommit, getCurrentSha } from "../../git.js";
 const mockedGetChangedFiles = vi.mocked(getChangedFiles);
@@ -110,6 +113,7 @@ function makePhaseReport(phaseId, overrides) {
         recommendedAction: "advance",
         correctiveTasks: [],
         decisionsLog: [],
+        corrections: [],
         handoff: `# ${phaseId} handoff\nDone.`,
         ...overrides,
     };
@@ -411,11 +415,22 @@ describe("phaseRunner", () => {
         });
     });
     describe("buildFixPrompt", () => {
-        it("includes issue descriptions", () => {
-            const phase = makeTasksJson().phases[0];
-            const prompt = buildFixPrompt([{ task: "task-1-1", severity: "must-fix", description: "Missing export" }], phase);
+        it("includes issue descriptions and reference context", () => {
+            const tasksJson = makeTasksJson();
+            tmpDir = setupTmpDir(tasksJson);
+            const phase = tasksJson.phases[0];
+            const state = {
+                currentPhase: "phase-1",
+                completedPhases: [],
+                phaseReports: [],
+                phaseRetries: {},
+            };
+            const ctx = makeDefaultConfig(tmpDir);
+            const prompt = buildFixPrompt([{ task: "task-1-1", severity: "must-fix", description: "Missing export" }], phase, state, ctx);
             expect(prompt).toContain("Missing export");
             expect(prompt).toContain("task-1-1");
+            // Should include spec content from buildReferenceContext
+            expect(prompt).toContain("Spec Content");
         });
     });
     describe("createDefaultCheck", () => {
@@ -686,8 +701,8 @@ describe("phaseRunner", () => {
             expect(learnings.tactical.length).toBeLessThanOrEqual(19);
         });
     });
-    describe("buildPhaseContext — spec amendments section", () => {
-        it("includes amendments section when prior phases have decisionsLog entries", () => {
+    describe("buildPhaseContext — learnings section", () => {
+        it("includes Current Understanding section when prior phases have decisionsLog entries", () => {
             const tasksJson = makeTasksJson();
             tmpDir = setupTmpDir(tasksJson);
             const config = makeDefaultConfig(tmpDir);
@@ -702,11 +717,11 @@ describe("phaseRunner", () => {
                 phaseRetries: {},
             };
             const context = buildPhaseContext(tasksJson.phases[1], state, "Phase 1 done.", config);
-            expect(context).toContain("## Spec Amendments from Prior Phases");
+            expect(context).toContain("## Current Understanding (authoritative");
             expect(context).toContain("[phase-1] Vite requires .jsx extension for JSX files");
-            expect(context).toContain("amendments take precedence");
+            expect(context).toContain("Current Understanding takes precedence");
         });
-        it("omits amendments section when all decisionsLog arrays are empty", () => {
+        it("omits Current Understanding section when all decisionsLog arrays are empty", () => {
             const tasksJson = makeTasksJson();
             tmpDir = setupTmpDir(tasksJson);
             const config = makeDefaultConfig(tmpDir);
@@ -719,9 +734,9 @@ describe("phaseRunner", () => {
                 phaseRetries: {},
             };
             const context = buildPhaseContext(tasksJson.phases[1], state, "Phase 1 done.", config);
-            expect(context).not.toContain("Spec Amendments from Prior Phases");
+            expect(context).not.toContain("Current Understanding");
         });
-        it("positions amendments after spec content", () => {
+        it("positions learnings before spec content", () => {
             const tasksJson = makeTasksJson();
             tmpDir = setupTmpDir(tasksJson);
             const config = makeDefaultConfig(tmpDir);
@@ -736,10 +751,10 @@ describe("phaseRunner", () => {
                 phaseRetries: {},
             };
             const context = buildPhaseContext(tasksJson.phases[1], state, "Phase 1 done.", config);
-            const specIndex = context.indexOf("## Spec Content");
-            const amendmentsIndex = context.indexOf("## Spec Amendments from Prior Phases");
-            expect(specIndex).toBeGreaterThan(-1);
-            expect(amendmentsIndex).toBeGreaterThan(specIndex);
+            const learningsIndex = context.indexOf("## Current Understanding");
+            const specIndex = context.indexOf("## Original Spec");
+            expect(learningsIndex).toBeGreaterThan(-1);
+            expect(specIndex).toBeGreaterThan(learningsIndex);
         });
         it("renders constraint tier with binding label", () => {
             const tasksJson = makeTasksJson();
@@ -869,6 +884,42 @@ describe("phaseRunner", () => {
             ]);
             const result = hasNewTestFiles("/tmp/project", "abc123");
             expect(result).toBe(false);
+        });
+        it("detects Go test files", () => {
+            mockedGetChangedFiles.mockReturnValueOnce([
+                { path: "pkg/auth/auth_test.go", status: "A" },
+            ]);
+            expect(hasNewTestFiles("/tmp/project", "abc123")).toBe(true);
+        });
+        it("detects Python test files (test_ prefix)", () => {
+            mockedGetChangedFiles.mockReturnValueOnce([
+                { path: "tests/test_auth.py", status: "A" },
+            ]);
+            expect(hasNewTestFiles("/tmp/project", "abc123")).toBe(true);
+        });
+        it("detects Python test files (_test suffix)", () => {
+            mockedGetChangedFiles.mockReturnValueOnce([
+                { path: "tests/auth_test.py", status: "A" },
+            ]);
+            expect(hasNewTestFiles("/tmp/project", "abc123")).toBe(true);
+        });
+        it("detects Ruby spec files", () => {
+            mockedGetChangedFiles.mockReturnValueOnce([
+                { path: "spec/models/user_spec.rb", status: "A" },
+            ]);
+            expect(hasNewTestFiles("/tmp/project", "abc123")).toBe(true);
+        });
+        it("detects Elixir test files", () => {
+            mockedGetChangedFiles.mockReturnValueOnce([
+                { path: "test/auth_test.exs", status: "A" },
+            ]);
+            expect(hasNewTestFiles("/tmp/project", "abc123")).toBe(true);
+        });
+        it("detects files in a tests/ directory", () => {
+            mockedGetChangedFiles.mockReturnValueOnce([
+                { path: "tests/integration/conftest.py", status: "A" },
+            ]);
+            expect(hasNewTestFiles("/tmp/project", "abc123")).toBe(true);
         });
     });
     describe("runPhases — judge upgrade on timeout", () => {
@@ -1260,6 +1311,85 @@ describe("phaseRunner", () => {
             const dir = mkdtempSync(join(tmpdir(), "detect-test-cmd-"));
             const result = detectTestCommand(dir);
             expect(result).toBeNull();
+            rmSync(dir, { recursive: true, force: true });
+        });
+        it("returns 'pytest' when pytest.ini exists", () => {
+            const dir = mkdtempSync(join(tmpdir(), "detect-test-cmd-"));
+            writeFileSync(join(dir, "pytest.ini"), "[pytest]");
+            expect(detectTestCommand(dir)).toBe("pytest");
+            rmSync(dir, { recursive: true, force: true });
+        });
+        it("returns 'pytest' when conftest.py exists", () => {
+            const dir = mkdtempSync(join(tmpdir(), "detect-test-cmd-"));
+            writeFileSync(join(dir, "conftest.py"), "import pytest");
+            expect(detectTestCommand(dir)).toBe("pytest");
+            rmSync(dir, { recursive: true, force: true });
+        });
+        it("returns 'pytest' when pyproject.toml has [tool.pytest section", () => {
+            const dir = mkdtempSync(join(tmpdir(), "detect-test-cmd-"));
+            writeFileSync(join(dir, "pyproject.toml"), "[tool.pytest.ini_options]\naddopts = '-v'");
+            expect(detectTestCommand(dir)).toBe("pytest");
+            rmSync(dir, { recursive: true, force: true });
+        });
+        it("returns 'go test ./...' when go.mod exists", () => {
+            const dir = mkdtempSync(join(tmpdir(), "detect-test-cmd-"));
+            writeFileSync(join(dir, "go.mod"), "module example.com/foo");
+            expect(detectTestCommand(dir)).toBe("go test ./...");
+            rmSync(dir, { recursive: true, force: true });
+        });
+        it("returns 'cargo test' when Cargo.toml exists", () => {
+            const dir = mkdtempSync(join(tmpdir(), "detect-test-cmd-"));
+            writeFileSync(join(dir, "Cargo.toml"), "[package]\nname = \"foo\"");
+            expect(detectTestCommand(dir)).toBe("cargo test");
+            rmSync(dir, { recursive: true, force: true });
+        });
+        it("returns 'bundle exec rspec' when .rspec exists", () => {
+            const dir = mkdtempSync(join(tmpdir(), "detect-test-cmd-"));
+            writeFileSync(join(dir, ".rspec"), "--format documentation");
+            expect(detectTestCommand(dir)).toBe("bundle exec rspec");
+            rmSync(dir, { recursive: true, force: true });
+        });
+        it("returns 'bundle exec rspec' when Gemfile + spec/ exists", () => {
+            const dir = mkdtempSync(join(tmpdir(), "detect-test-cmd-"));
+            writeFileSync(join(dir, "Gemfile"), 'gem "rspec"');
+            mkdirSync(join(dir, "spec"));
+            expect(detectTestCommand(dir)).toBe("bundle exec rspec");
+            rmSync(dir, { recursive: true, force: true });
+        });
+        it("returns 'mvn test' when pom.xml exists", () => {
+            const dir = mkdtempSync(join(tmpdir(), "detect-test-cmd-"));
+            writeFileSync(join(dir, "pom.xml"), "<project></project>");
+            expect(detectTestCommand(dir)).toBe("mvn test");
+            rmSync(dir, { recursive: true, force: true });
+        });
+        it("returns './gradlew test' when build.gradle exists", () => {
+            const dir = mkdtempSync(join(tmpdir(), "detect-test-cmd-"));
+            writeFileSync(join(dir, "build.gradle"), "apply plugin: 'java'");
+            expect(detectTestCommand(dir)).toBe("./gradlew test");
+            rmSync(dir, { recursive: true, force: true });
+        });
+        it("returns './gradlew test' when build.gradle.kts exists", () => {
+            const dir = mkdtempSync(join(tmpdir(), "detect-test-cmd-"));
+            writeFileSync(join(dir, "build.gradle.kts"), "plugins { java }");
+            expect(detectTestCommand(dir)).toBe("./gradlew test");
+            rmSync(dir, { recursive: true, force: true });
+        });
+        it("returns 'mix test' when mix.exs exists", () => {
+            const dir = mkdtempSync(join(tmpdir(), "detect-test-cmd-"));
+            writeFileSync(join(dir, "mix.exs"), "defmodule MyApp.MixProject do");
+            expect(detectTestCommand(dir)).toBe("mix test");
+            rmSync(dir, { recursive: true, force: true });
+        });
+        it("returns 'make test' when Makefile has a test target", () => {
+            const dir = mkdtempSync(join(tmpdir(), "detect-test-cmd-"));
+            writeFileSync(join(dir, "Makefile"), "build:\n\tgo build\n\ntest:\n\tgo test ./...");
+            expect(detectTestCommand(dir)).toBe("make test");
+            rmSync(dir, { recursive: true, force: true });
+        });
+        it("returns null when Makefile exists but has no test target", () => {
+            const dir = mkdtempSync(join(tmpdir(), "detect-test-cmd-"));
+            writeFileSync(join(dir, "Makefile"), "build:\n\tgo build\n\nclean:\n\trm -rf dist");
+            expect(detectTestCommand(dir)).toBeNull();
             rmSync(dir, { recursive: true, force: true });
         });
     });

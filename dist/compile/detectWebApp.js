@@ -31,11 +31,13 @@ const CONFIG_PREFIXES = [
 /**
  * Locations where an index.html entry point may live.
  */
-const INDEX_HTML_PATHS = ["index.html", "public/index.html", "src/index.html"];
+const INDEX_HTML_PATHS = ["index.html", "public/index.html", "src/index.html", "app/index.html"];
 /**
  * Synchronously detects whether the project at `projectRoot` is a web
  * application by checking for frontend framework dependencies, build-tool
- * config files, and HTML entry points.
+ * config files, HTML entry points, and non-JS web frameworks (Django, Rails,
+ * Phoenix). Non-JS frameworks require two signals to avoid false positives
+ * on API-only projects.
  *
  * Returns `false` for backend-only, CLI, or library projects, and when the
  * directory is missing or unreadable.
@@ -66,6 +68,34 @@ export function detectWebApp(projectRoot) {
             for (const dep of Object.keys(allDeps)) {
                 if (FRONTEND_PACKAGES.has(dep)) {
                     return true;
+                }
+            }
+        }
+        // ---
+        // Non-JS web frameworks (require two signals to avoid false positives)
+        // ---
+        // Django: manage.py + templates/ directory
+        if (existsSync(join(projectRoot, "manage.py")) && existsSync(join(projectRoot, "templates"))) {
+            return true;
+        }
+        // Rails: Gemfile + app/views/ directory
+        if (existsSync(join(projectRoot, "Gemfile")) && existsSync(join(projectRoot, "app", "views"))) {
+            return true;
+        }
+        // Phoenix (Elixir): mix.exs + controllers directory
+        if (existsSync(join(projectRoot, "mix.exs"))) {
+            const libDir = join(projectRoot, "lib");
+            if (existsSync(libDir)) {
+                try {
+                    const libEntries = readdirSync(libDir);
+                    for (const entry of libEntries) {
+                        if (existsSync(join(libDir, entry, "controllers"))) {
+                            return true;
+                        }
+                    }
+                }
+                catch {
+                    // ignore read errors
                 }
             }
         }

@@ -187,6 +187,9 @@ export function buildRunContext(args, env = process.env) {
         ...(devServerCommand !== undefined ? { devServerCommand } : {}),
         saveE2eTests: values["save-e2e-tests"] ?? false,
         browserTestRetries,
+        // Pre-read spec/guidelines content once to avoid repeated disk I/O during prompt building
+        specContent: readFileSync(specPath, "utf-8"),
+        ...(guidelinesPath !== undefined ? { guidelinesContent: readFileSync(guidelinesPath, "utf-8") } : {}),
     };
     return {
         context,
