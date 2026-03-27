@@ -64,6 +64,7 @@ export const PhaseReportSchema = z.object({
     handoff: z.string(),
     startSha: z.string().optional(),
     endSha: z.string().optional(),
+    judgeFixCycles: z.number().optional(),
 });
 export const SharedStateSchema = z.object({
     currentPhase: z.string(),
