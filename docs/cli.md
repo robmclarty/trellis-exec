@@ -44,6 +44,7 @@ Reads a `tasks.json` file and executes its phases through the phase runner. By d
 | `--judge <mode>` | string | `"always"` | Judge mode: `always`, `on-failure`, or `never` |
 | `--judge-model <model>` | string | *(adaptive)* | Override judge model (default: adaptive — Sonnet for small diffs, Opus for larger ones) |
 | `--headless` | boolean | `false` | Disable interactive prompts between phases |
+| `--timeout <ms>` | number | *(none)* | Override phase timeout in milliseconds (wins over `--long-run`) |
 | `--long-run` | boolean | `false` | Set 2-hour timeout for complex phases |
 | `--verbose` | boolean | `false` | Print debug output from orchestrator |
 | `--dev-server <command>` | string | *(auto-detected)* | Dev server start command for browser testing |
@@ -182,6 +183,7 @@ Environment variables serve as fallbacks when CLI flags are not provided. CLI fl
 | `TRELLIS_EXEC_CONCURRENCY` | `--concurrency` | `3` | Max parallel sub-agents per phase |
 | `TRELLIS_EXEC_JUDGE_MODE` | `--judge` | `"always"` | Judge mode (always, on-failure, never) |
 | `TRELLIS_EXEC_JUDGE_MODEL` | `--judge-model` | *(adaptive)* | Override judge model |
+| `TRELLIS_EXEC_TIMEOUT` | `--timeout` | *(none)* | Override phase timeout in milliseconds |
 | `TRELLIS_EXEC_LONG_RUN` | `--long-run` | *(off)* | Enable long-run mode (2-hour timeout) |
 | `TRELLIS_EXEC_DEV_SERVER` | `--dev-server` | *(auto-detect)* | Dev server start command |
 | `TRELLIS_EXEC_BROWSER_TEST_RETRIES` | `--browser-test-retries` | `3` | Max browser acceptance retries |

@@ -123,7 +123,7 @@ const result = await dispatchSubAgent({
 ## judge
 
 **File:** `agents/judge.md`
-**Model:** Sonnet
+**Model:** Opus
 **Purpose:** Evaluate phase changes for spec compliance and code quality.
 **Permissions:** Read-only. Cannot create tasks or modify files.
 

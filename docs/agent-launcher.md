@@ -52,11 +52,11 @@ const result = await launcher.dispatchSubAgent({
   instructions: "Implement the user authentication module",
   filePaths: ["src/types/user.ts", "src/db/schema.ts"],
   outputPaths: ["src/auth/authenticate.ts"],
-  model: "sonnet",  // optional, defaults to "sonnet"
+  model: "sonnet",  // optional, defaults to "opus"
 });
 ```
 
-The default model is Sonnet. The orchestrator can override per-task based on complexity.
+The default model is Opus. The orchestrator can override per-task based on complexity.
 
 ### `runPhaseOrchestrator(prompt, agentFile, model?, options?): Promise<ExecClaudeResult>`
 
@@ -133,7 +133,7 @@ const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT ?? process.cwd();
 
 | Setting | Value |
 |---------|-------|
-| Sub-agent model | Sonnet |
+| Sub-agent model | Opus |
 | Sub-agent timeout | 300,000ms (5 minutes) |
 | Orchestrator timeout | 1,800,000ms (30 minutes) |
 | Long-run timeout | 7,200,000ms (2 hours, via `--long-run`) |

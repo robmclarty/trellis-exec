@@ -65,11 +65,11 @@ Article 1's most important meta-point: *"Every harness component encodes assumpt
 
 Anthropic found that with Opus 4.6, sprint constructs could be removed entirely — the model handles decomposition internally. The evaluator's necessity became task-dependent: valuable when work exceeds baseline capability, unnecessary overhead otherwise.
 
-Trellis has five specialized sub-agents (implement, scaffold, test-writer, judge, fix) with tool restrictions. The implement and scaffold agents lack Bash, Glob, and Grep access — they cannot search the codebase or run builds. This artificial constraint may now cost more than it saves.
+Trellis has five specialized sub-agents (implement, scaffold, test-writer, judge, fix) with tool restrictions. The scaffold agent lacks Bash, Glob, and Grep access. The implement agent has Glob and Grep but not Bash — it can search the codebase but cannot run builds. These artificial constraints may now cost more than they save.
 
 **Impact:** Medium-high. Sub-agent dispatch overhead (subprocess launch, context serialization, tool restrictions) may exceed the benefit of specialization, especially as models improve at handling diverse tasks within a single context.
 
-**Opportunity:** Benchmark the current multi-agent dispatch against a simplified orchestrator-does-everything approach. If the orchestrator can implement, test, and scaffold directly (as Anthropic found with sprint removal), the sub-agent layer becomes optional overhead.
+**Opportunity:** Benchmark the current multi-agent dispatch against a simplified orchestrator-does-everything approach. If the orchestrator can implement, test, and scaffold directly (as Anthropic found with sprint removal), the sub-agent layer becomes optional overhead. The implement agent already has search capabilities (Glob, Grep) but still lacks Bash — the remaining tool restriction worth questioning.
 
 ### No sprint contract negotiation
 
@@ -141,7 +141,7 @@ Trellis now includes two-tier browser testing: per-phase Playwright smoke checks
 
 ### 2. Stress-test sub-agent necessity
 
-Benchmark orchestrator-only execution against the current multi-agent dispatch. Anthropic explicitly found that Opus 4.6 made separate agent dispatch unnecessary for many tasks. The tool restrictions on implement and scaffold agents (no Bash, no Glob, no Grep) are especially suspect — an implementation agent that can't search the codebase or run builds is artificially handicapped. Remove constraints that no longer match model capabilities.
+Benchmark orchestrator-only execution against the current multi-agent dispatch. Anthropic explicitly found that Opus 4.6 made separate agent dispatch unnecessary for many tasks. The scaffold agent's tool restrictions (no Bash, no Glob, no Grep) and the implement agent's lack of Bash access are worth questioning — subprocess dispatch overhead may exceed the benefit of specialization. Remove constraints that no longer match model capabilities.
 
 ### 3. Support longer autonomous execution — Partially Done
 

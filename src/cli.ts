@@ -48,6 +48,7 @@ Run options:
   --judge <mode>         Judge mode: always|on-failure|never (default: always)
   --judge-model <model>  Override judge model (default: adaptive)
   --headless             Disable interactive prompts
+  --timeout <ms>         Override phase timeout in milliseconds (wins over --long-run)
   --long-run             Set 2-hour timeout for complex phases
   --verbose              Print debug output
   --dev-server <cmd>     Dev server start command for browser testing
@@ -67,6 +68,7 @@ Environment variables:
   TRELLIS_EXEC_CONCURRENCY          Max parallel sub-agents
   TRELLIS_EXEC_JUDGE_MODE           Judge mode (always|on-failure|never)
   TRELLIS_EXEC_JUDGE_MODEL          Override judge model
+  TRELLIS_EXEC_TIMEOUT              Override phase timeout in milliseconds
   TRELLIS_EXEC_LONG_RUN             Enable long-run mode (2-hour timeout)
   TRELLIS_EXEC_DEV_SERVER           Dev server start command
   TRELLIS_EXEC_BROWSER_TEST_RETRIES Max browser acceptance retries
