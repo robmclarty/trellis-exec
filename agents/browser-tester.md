@@ -48,3 +48,9 @@ Return ONLY a JSON block in this exact format:
   "testFilePath": "tests/e2e/acceptance.spec.ts"
 }
 ```
+
+If no tests could be generated or run, still return the JSON block with an empty results array:
+
+```json
+{ "results": [], "testFilePath": null }
+```

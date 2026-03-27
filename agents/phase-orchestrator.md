@@ -47,7 +47,15 @@ Use a consistent, minimal format for progress output:
 - **Errors**: `[task-id] ERROR: <message>`
 - **Task end**: `[task-id] DONE` or `[task-id] FAILED: <reason>`
 
-Do not use markdown bold, headers, or tables in progress output. Save structured formatting for the report JSON. Keep narration brief — the user watches for progress signals, not prose.
+Your output is rendered directly in a terminal — markdown syntax appears as raw characters, not formatted text. Do not use `**bold**`, `## headers`, `| table | pipes |`, or `` ```code blocks``` `` in progress output. Save structured formatting for the report JSON. Keep narration brief — the user watches for progress signals, not prose.
+
+For tabular data in progress output, use aligned plain text:
+
+```text
+  Module              Tests  Status
+  habitFactory           39  pass
+  streakCalculator       16  pass
+```
 
 ## Task Execution Flow
 

@@ -63,8 +63,17 @@ export async function runBrowserAcceptance(
 
     lastResults = parseTesterOutput(testerResult.output);
 
-    const allPassed = lastResults.results.length > 0 &&
-      lastResults.results.every((r) => r.passed);
+    // If the tester returned no structured results, stop — there's nothing to fix.
+    if (lastResults.results.length === 0) {
+      console.log(
+        attempt === 0
+          ? "Browser acceptance: tester returned no structured results. Skipping retries."
+          : "Browser acceptance: tester returned no structured results after fix attempt. Stopping.",
+      );
+      break;
+    }
+
+    const allPassed = lastResults.results.every((r) => r.passed);
 
     if (allPassed) {
       console.log(
@@ -110,8 +119,7 @@ export async function runBrowserAcceptance(
     }
   }
 
-  const passed = lastResults.results.length > 0 &&
-    lastResults.results.every((r) => r.passed);
+  const passed = lastResults.results.length > 0 && lastResults.results.every((r) => r.passed);
 
   return {
     passed,
@@ -155,6 +163,12 @@ function buildTesterPrompt(
   }
 
   lines.push("Generate Playwright acceptance tests for the spec's acceptance criteria, run them, and report the results.");
+  lines.push("");
+  lines.push("You MUST end your response with a JSON block in this exact format:");
+  lines.push("```json");
+  lines.push('{ "results": [{ "criterion": "...", "passed": true/false, "detail": "..." }], "testFilePath": "..." }');
+  lines.push("```");
+  lines.push("If no tests could be generated or run, return: `{ \"results\": [], \"testFilePath\": null }`");
 
   return lines.join("\n");
 }
@@ -212,6 +226,9 @@ function parseTesterOutput(output: string): TesterResult {
     }
   }
 
-  // If we can't parse structured output, return empty results
+  // If we can't parse structured output, warn and return empty results
+  if (output.length > 0) {
+    console.warn("Warning: browser-tester output did not contain parseable JSON results.");
+  }
   return { results: [] };
 }

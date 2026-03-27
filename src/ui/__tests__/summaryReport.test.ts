@@ -171,7 +171,7 @@ describe("formatSummaryReport", () => {
     const lines = output.split("\n");
     const phaseRow = lines.find((l) => l.includes("phase-1"));
     expect(phaseRow).toBeDefined();
-    expect(phaseRow).toMatch(/phase-1\s+-/);
+    expect(phaseRow).toMatch(/phase-1\s+\u2502\s+-/);
   });
 
   it("deduplicates reports from retries, keeping the last", () => {
@@ -279,5 +279,107 @@ describe("formatSummaryReport", () => {
     expect(output).toContain("95.0k");
     // Total cost: $0.24
     expect(output).toContain("$0.24");
+  });
+
+  it("uses box-drawing characters for table separators", () => {
+    const report = makeReport({
+      phaseId: "phase-1",
+      tasksCompleted: ["t1"],
+      tasksFailed: [],
+    });
+    const result = makeResult({
+      success: true,
+      phasesCompleted: ["phase-1"],
+      finalState: makeState({ phaseReports: [report] }),
+      phaseDurations: { "phase-1": 10_000 },
+      totalDuration: 10_000,
+    });
+
+    const output = formatSummaryReport(result);
+    // Separator lines use ─ and ┼
+    expect(output).toContain("\u253C");
+    // Column delimiters use │
+    expect(output).toContain("\u2502");
+  });
+
+  it("combines phaseRetries and judgeFixCycles into retries column", () => {
+    const report = makeReport({
+      phaseId: "phase-1",
+      tasksCompleted: ["t1", "t2"],
+      tasksFailed: [],
+      judgeAssessment: { passed: true, issues: [], suggestions: [], corrections: [] },
+      judgeFixCycles: 2,
+    });
+    const result = makeResult({
+      success: true,
+      phasesCompleted: ["phase-1"],
+      finalState: makeState({
+        phaseReports: [report],
+        phaseRetries: { "phase-1": 1 },
+      }),
+      phaseDurations: { "phase-1": 60_000 },
+      totalDuration: 60_000,
+    });
+
+    const output = formatSummaryReport(result);
+    // phase-1 row should show 3 retries (1 phase retry + 2 judge fix cycles)
+    const lines = output.split("\n");
+    const phaseRow = lines.find((l) => l.includes("phase-1"));
+    expect(phaseRow).toContain("3");
+    // Total row should also show 3
+    const totalRow = lines.find((l) => l.includes("Total"));
+    expect(totalRow).toContain("3");
+  });
+
+  it("shows explicit message for empty browser acceptance results", () => {
+    const report = makeReport({
+      phaseId: "phase-1",
+      tasksCompleted: ["t1"],
+      tasksFailed: [],
+    });
+    const result = makeResult({
+      success: true,
+      phasesCompleted: ["phase-1"],
+      finalState: makeState({ phaseReports: [report] }),
+      phaseDurations: { "phase-1": 10_000 },
+      totalDuration: 10_000,
+      browserAcceptanceReport: {
+        passed: false,
+        results: [],
+        retries: 3,
+      },
+    });
+
+    const output = formatSummaryReport(result);
+    expect(output).toContain("No structured results returned by browser-tester agent.");
+    expect(output).toContain("3 fix attempt(s) were dispatched before stopping.");
+    expect(output).not.toContain("0/0");
+  });
+
+  it("shows normal browser acceptance results when present", () => {
+    const report = makeReport({
+      phaseId: "phase-1",
+      tasksCompleted: ["t1"],
+      tasksFailed: [],
+    });
+    const result = makeResult({
+      success: true,
+      phasesCompleted: ["phase-1"],
+      finalState: makeState({ phaseReports: [report] }),
+      phaseDurations: { "phase-1": 10_000 },
+      totalDuration: 10_000,
+      browserAcceptanceReport: {
+        passed: false,
+        results: [
+          { criterion: "App loads", passed: true },
+          { criterion: "Can create habit", passed: false, detail: "Button not found" },
+        ],
+        retries: 1,
+      },
+    });
+
+    const output = formatSummaryReport(result);
+    expect(output).toContain("1/2 criteria passed (1 retries)");
+    expect(output).toContain("FAIL: Can create habit");
   });
 });

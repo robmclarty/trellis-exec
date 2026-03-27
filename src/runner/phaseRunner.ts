@@ -119,7 +119,7 @@ function applyJudgeOutcome(config: {
   let { report, tasksJson } = config;
   const { judgeResult, phaseId, phaseExecStatus, tasksJsonPath, verbose } = config;
 
-  report = { ...report, judgeAssessment: judgeResult.assessment };
+  report = { ...report, judgeAssessment: judgeResult.assessment, judgeFixCycles: judgeResult.correctionAttempts };
 
   // Apply judge corrections to tasks.json (e.g., targetPath renames)
   const corrections = judgeResult.assessment.corrections ?? [];
@@ -654,7 +654,7 @@ async function judgePhase(config: {
 
     if (assessment.passed) {
       if (ctx.verbose) {
-        console.log(`[judge] passed on attempt ${attempt}`);
+        console.log(`[judge] passed on attempt ${attempt + 1}`);
       }
       return { assessment, correctionAttempts: attempt };
     }

@@ -70,26 +70,27 @@ function padColumns(rows: PhaseRow[], totals: PhaseRow, hasTokens: boolean): str
     widths[col] = Math.max(...all.map((r) => r[col].length));
   }
 
+  function formatCell(col: (typeof COLUMN_KEYS)[number], value: string): string {
+    return RIGHT_ALIGNED.has(col)
+      ? value.padStart(widths[col]!)
+      : value.padEnd(widths[col]!);
+  }
+
   function formatRow(r: PhaseRow): string {
-    return cols
-      .map((col) =>
-        RIGHT_ALIGNED.has(col)
-          ? r[col].padStart(widths[col]!)
-          : r[col].padEnd(widths[col]!),
-      )
-      .join("  ");
+    return " " + cols.map((col) => formatCell(col, r[col])).join(" \u2502 ");
+  }
+
+  function formatSeparator(): string {
+    return "\u2500" + cols.map((col) => "\u2500".repeat(widths[col]!)).join("\u2500\u253C\u2500");
   }
 
   const lines: string[] = [];
-  const headerLine = formatRow(header);
-  const separator = "\u2500".repeat(headerLine.length);
-
-  lines.push(headerLine);
-  lines.push(separator);
+  lines.push(formatRow(header));
+  lines.push(formatSeparator());
   for (const row of rows) {
     lines.push(formatRow(row));
   }
-  lines.push(separator);
+  lines.push(formatSeparator());
   lines.push(formatRow(totals));
 
   return lines.join("\n");
@@ -124,7 +125,9 @@ export function formatSummaryReport(result: PhaseRunnerResult): string {
     const completed = report.tasksCompleted.length;
     const failed = report.tasksFailed.length;
     const taskTotal = completed + failed;
-    const retries = finalState.phaseRetries[phaseId] ?? 0;
+    const phaseRetries = finalState.phaseRetries[phaseId] ?? 0;
+    const judgeFixCycles = report.judgeFixCycles ?? 0;
+    const retries = phaseRetries + judgeFixCycles;
     const duration = phaseDurations[phaseId];
     const issueCount = report.judgeAssessment?.issues.length ?? 0;
     const usage = phaseTokens[phaseId];
@@ -172,14 +175,21 @@ export function formatSummaryReport(result: PhaseRunnerResult): string {
   // Browser acceptance test summary (Tier 2)
   if (result.browserAcceptanceReport) {
     const bar = result.browserAcceptanceReport;
-    const passedCount = bar.results.filter((r) => r.passed).length;
-    const totalCount = bar.results.length;
     lines.push("");
     lines.push("Browser Acceptance Tests");
-    lines.push(`  ${passedCount}/${totalCount} criteria passed (${bar.retries} retries)`);
-    for (const r of bar.results) {
-      if (!r.passed) {
-        lines.push(`  FAIL: ${r.criterion}${r.detail ? ` — ${r.detail}` : ""}`);
+    if (bar.results.length === 0) {
+      lines.push("  No structured results returned by browser-tester agent.");
+      if (bar.retries > 0) {
+        lines.push(`  ${bar.retries} fix attempt(s) were dispatched before stopping.`);
+      }
+    } else {
+      const passedCount = bar.results.filter((r) => r.passed).length;
+      const totalCount = bar.results.length;
+      lines.push(`  ${passedCount}/${totalCount} criteria passed (${bar.retries} retries)`);
+      for (const r of bar.results) {
+        if (!r.passed) {
+          lines.push(`  FAIL: ${r.criterion}${r.detail ? ` \u2014 ${r.detail}` : ""}`);
+        }
       }
     }
     if (bar.generatedTestPath) {

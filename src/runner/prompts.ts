@@ -145,6 +145,14 @@ export function buildPhaseContext(
       for (const entry of learnings.constraint) {
         lines.push(`- ${entry}`);
       }
+      lines.push("");
+      lines.push(
+        "**Important**: Constraint entries often reflect general rules discovered via specific examples. " +
+        "Before starting tasks, review each constraint and determine if it applies broadly. " +
+        "For example, if a prior phase discovered that a specific `.js` file needed a `.jsx` extension " +
+        "because it contains JSX, apply that rule to ALL files containing JSX in this phase — " +
+        "do not wait to rediscover the same constraint file-by-file. Apply the principle, not just the instance.",
+      );
     }
     if (learnings.architectural.length > 0) {
       lines.push("");
