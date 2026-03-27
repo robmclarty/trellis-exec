@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.7.14
+
+- Remove dead `phaseReport` field from SharedState schema; make `exitCode` required in CheckResultSchema
+- Extract shared judge/rejudge prompt helpers and `applyJudgeOutcome()` to reduce duplication
+- Inline single-use `buildSubAgentPrompt`/`buildSubAgentArgs` into `dispatchSubAgent()`
+- Consolidate `getChangedFiles()` to use single `git status --porcelain` call (halves git spawns for no-ref path)
+- Batch `applyReportToTasks` with Map lookup instead of per-task O(n) scans
+- Add `prompts.test.ts` covering `buildRejudgePrompt`, `formatIssue`, `normalizeReport`, `parseJudgeResult`, `collectLearnings`
+- Add tests for `reviewPhaseContract`, `detectTestCommand`, `selectJudgeModel`
+- Add edge case tests for devServer, completionVerifier, and stateManager (350 total tests, up from 309)
+
 ## 0.7.13
 
 - Add judge corrections mechanism: judge can return `corrections` (e.g., targetPath renames) that update tasks.json before the completion verifier runs, eliminating false-positive failures for `.module.css`/`.css` and `.jsx`/`.js` mismatches
