@@ -83,7 +83,7 @@ The key trust boundary is between the LLM-generated actions (via Claude CLI subp
 **Mitigation:** All subprocesses have enforced timeouts via `setTimeout` + `SIGTERM`:
 
 - Sub-agents: 5 minutes (300,000ms)
-- Orchestrator: 15 minutes (900,000ms), configurable via `--timeout`
+- Orchestrator: 30 minutes (1,800,000ms), configurable via `--timeout` or `--long-run` (2 hours)
 - Compile/decompose: 10 minutes (600,000ms)
 
 Timeout errors are caught and surfaced as `SubAgentResult.success = false` with a descriptive error message.

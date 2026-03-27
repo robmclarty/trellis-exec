@@ -2,8 +2,8 @@
 
 ## Why these tests exist
 
-The unit tests for each module (plan compiler, phase runner, scheduler, REPL
-manager, etc.) verify that individual components behave correctly in isolation.
+The unit tests for each module (plan compiler, phase runner, scheduler, agent
+launcher, etc.) verify that individual components behave correctly in isolation.
 What they cannot verify is whether those components work together as a system —
 whether a plan compiled from markdown actually produces state that the phase
 runner can consume, whether that state survives a process restart and resumes
@@ -41,8 +41,8 @@ The tests in `src/__tests__/e2e.test.ts` are split into two groups.
 ### Group 1: No LLM required
 
 These tests use the same mock patterns as the unit tests in
-`src/runner/__tests__/phaseRunner.test.ts` — mock agent launcher, mock REPL
-session, mock helpers — so they run fast and deterministically in any CI
+`src/runner/__tests__/phaseRunner.test.ts` — mock agent launcher, mock
+orchestrator subprocess — so they run fast and deterministically in any CI
 environment.
 
 | Test | What it verifies | §10 criteria |
@@ -53,7 +53,6 @@ environment.
 | **Parallel scheduling** | 4 tasks where A→B and C, D are independent: scheduler puts A+C+D in group 0 (parallelizable), B in group 1. Also: two tasks targeting the same file are serialized via implicit dependency. | #8, #9 |
 | **Phase retry** | Phase 1 returns `recommendedAction: "retry"` with corrective tasks → runner re-enters phase → second attempt returns `advance` → `phaseRetries` counter is 1. | #10 |
 | **Handoff consumption** | Phase 1 report includes a handoff string → it persists in `state.json` → available to phase 2 context. | #4 |
-| **REPL truncation** | Real (not mocked) `createReplSession` evaluates code producing >8192 chars → `result.truncated` is true, output contains `[TRUNCATED` marker. | #5 |
 | **Architectural validation** | `phaseRunner.ts` contains zero direct LLM/claude/anthropic imports — all LLM interaction is behind the `AgentLauncher` interface. Trajectory log exists after a run with valid JSONL lines. | Architectural criteria, #15 |
 
 ### Group 2: Requires claude CLI
@@ -76,22 +75,11 @@ This test has a 10-minute timeout since it involves real LLM calls.
 ## How the mocks work
 
 The e2e tests reuse the mock wiring pattern from the phaseRunner unit tests.
-Four modules are mocked via `vi.mock()`:
+The key module mocked via `vi.mock()`:
 
 - **agentLauncher** — `createAgentLauncher` returns an object with mock
-  `launchOrchestrator`, `dispatchSubAgent`, and `llmQuery`. The mock
-  orchestrator returns pre-scripted code strings that the mock REPL session
-  evaluates.
-- **replManager** — `createReplSession` returns a mock session where `eval`
-  intercepts `writePhaseReport(...)` calls and delegates to the helpers, causing
-  the phase runner to detect phase completion.
-- **replHelpers** — `createReplHelpers` returns stubs for all helper functions.
-- **worktreeManager** — all worktree operations return success without touching
-  git.
-
-The REPL truncation test is the exception: it uses `vi.importActual` to get the
-real `createReplSession` implementation so it can verify the actual truncation
-behavior in the `node:vm` sandbox.
+  `runPhaseOrchestrator` and `dispatchSubAgent`. The mock orchestrator writes a
+  pre-scripted `.trellis-phase-report.json` file to simulate phase completion.
 
 ## Running the tests
 

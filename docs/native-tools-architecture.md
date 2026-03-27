@@ -131,7 +131,7 @@ This gives the orchestrator full context about what went wrong and what to focus
 | Addition | Purpose |
 |----------|---------|
 | `src/git.ts` | Extracted `getChangedFiles()` and `getDiffContent()` from worktreeManager (pure git-diff wrappers with no worktree dependency) |
-| `runPhaseOrchestrator()` in agentLauncher | Single fire-and-forget `claude --print` call with 10-minute timeout |
+| `runPhaseOrchestrator()` in agentLauncher | Single fire-and-forget `claude --print` call with 30-minute timeout (configurable via `--timeout`, or 2 hours with `--long-run`) |
 | `ExecClaudeResult` export | Return type from `execClaude()`, now public for use by compilePlan |
 | `query` callback in compilePlan | Replaced `AgentLauncher` interface dependency with a simple `(prompt: string) => Promise<string>` callback |
 | "Previous Attempt" section in buildPhaseContext | Retry context with last report, judge issues, corrective tasks |

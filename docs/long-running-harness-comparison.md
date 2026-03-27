@@ -48,15 +48,16 @@ Trellis implements per-task commits, per-phase commits, SHA tracking for judge d
 
 ## Where Trellis Falls Short
 
-### No interactive evaluation (Playwright MCP)
+### ~~No interactive evaluation (Playwright MCP)~~ — Addressed
 
 Both articles emphasize that Anthropic's evaluator interacts with running applications — clicking through UIs, testing APIs, checking database states via Playwright MCP. Their game-maker example demonstrates why: the solo-agent version *looked* functional but had completely broken runtime behavior — entities wouldn't respond to input, with broken wiring between definitions and runtime.
 
-Trellis's judge only reads code diffs and files. It cannot verify runtime behavior.
+**Status:** Trellis now has a two-tier browser testing system that addresses this gap:
 
-**Impact:** High. Static diff review misses entire categories of bugs — broken event wiring, missing UI interactions, non-functional audio, stubbed operations. These are exactly the bugs Anthropic's QA agent catches.
+1. **Per-phase smoke tests** — A deterministic Playwright script runs after each UI phase, checking for console errors, blank pages, and crash-on-click. This catches broken rendering and wiring without LLM cost.
+2. **End-of-build acceptance tests** — An LLM-powered loop where a `browser-tester` agent (Opus) generates Playwright tests from the spec's acceptance criteria, and a `browser-fixer` agent (Sonnet) fixes failures iteratively.
 
-**Opportunity:** The check command could start a server and the judge could receive Playwright MCP access for web/UI projects. This transforms the judge from a static code reviewer into a functional tester without deep architectural changes.
+The system auto-detects web app projects (via package.json dependencies, build-tool configs, and HTML entry points) and propagates `requiresBrowserTest` flags with sticky semantics. Dev server detection is language-agnostic (Node, Python/Django, Ruby/Rails, Go, Docker Compose). See [browser-testing.md](browser-testing.md) for details.
 
 ### Harness simplification and assumption stress-testing
 
@@ -80,25 +81,27 @@ Trellis's judge receives acceptance criteria written at compile time, with no ne
 
 **Opportunity:** Add an optional pre-phase "contract" step where the judge reviews the phase plan and acceptance criteria before execution, flagging ambiguous or untestable criteria. Low cost, high signal.
 
-### No anti-laziness loop
+### ~~No anti-laziness loop~~ — Partially Addressed
 
 The scientific computing article identifies "agentic laziness" — agents claiming completion prematurely on multi-part tasks. Their solution is a "Ralph loop" that kicks agents back with "are you really done?" and iterates until the task truly meets specifications.
 
-Trellis has retry logic, but only triggered by judge rejection or check failure. If the orchestrator claims success and the judge agrees (but both are wrong or both miss something), there's no mechanism to challenge that.
+**Status:** Trellis now has a **completion verifier** that runs after each phase:
+- Checks that all completed tasks have their `targetPath` files on disk
+- Scans new files for `TODO`/`FIXME`/`HACK` markers
 
-**Impact:** Medium. Particularly relevant for phases with many acceptance criteria where both orchestrator and judge may satisfice rather than verify exhaustively.
+This catches common lazy-completion patterns (claiming files were created when they weren't, leaving stub implementations). Combined with the judge → fix correction loop and browser smoke tests, there are now three independent verification layers beyond the orchestrator's self-report.
 
-**Opportunity:** Add a lightweight completion-challenge pass after the orchestrator reports "complete": do all target paths exist? Do acceptance criteria have corresponding test coverage? Are there TODO/FIXME comments in new code? This is cheaper than a full judge invocation but catches common lazy-completion patterns.
+**Remaining gap:** The completion verifier doesn't check whether acceptance criteria have corresponding test coverage. The judge may still agree with the orchestrator's optimistic assessment on subjective criteria.
 
 ### No multi-day execution infrastructure
 
 The scientific computing article runs Claude for days on HPC clusters with SLURM + tmux. Researchers detach from sessions and check progress via git commits — "while waiting in line for a coffee."
 
-Trellis has a 15-minute default timeout per phase and is designed for interactive terminal sessions. The `--headless` flag enables auto-advance but the timeout ceiling caps ambition. There's no daemon mode, no detach-and-check-later pattern, no infrastructure for truly long-running (hours/days) autonomous execution.
+Trellis has a 30-minute default timeout per phase (configurable via `--timeout`) and a `--long-run` flag that extends it to 2 hours. The `--headless` flag enables auto-advance. There's no daemon mode, no detach-and-check-later pattern, no infrastructure for truly long-running (multi-day) autonomous execution.
 
-**Impact:** Medium. The 15-minute timeout is appropriate for most implementation phases but insufficient for complex scientific computing, large refactors, or exploratory tasks.
+**Impact:** Low-medium. The 30-minute default and 2-hour `--long-run` mode cover most implementation phases and complex refactors. Multi-day autonomous execution remains out of scope.
 
-**Opportunity:** A `--daemon` or extended headless mode that supports longer timeouts (1-2 hours per phase), progress reporting via git commits or webhooks, and graceful handling of machine sleep/restart. The `--headless` mode combined with `--resume` and `state.json` is 80% of the way there.
+**Opportunity:** A daemon mode with progress reporting via git commits or webhooks, and graceful handling of machine sleep/restart. The `--headless` mode combined with `--resume`, `state.json`, and `--long-run` covers most practical use cases already.
 
 ### Bounded learnings may be too aggressive
 
@@ -117,12 +120,12 @@ For a 10-phase project, 20 entries may suffice. For a 30+ phase project, early a
 | Context reset | Per-sprint fresh agents | Per-phase fresh subprocess | Parity |
 | Generator-evaluator split | Separate agents | Judge + fix agents | Parity |
 | Evaluation criteria | Rubric-based, tunable | Acceptance criteria from spec | Trellis less adaptive |
-| Interactive evaluation | Playwright MCP | Static code review only | **Gap** |
+| Interactive evaluation | Playwright MCP | Two-tier browser testing (smoke + acceptance) | Addressed |
 | Sprint contracts | Negotiated pre-sprint | Fixed at compile time | **Gap** |
 | Planner agent | Autonomous spec expansion | Human-guided pipeline | By design |
 | Harness simplification | Actively stress-tested | Fixed architecture | **Gap** |
-| Anti-laziness loops | Ralph loop pattern | Judge-only verification | **Gap** |
-| Multi-day execution | SLURM + tmux, days | 15min timeout, interactive | **Gap** |
+| Anti-laziness loops | Ralph loop pattern | Completion verifier + judge + browser smoke | Partially addressed |
+| Multi-day execution | SLURM + tmux, days | 30min default, 2hr `--long-run` | Reduced gap |
 | Lab notes / memory | Unbounded CHANGELOG | 20-entry decisionsLog | Minor gap |
 | Sub-agent dispatch | Removed as model improved | 5 specialized sub-agents | May be over-engineered |
 | Dependency resolution | Not discussed | Kahn's algorithm + implicit deps | Trellis ahead |
@@ -131,22 +134,22 @@ For a 10-phase project, 20 entries may suffice. For a 30+ phase project, early a
 
 ## Recommendations (Ranked by Impact)
 
-### 1. Add runtime evaluation capability
+### ~~1. Add runtime evaluation capability~~ — Done
 
-Give the judge Playwright MCP or equivalent interactive testing access. Static diff review misses entire categories of bugs. Anthropic's results show that the evaluator interacting with the running application is what separates "looks right" from "works right." This is the single highest-impact gap.
+Trellis now includes two-tier browser testing: per-phase Playwright smoke checks (deterministic, no LLM) and end-of-build acceptance tests (LLM-driven generate-and-fix loop). Web app projects are auto-detected. See [browser-testing.md](browser-testing.md).
 
 ### 2. Stress-test sub-agent necessity
 
 Benchmark orchestrator-only execution against the current multi-agent dispatch. Anthropic explicitly found that Opus 4.6 made separate agent dispatch unnecessary for many tasks. The tool restrictions on implement and scaffold agents (no Bash, no Glob, no Grep) are especially suspect — an implementation agent that can't search the codebase or run builds is artificially handicapped. Remove constraints that no longer match model capabilities.
 
-### 3. Support longer autonomous execution
+### 3. Support longer autonomous execution — Partially Done
 
-Increase the timeout ceiling, add progress reporting for detached sessions, and consider a "coffee-check" pattern where progress is visible via git commits without needing an active terminal. The `--headless` mode combined with `--resume` is most of the way there — the remaining work is increasing default timeouts and adding optional progress hooks (webhook, file, or git-based).
+The default orchestrator timeout was increased from 10 to 30 minutes, and `--long-run` provides a 2-hour ceiling. The remaining work is adding optional progress hooks (webhook, file, or git-based) for truly detached sessions and a daemon mode for multi-day execution.
 
 ### 4. Add pre-phase contract review
 
 Before executing a phase, have the judge review the acceptance criteria for ambiguity and testability. This is a lightweight addition that prevents wasted execution cycles on poorly specified phases.
 
-### 5. Add completion verification pass
+### ~~5. Add completion verification pass~~ — Done
 
-After the orchestrator reports "complete," run a lightweight check: target paths exist, no TODO/FIXME in new code, acceptance criteria have corresponding tests. Catches lazy-completion patterns without the cost of a full judge invocation.
+The completion verifier now runs after each phase, checking that target paths exist on disk and scanning new files for `TODO`/`FIXME`/`HACK` markers. This catches common lazy-completion patterns without the cost of a full judge invocation.

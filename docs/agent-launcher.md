@@ -104,7 +104,7 @@ All subprocess spawning goes through a shared `execClaude` helper that uses `chi
 
 | Concern | Approach |
 |---------|----------|
-| Timeout | Sub-agents: 5 minutes; orchestrator: 10 minutes. SIGTERM on expiry. |
+| Timeout | Sub-agents: 5 minutes; orchestrator: 30 minutes (configurable via `--timeout`, or 2 hours with `--long-run`). SIGTERM on expiry. |
 | stdout/stderr | Collected as buffers, decoded to UTF-8 on completion |
 | Exit codes | Non-zero exit → `SubAgentResult.success = false` with error |
 | Streaming | Optional `onStdout`/`onStderr` callbacks for real-time output |
@@ -135,5 +135,6 @@ const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT ?? process.cwd();
 |---------|-------|
 | Sub-agent model | Sonnet |
 | Sub-agent timeout | 300,000ms (5 minutes) |
-| Orchestrator timeout | 600,000ms (10 minutes) |
+| Orchestrator timeout | 1,800,000ms (30 minutes) |
+| Long-run timeout | 7,200,000ms (2 hours, via `--long-run`) |
 | Compile timeout | 600,000ms (10 minutes) |

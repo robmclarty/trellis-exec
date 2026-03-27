@@ -44,7 +44,8 @@ Reads a `tasks.json` file and executes its phases through the phase runner. By d
 | `--judge <mode>` | string | `"always"` | Judge mode: `always`, `on-failure`, or `never` |
 | `--judge-model <model>` | string | *(adaptive)* | Override judge model (default: adaptive — Sonnet for small diffs, Opus for larger ones) |
 | `--headless` | boolean | `false` | Disable interactive prompts between phases |
-| `--verbose` | boolean | `false` | Print stream-json debug output from orchestrator |
+| `--long-run` | boolean | `false` | Set 2-hour timeout for complex phases |
+| `--verbose` | boolean | `false` | Print debug output from orchestrator |
 | `--dev-server <command>` | string | *(auto-detected)* | Dev server start command for browser testing |
 | `--save-e2e-tests` | boolean | `false` | Save generated acceptance tests to project test directory |
 | `--browser-test-retries <n>` | number | `3` | Max retries for end-of-build browser acceptance loop |
@@ -181,6 +182,9 @@ Environment variables serve as fallbacks when CLI flags are not provided. CLI fl
 | `TRELLIS_EXEC_CONCURRENCY` | `--concurrency` | `3` | Max parallel sub-agents per phase |
 | `TRELLIS_EXEC_JUDGE_MODE` | `--judge` | `"always"` | Judge mode (always, on-failure, never) |
 | `TRELLIS_EXEC_JUDGE_MODEL` | `--judge-model` | *(adaptive)* | Override judge model |
+| `TRELLIS_EXEC_LONG_RUN` | `--long-run` | *(off)* | Enable long-run mode (2-hour timeout) |
+| `TRELLIS_EXEC_DEV_SERVER` | `--dev-server` | *(auto-detect)* | Dev server start command |
+| `TRELLIS_EXEC_BROWSER_TEST_RETRIES` | `--browser-test-retries` | `3` | Max browser acceptance retries |
 | `CLAUDE_PLUGIN_ROOT` | *(no flag)* | `process.cwd()` | Plugin directory root (auto-set by Claude Code) |
 
 **Precedence order:** CLI flag > environment variable > built-in default.

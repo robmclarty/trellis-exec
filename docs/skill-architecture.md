@@ -4,9 +4,9 @@ The phase orchestrator's tool knowledge is distributed across five skills instea
 
 ## Why skills instead of a single prompt
 
-Early versions of the orchestrator used a single large system prompt (`prompts/orchestrator-system.md`) that documented every REPL helper function, every sub-agent type, every verification tier, and every phase lifecycle detail in one file. This had three problems:
+Early versions of the orchestrator used a single large system prompt (`prompts/orchestrator-system.md`) that documented every helper function, every sub-agent type, every verification tier, and every phase lifecycle detail in one file. This had three problems:
 
-1. **Context cost.** The orchestrator received the entire prompt on every phase launch, even though most tasks only use a subset of the helpers. A phase that only explores and dispatches doesn't need the full verification retry protocol or the phase report format.
+1. **Context cost.** The orchestrator received the entire prompt on every phase launch, even though most tasks only use a subset of the capabilities. A phase that only explores and dispatches doesn't need the full verification retry protocol or the phase report format.
 
 2. **Maintenance coupling.** Changing how `runCheck()` works meant editing a 400-line file that also documented `readFile()`, `dispatchSubAgent()`, and compaction. Unrelated concerns lived in the same document.
 
@@ -53,9 +53,9 @@ These five skills are the orchestrator's instruction manual. The orchestrator ag
 
 ### explore-codebase
 
-**Documents:** `readFile()`, `listDir()`, `searchFiles()`, `readSpecSections()`
+**Documents:** Codebase exploration using native Claude tools (Read, Glob, Grep)
 
-This skill teaches the exploration pattern that every task should follow: start broad with `listDir()`, narrow with `searchFiles()`, then read specific files with `readFile()`. It documents each function's signature and behavior, with particular emphasis on the 8192-character truncation limit and how to work around it programmatically.
+This skill teaches the exploration pattern that every task should follow: start broad with Glob/Grep, narrow with targeted searches, then read specific files with Read. It documents effective patterns for navigating unfamiliar code and understanding module structure.
 
 The reference file (`exploration-patterns.md`) provides three worked examples showing complete exploration sequences for common scenarios: understanding a module before modifying it, finding all usages of a type, and locating test files.
 
@@ -63,9 +63,9 @@ The reference file (`exploration-patterns.md`) provides three worked examples sh
 
 ### dispatch-agent
 
-**Documents:** `dispatchSubAgent()` API
+**Documents:** Sub-agent dispatch via `claude --agent`
 
-This skill covers the full dispatch workflow: API parameters, agent types, context bundling, and the critical distinction between dispatching (for file changes) and using `llmQuery()` (for analysis). It includes concrete examples of good and bad dispatch calls.
+This skill covers the full dispatch workflow: agent types, context bundling, and when to delegate to sub-agents vs handle directly with native tools. It includes concrete examples of good and bad dispatch calls.
 
 Two reference files provide depth:
 
@@ -76,7 +76,7 @@ Two reference files provide depth:
 
 ### verify-work
 
-**Documents:** `runCheck()` and the verification tiers
+**Documents:** Check commands and the verification tiers
 
 This skill defines the three-tier verification model:
 
@@ -92,9 +92,9 @@ The reference file (`failure-analysis.md`) catalogs common failure categories (t
 
 ### manage-phase
 
-**Documents:** `writePhaseReport()`, `getState()`
+**Documents:** Phase report writing and state management
 
-This skill covers phase lifecycle: reading shared state, synthesizing the judge assessment with execution context, writing the phase report, composing handoff briefings, and triggering context compaction.
+This skill covers phase lifecycle: reading shared state, synthesizing the judge assessment with execution context, writing the `.trellis-phase-report.json` file, and composing handoff briefings.
 
 The reference file (`report-format.md`) provides the complete report structure with three worked examples: a clean advance, a retry with corrective tasks, and a halt requiring human intervention. Each example shows realistic field values.
 
@@ -102,13 +102,11 @@ The reference file (`report-format.md`) provides the complete report structure w
 
 ### quick-query
 
-**Documents:** `llmQuery()`
+**Documents:** Quick LLM queries via `claude --print`
 
-This is arguably the most important skill despite documenting the simplest function. Its primary job is teaching the orchestrator *when* to use `llmQuery()` — for all interpretive and analytical work — and *when not to* — never for file creation.
+This skill teaches the orchestrator when to use quick LLM queries (for interpretive and analytical work) vs sub-agent dispatch (for file changes). It covers common use cases: analyzing check failures, deciding task strategy, evaluating output, and interpreting file structure.
 
-The skill opens with a comparison table (llmQuery for analysis, dispatchSubAgent for file changes) and provides concrete examples for every common use case: analyzing check failures, reading spec sections, deciding task strategy, evaluating sub-agent output, and interpreting file structure. It also documents model selection (default Haiku, override to Sonnet for harder analysis).
-
-**Why a separate skill:** Without explicit guidance, the orchestrator either under-uses `llmQuery()` (dispatching expensive sub-agents for pure analysis) or misuses it (trying to generate code that should be written by a sub-agent). The skill establishes the boundary clearly with examples of both correct and incorrect usage.
+**Why a separate skill:** Without explicit guidance, the orchestrator either under-uses quick queries (dispatching expensive sub-agents for pure analysis) or misuses them (trying to generate code that should be handled directly). The skill establishes the boundary clearly with examples of both correct and incorrect usage.
 
 ## Plugin skills
 
@@ -116,7 +114,7 @@ These three skills are thin launchers invoked by the developer through Claude Co
 
 ### run
 
-Launches `npx trellis-exec run` with the user's tasks.json. Documents all CLI flags (phase selection, dry-run, resume, isolation mode, concurrency, model override, max retries, headless mode, verbose output) and explains the interactive prompt that appears between phases.
+Launches `npx trellis-exec run` with the user's tasks.json. Documents all CLI flags (phase selection, dry-run, resume, concurrency, model override, max retries, headless mode, judge mode, browser testing, verbose output) and explains the interactive prompt that appears between phases.
 
 ### compile
 
@@ -145,16 +143,16 @@ The orchestrator prompt (`agents/phase-orchestrator.md`) and the skills are desi
 | Concern | Where it lives |
 |---------|---------------|
 | Role and identity | Orchestrator prompt |
-| REPL session protocol | Orchestrator prompt |
+| Phase execution protocol | Orchestrator prompt |
 | Task execution flow (dependency order, parallel scheduling) | Orchestrator prompt |
 | Phase completion sequence | Orchestrator prompt |
 | Error handling philosophy | Orchestrator prompt |
-| Helper function signatures and usage | Skills |
+| Tool usage patterns and best practices | Skills |
 | Agent types and capabilities | Skills |
 | Context bundling strategies | Skills |
 | Verification tiers and retry logic | Skills |
 | Phase report format and examples | Skills |
-| llmQuery vs dispatchSubAgent distinction | Skills |
+| Quick query vs sub-agent dispatch distinction | Skills |
 
 The orchestrator prompt tells the agent *what to do* and *in what order*. The skills tell it *how to use each tool* and *when to choose one tool over another*.
 
@@ -164,6 +162,6 @@ The orchestrator prompt tells the agent *what to do* and *in what order*. The sk
 
 **SKILL.md is the entry point, references go deep.** The main skill file should be scannable — function signatures, when-to-use guidance, key examples. Complex topics (agent type details, bundling strategies, failure patterns, report format examples) go in reference files so the main file stays focused.
 
-**Examples over rules.** The orchestrator is an LLM. Concrete code examples are more effective than abstract rules. Every skill includes working JS code blocks showing actual REPL usage.
+**Examples over rules.** The orchestrator is an LLM. Concrete examples are more effective than abstract rules. Every skill includes practical examples showing actual tool usage patterns.
 
 **Orchestrator skills are detailed; plugin skills are brief.** The orchestrator's effectiveness depends directly on how well it understands its tools. Extra detail and examples are worth the context cost. Plugin skills are for humans who just need to know the command and its flags.

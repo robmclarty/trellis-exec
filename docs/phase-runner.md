@@ -27,11 +27,16 @@ For each incomplete phase:
   Launch orchestrator       →  launcher.runPhaseOrchestrator() (single subprocess)
   Read report file          →  .trellis-phase-report.json
   Normalize report          →  normalizeReport() (handles LLM output variations)
+  Browser smoke check       →  runBrowserSmokeForPhase() (if requiresBrowserTest)
   Judge phase               →  judgePhase() (judge → fix correction loop)
+  Completion verification   →  verifyCompletion() (target paths + TODO scan)
   Auto-detect test suite    →  hasNewTestFiles() + detectTestCommand()
   Decide action             →  report.recommendedAction + judge assessment + user input
   Phase-level git commit    →  makePhaseCommit() (conventional commit format)
   Update state              →  stateManager.updateStateAfterPhase()
+
+After all phases:
+  Browser acceptance tests  →  runBrowserAcceptance() (if any phase had requiresBrowserTest)
 
 Cleanup                     →  logger.close()
 ```
@@ -205,6 +210,9 @@ phaseRunner.runPhases()
        ├── agentLauncher.createAgentLauncher()
        │    ├── .dispatchSubAgent()         → judge + fix sub-agents
        │    └── .runPhaseOrchestrator()     → single fire-and-forget subprocess
+       ├── browserSmoke.runBrowserSmoke()   → per-phase Playwright smoke check
+       ├── browserAcceptance.runBrowserAcceptance() → end-of-build acceptance loop
+       ├── completionVerifier.verifyCompletion() → target path + TODO scan
        ├── checkRunner.createCheckRunner()  → check command after fixes
        └── judgePhase()
             ├── dispatchSubAgent("judge")   → assess changes against criteria
@@ -282,3 +290,7 @@ Configuration is provided via `RunContext` (defined in `cli.ts`):
 | `pluginRoot` | (required) | Directory containing `agents/` and `skills/` |
 | `judgeMode` | `"always"` | When to run the judge: `always`, `on-failure`, `never` |
 | `judgeModel` | *(adaptive)* | Override judge model selection |
+| `timeout` | none | Explicit timeout override for orchestrator subprocess |
+| `devServerCommand` | none | Dev server start command for browser testing (auto-detected if absent) |
+| `saveE2eTests` | `false` | Save generated browser acceptance tests to project |
+| `browserTestRetries` | `3` | Max retries for end-of-build browser acceptance loop |
