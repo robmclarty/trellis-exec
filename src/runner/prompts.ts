@@ -132,7 +132,7 @@ export function buildReferenceContext(state: SharedState, ctx: RunContext): stri
       `(Pre-loaded from \`${basename(ctx.guidelinesPath)}\`. Also available on disk via the Read tool.)`,
     );
     lines.push("");
-    lines.push(readFileSync(ctx.guidelinesPath, "utf-8"));
+    lines.push(ctx.guidelinesContent ?? readFileSync(ctx.guidelinesPath, "utf-8"));
   } else {
     lines.push("none configured");
   }
@@ -152,7 +152,7 @@ export function buildReferenceContext(state: SharedState, ctx: RunContext): stri
     `(Pre-loaded from \`${basename(ctx.specPath)}\`. Also available on disk via the Read tool.)`,
   );
   lines.push("");
-  lines.push(readFileSync(ctx.specPath, "utf-8"));
+  lines.push(ctx.specContent ?? readFileSync(ctx.specPath, "utf-8"));
 
   return lines.join("\n");
 }
@@ -738,14 +738,14 @@ export function parseJudgeResult(output: string): JudgeAssessment {
     }
   }
 
-  return {
+  return JudgeAssessmentSchema.parse({
     passed: false,
     issues: [
       `Judge output was unparseable: ${output.slice(0, 200)}`,
     ],
     suggestions: [],
     corrections: [],
-  };
+  });
 }
 
 // ---------------------------------------------------------------------------

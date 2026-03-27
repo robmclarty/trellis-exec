@@ -25,4 +25,8 @@ export type RunContext = {
   devServerCommand?: string;
   saveE2eTests: boolean;
   browserTestRetries: number;
+
+  // Cached file contents (populated once at startup, avoids repeated disk reads)
+  specContent?: string;
+  guidelinesContent?: string;
 };

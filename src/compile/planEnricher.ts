@@ -36,36 +36,41 @@ function parseJsonResponse(raw: string): unknown {
 }
 
 /**
- * Merges a resolved value into the correct task within tasksJson.
- * Mutates the tasksJson in place for efficiency.
+ * Returns a new TasksJson with the resolved value merged into the matching task.
  */
 function mergeResolvedField(
   tasksJson: TasksJson,
   taskId: string,
   field: string,
   value: unknown,
-): void {
-  for (const phase of tasksJson.phases) {
-    for (const task of phase.tasks) {
-      if (task.id === taskId && field in task) {
-        (task as Record<string, unknown>)[field] = value;
-        return;
-      }
-    }
-  }
+): TasksJson {
+  return {
+    ...tasksJson,
+    phases: tasksJson.phases.map((phase) => ({
+      ...phase,
+      tasks: phase.tasks.map((task) => {
+        if (task.id === taskId && field in task) {
+          return { ...task, [field]: value } as typeof task;
+        }
+        return task;
+      }),
+    })),
+  };
 }
 
 /**
  * Applies default values for all flagged fields. Used as a fallback when the
  * enricher returns invalid data.
  */
-function applyDefaults(tasksJson: TasksJson, flags: ParseResult["enrichmentNeeded"]): void {
+function applyDefaults(tasksJson: TasksJson, flags: ParseResult["enrichmentNeeded"]): TasksJson {
+  let result = tasksJson;
   for (const flag of flags) {
     const defaultValue = FIELD_DEFAULTS[flag.field];
     if (defaultValue !== undefined) {
-      mergeResolvedField(tasksJson, flag.taskId, flag.field, defaultValue);
+      result = mergeResolvedField(result, flag.taskId, flag.field, defaultValue);
     }
   }
+  return result;
 }
 
 /**
@@ -82,7 +87,7 @@ export async function enrichPlan(
     throw new Error("Cannot enrich a ParseResult with no tasksJson");
   }
 
-  const tasksJson = structuredClone(parseResult.tasksJson);
+  let tasksJson = structuredClone(parseResult.tasksJson);
 
   if (parseResult.enrichmentNeeded.length === 0) {
     return tasksJson;
@@ -95,26 +100,23 @@ export async function enrichPlan(
   try {
     raw = await enricher(prompt);
   } catch {
-    applyDefaults(tasksJson, parseResult.enrichmentNeeded);
-    return tasksJson;
+    return applyDefaults(tasksJson, parseResult.enrichmentNeeded);
   }
 
   let parsed: unknown;
   try {
     parsed = parseJsonResponse(raw);
   } catch {
-    applyDefaults(tasksJson, parseResult.enrichmentNeeded);
-    return tasksJson;
+    return applyDefaults(tasksJson, parseResult.enrichmentNeeded);
   }
 
   const validation = EnrichmentResponseSchema.safeParse(parsed);
   if (!validation.success) {
-    applyDefaults(tasksJson, parseResult.enrichmentNeeded);
-    return tasksJson;
+    return applyDefaults(tasksJson, parseResult.enrichmentNeeded);
   }
 
   for (const entry of validation.data.resolved) {
-    mergeResolvedField(tasksJson, entry.taskId, entry.field, entry.value);
+    tasksJson = mergeResolvedField(tasksJson, entry.taskId, entry.field, entry.value);
   }
 
   return tasksJson;

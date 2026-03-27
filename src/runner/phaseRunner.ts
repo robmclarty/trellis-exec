@@ -58,11 +58,15 @@ function warnIfProjectRootSuspect(projectRoot: string): void {
     );
   }
   const gitRoot = getGitRoot(resolved);
-  if (gitRoot && realpathSync(gitRoot) !== realpathSync(resolved)) {
-    console.warn(
-      `⚠ Warning: projectRoot (${resolved}) differs from git root (${gitRoot}). ` +
-      `Files committed by the orchestrator may not be found by the completion verifier.`,
-    );
+  try {
+    if (gitRoot && realpathSync(gitRoot) !== realpathSync(resolved)) {
+      console.warn(
+        `⚠ Warning: projectRoot (${resolved}) differs from git root (${gitRoot}). ` +
+        `Files committed by the orchestrator may not be found by the completion verifier.`,
+      );
+    }
+  } catch {
+    // realpathSync can fail on broken symlinks — skip the warning
   }
 }
 
@@ -867,14 +871,16 @@ export async function runPhases(
               [phase.id]: retryCount + 1,
             },
           };
-          // Append corrective tasks
+          // Append corrective tasks (immutable update)
           if (report.correctiveTasks.length > 0) {
             const newTasks = report.correctiveTasks.map((desc, i) =>
               makeCorrectiveTask(phase.id, desc, i + retryCount * 100),
             );
-            mutableTasksJson.phases[phaseIndex] = {
-              ...phase,
-              tasks: [...phase.tasks, ...newTasks],
+            mutableTasksJson = {
+              ...mutableTasksJson,
+              phases: mutableTasksJson.phases.map((p, i) =>
+                i === phaseIndex ? { ...phase, tasks: [...phase.tasks, ...newTasks] } : p,
+              ),
             };
           }
           saveState(localCtx.statePath, state);

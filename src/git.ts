@@ -95,8 +95,13 @@ export function getChangedFiles(cwd: string, fromSha?: string): ChangedFile[] {
         }
         return { path: filePath, status: "M" as ChangedFile["status"] };
       });
-  } catch {
-    if (fromSha) return getChangedFiles(cwd);
+  } catch (err) {
+    if (fromSha) {
+      console.warn(
+        `Warning: git diff from SHA ${fromSha} failed (${err instanceof Error ? err.message : "unknown error"}). Falling back to HEAD diff.`,
+      );
+      return getChangedFiles(cwd);
+    }
     return [];
   }
 }
