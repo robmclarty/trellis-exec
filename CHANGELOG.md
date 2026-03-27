@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.7.18
+
+- Fix `runSinglePhase` missing orchestrator correction pre-application (--phase runs now apply corrections correctly)
+- Split `phaseRunner.ts` into focused modules: `judgeRunner.ts`, `browserRunner.ts`, `testDetector.ts`
+- Move `RunContext` type from `cli.ts` to `src/types/runner.ts` (fixes inverted dependency)
+- Remove backward-compatibility re-exports from `phaseRunner.ts`
+- Fix `tryParseAssessment` mutating input object in-place (spread into new object)
+- Cache spec/guidelines content in `RunContext` to avoid repeated disk reads during prompt building
+- Wrap `realpathSync` in try/catch to handle broken symlinks gracefully
+- Add `KNOWN_AGENT_TYPES` enum for `subAgentType` validation
+- Log SHA fallback in `getChangedFiles` instead of silently falling back
+- Validate fallback `JudgeAssessment` through Zod schema
+- Fix immutability violations in phaseRunner corrective task injection and planEnricher `mergeResolvedField`
+- Enable `noUnusedLocals`, `noUnusedParameters`, `noImplicitReturns` in tsconfig
+- Replace greedy regex in `parseJudgeResult` with iterative JSON.parse scan
+- Add truncation notice to reporter prompt when diff exceeds 50k chars
+- Invert context authority: learnings (Current Understanding) positioned before spec with anti-hack instructions
+- Add orchestrator self-correction via corrections field in PhaseReport
+
 ## 0.7.17
 
 - Fix markdown lint errors for blank lines around lists in README and docs
