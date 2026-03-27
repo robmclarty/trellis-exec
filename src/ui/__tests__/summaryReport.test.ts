@@ -14,6 +14,7 @@ function makeReport(overrides: Partial<PhaseReport> = {}): PhaseReport {
     recommendedAction: "advance",
     correctiveTasks: [],
     decisionsLog: [],
+    corrections: [],
     handoff: "",
     ...overrides,
   };

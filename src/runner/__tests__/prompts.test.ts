@@ -1,14 +1,30 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Phase } from "../../types/tasks.js";
 import type { SharedState, PhaseReport, JudgeIssue } from "../../types/state.js";
 import type { ChangedFile } from "../../git.js";
+import type { RunContext } from "../../cli.js";
+
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...actual,
+    readFileSync: vi.fn(actual.readFileSync),
+  };
+});
+
+import { readFileSync } from "node:fs";
 import {
   buildRejudgePrompt,
+  buildReferenceContext,
+  buildPhaseContext,
+  buildFixPrompt,
   formatIssue,
   normalizeReport,
   parseJudgeResult,
   collectLearnings,
 } from "../prompts.js";
+
+const mockedReadFileSync = vi.mocked(readFileSync);
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -48,6 +64,7 @@ function makeReport(overrides?: Partial<PhaseReport>): PhaseReport {
     recommendedAction: "advance",
     correctiveTasks: [],
     decisionsLog: [],
+    corrections: [],
     handoff: "",
     ...overrides,
   };
@@ -344,5 +361,227 @@ describe("collectLearnings", () => {
     expect(result.architectural).toEqual(["[phase-1] arch decision"]);
     expect(result.tactical).toEqual(["[phase-1] tac note"]);
     expect(result.constraint).toEqual(["[phase-2] binding constraint"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildReferenceContext
+// ---------------------------------------------------------------------------
+
+function makeCtx(overrides?: Partial<RunContext>): RunContext {
+  return {
+    projectRoot: "/tmp/test",
+    specPath: "/tmp/test/spec.md",
+    planPath: "/tmp/test/plan.md",
+    statePath: "/tmp/test/state.json",
+    trajectoryPath: "/tmp/test/trajectory.jsonl",
+    tasksJsonPath: "/tmp/test/tasks.json",
+    concurrency: 3,
+    maxRetries: 2,
+    headless: true,
+    verbose: false,
+    dryRun: false,
+    pluginRoot: "/tmp/test/plugin",
+    judgeMode: "always",
+    saveE2eTests: false,
+    browserTestRetries: 3,
+    ...overrides,
+  };
+}
+
+describe("buildReferenceContext", () => {
+  beforeEach(() => {
+    mockedReadFileSync.mockImplementation((path: Parameters<typeof readFileSync>[0]) => {
+      if (String(path).endsWith("spec.md")) return "# The Spec\nSpec content here.";
+      if (String(path).endsWith("guidelines.md")) return "# Guidelines\nGuideline content.";
+      return "";
+    });
+  });
+
+  it("includes learnings, spec, and guidelines in correct order when learnings exist", () => {
+    const state = makeState({
+      phaseReports: [
+        makeReport({
+          decisionsLog: [
+            { text: "use .jsx extensions for JSX files", tier: "constraint" },
+            { text: "chose Tailwind for styling", tier: "architectural" },
+          ],
+        }),
+      ],
+    });
+    const ctx = makeCtx({ guidelinesPath: "/tmp/test/guidelines.md" });
+
+    const result = buildReferenceContext(state, ctx);
+
+    // Learnings (Current Understanding) should appear BEFORE spec
+    const learningsIdx = result.indexOf("Current Understanding");
+    const specIdx = result.indexOf("Original Spec");
+    const guidelinesIdx = result.indexOf("Guidelines Content");
+    const authorityIdx = result.indexOf("Implementation Authority");
+
+    expect(learningsIdx).toBeGreaterThanOrEqual(0);
+    expect(specIdx).toBeGreaterThan(learningsIdx);
+    expect(authorityIdx).toBeGreaterThan(learningsIdx);
+    expect(guidelinesIdx).toBeGreaterThan(authorityIdx);
+    expect(specIdx).toBeGreaterThan(guidelinesIdx);
+
+    // Content checks
+    expect(result).toContain("use .jsx extensions for JSX files");
+    expect(result).toContain("chose Tailwind for styling");
+    expect(result).toContain("Spec content here.");
+    expect(result).toContain("Guideline content.");
+  });
+
+  it("omits Current Understanding and Implementation Authority when no learnings exist", () => {
+    const state = makeState();
+    const ctx = makeCtx({ guidelinesPath: "/tmp/test/guidelines.md" });
+
+    const result = buildReferenceContext(state, ctx);
+
+    expect(result).not.toContain("Current Understanding");
+    expect(result).not.toContain("Implementation Authority");
+    // Spec heading should NOT be demoted
+    expect(result).toContain("## Spec Content");
+    expect(result).not.toContain("Original Spec");
+  });
+
+  it("includes anti-hack instructions when learnings exist", () => {
+    const state = makeState({
+      phaseReports: [
+        makeReport({
+          decisionsLog: [{ text: "something learned", tier: "tactical" }],
+        }),
+      ],
+    });
+    const ctx = makeCtx();
+
+    const result = buildReferenceContext(state, ctx);
+
+    expect(result).toContain("Implementation Authority");
+    expect(result).toContain("NEVER create wrapper files");
+  });
+
+  it("handles missing guidelinesPath gracefully", () => {
+    const state = makeState();
+    const ctx = makeCtx();
+
+    const result = buildReferenceContext(state, ctx);
+
+    expect(result).toContain("Guidelines Content");
+    expect(result).toContain("none configured");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildPhaseContext ordering
+// ---------------------------------------------------------------------------
+
+describe("buildPhaseContext ordering", () => {
+  beforeEach(() => {
+    mockedReadFileSync.mockImplementation((path: Parameters<typeof readFileSync>[0]) => {
+      if (String(path).endsWith("spec.md")) return "# The Spec";
+      if (String(path).endsWith("guidelines.md")) return "# Guidelines";
+      return "";
+    });
+  });
+
+  it("puts learnings before spec when learnings exist", () => {
+    const state = makeState({
+      phaseReports: [
+        makeReport({
+          decisionsLog: [{ text: "discovered constraint", tier: "constraint" }],
+        }),
+      ],
+    });
+    const ctx = makeCtx({ guidelinesPath: "/tmp/test/guidelines.md" });
+    const phase = makePhase();
+
+    const result = buildPhaseContext(phase, state, "prior handoff", ctx);
+
+    const learningsIdx = result.indexOf("Current Understanding");
+    const specIdx = result.indexOf("Original Spec");
+
+    expect(learningsIdx).toBeGreaterThanOrEqual(0);
+    expect(specIdx).toBeGreaterThan(learningsIdx);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildFixPrompt with reference context
+// ---------------------------------------------------------------------------
+
+describe("buildFixPrompt with reference context", () => {
+  beforeEach(() => {
+    mockedReadFileSync.mockImplementation((path: Parameters<typeof readFileSync>[0]) => {
+      if (String(path).endsWith("spec.md")) return "# The Spec\nFull spec.";
+      if (String(path).endsWith("guidelines.md")) return "# Guidelines\nFull guidelines.";
+      return "";
+    });
+  });
+
+  it("includes same reference context as orchestrator", () => {
+    const state = makeState({
+      phaseReports: [
+        makeReport({
+          decisionsLog: [{ text: "use CSS modules", tier: "architectural" }],
+        }),
+      ],
+    });
+    const ctx = makeCtx({ guidelinesPath: "/tmp/test/guidelines.md" });
+    const phase = makePhase();
+
+    const result = buildFixPrompt(["some issue"], phase, state, ctx);
+
+    // Fix agent should get learnings
+    expect(result).toContain("use CSS modules");
+    // Fix agent should get spec
+    expect(result).toContain("Full spec.");
+    // Fix agent should get guidelines
+    expect(result).toContain("Full guidelines.");
+    // Fix agent should get anti-hack
+    expect(result).toContain("Implementation Authority");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// normalizeReport corrections
+// ---------------------------------------------------------------------------
+
+describe("normalizeReport corrections", () => {
+  it("parses valid corrections array", () => {
+    const report = normalizeReport(
+      {
+        status: "complete",
+        recommendedAction: "advance",
+        corrections: [
+          { type: "targetPath", taskId: "task-1", old: "src/a.js", new: "src/a.jsx", reason: "JSX" },
+        ],
+      },
+      "phase-1",
+    );
+    expect(report.corrections).toHaveLength(1);
+    expect(report.corrections[0]!.taskId).toBe("task-1");
+    expect(report.corrections[0]!.old).toBe("src/a.js");
+    expect(report.corrections[0]!.new).toBe("src/a.jsx");
+  });
+
+  it("defaults corrections to empty array when missing", () => {
+    const report = normalizeReport({}, "phase-1");
+    expect(report.corrections).toEqual([]);
+  });
+
+  it("filters out invalid correction entries", () => {
+    const report = normalizeReport(
+      {
+        corrections: [
+          { type: "targetPath", taskId: "task-1", old: "a.js", new: "a.jsx", reason: "JSX" },
+          { invalid: true },
+          "not-an-object",
+        ],
+      },
+      "phase-1",
+    );
+    expect(report.corrections).toHaveLength(1);
+    expect(report.corrections[0]!.taskId).toBe("task-1");
   });
 });

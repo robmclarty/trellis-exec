@@ -197,6 +197,7 @@ function buildPartialReport(
     recommendedAction: "retry",
     correctiveTasks: [],
     decisionsLog: [],
+    corrections: [],
     handoff: "",
   };
 }
@@ -555,6 +556,7 @@ export function selectJudgeModel(
 async function judgePhase(config: {
   phase: Phase;
   report: PhaseReport;
+  state: SharedState;
   projectRoot: string;
   ctx: RunContext;
   logger: TrajectoryLogger;
@@ -562,7 +564,7 @@ async function judgePhase(config: {
   startSha?: string;
 }): Promise<JudgePhaseResult> {
   const maxCorrections = config.maxCorrections ?? 2;
-  const { phase, report, projectRoot, ctx, logger, startSha } = config;
+  const { phase, report, state, projectRoot, ctx, logger, startSha } = config;
 
   let changedFiles = getChangedFiles(projectRoot, startSha);
   if (changedFiles.length === 0) {
@@ -678,7 +680,7 @@ async function judgePhase(config: {
 
     // Dispatch fix agent
     console.log(`Dispatching fix agent (attempt ${attempt + 1})…`);
-    const fixPrompt = buildFixPrompt(assessment.issues, phase);
+    const fixPrompt = buildFixPrompt(assessment.issues, phase, state, ctx);
 
     await launcher.dispatchSubAgent({
       type: "fix",
@@ -1136,6 +1138,23 @@ export async function runPhases(
 
       saveState(localCtx.statePath, state);
 
+      // Apply orchestrator-reported corrections before judge
+      const orchCorrections = report.corrections ?? [];
+      if (orchCorrections.length > 0) {
+        const { tasksJson: corrected, decisions } = applyCorrections(
+          mutableTasksJson, orchCorrections,
+        );
+        mutableTasksJson = corrected;
+        report = {
+          ...report,
+          decisionsLog: [...report.decisionsLog, ...decisions],
+        };
+        writeFileSync(localCtx.tasksJsonPath, JSON.stringify(mutableTasksJson, null, 2), "utf-8");
+        if (localCtx.verbose) {
+          console.log(`Applied ${orchCorrections.length} orchestrator correction(s) to tasks.json`);
+        }
+      }
+
       // Judge loop: runs based on judgeMode setting
       const hasChanges = getChangedFiles(projectRoot, report.startSha).length > 0;
       const shouldJudge =
@@ -1148,6 +1167,7 @@ export async function runPhases(
         const judgeResult = await judgePhase({
           phase,
           report,
+          state,
           projectRoot,
           ctx: localCtx,
           logger,
@@ -1434,6 +1454,7 @@ export async function runSinglePhase(
       const judgeResult = await judgePhase({
         phase,
         report,
+        state,
         projectRoot,
         ctx: localCtx,
         logger,
@@ -1524,6 +1545,7 @@ export async function runSinglePhase(
 export {
   REPORT_FILENAME,
   collectLearnings,
+  buildReferenceContext,
   buildPhaseContext,
   normalizeReport,
   formatIssue,

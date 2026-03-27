@@ -34,7 +34,7 @@ At session start you receive:
 3. **Handoff briefing** — the prior phase's summary of what was done, what to watch for, and any unresolved issues.
 4. **Spec content** — the full spec is pre-loaded in the phase context below. You do NOT need to read it from disk. It is also available on disk if you need to re-read after context compaction.
 5. **Guidelines content** — the full guidelines are pre-loaded in the phase context below. Same as spec — no need to read from disk.
-6. **Spec Amendments** — authoritative findings from completed phases, listed after the spec in your context. These include discovered constraints (runtime/toolchain requirements that override spec assumptions), architectural decisions (chosen approaches that subsequent phases must follow), and tactical notes (recent context). Where amendments conflict with the spec, the amendments take precedence — they reflect reality.
+6. **Current Understanding** — authoritative findings from completed phases, listed BEFORE the spec in your context. These include discovered constraints (runtime/toolchain requirements that override spec assumptions), architectural decisions (chosen approaches that subsequent phases must follow), and tactical notes (recent context). Where Current Understanding conflicts with the original spec, Current Understanding takes precedence — it reflects reality.
 
 Read these carefully before starting any task. They are your ground truth. **Do NOT spend turns reading the spec or guidelines — they are already in your context. Start working on tasks immediately.**
 
@@ -158,12 +158,29 @@ When all tasks are processed, use the **Write** tool to create `.trellis-phase-r
     { "text": "Use PostgreSQL connection pooling via pgBouncer", "tier": "architectural" },
     { "text": "Renamed Button.tsx to avoid Vite HMR warning", "tier": "tactical" }
   ],
+  "corrections": [
+    { "type": "targetPath", "taskId": "phase-1-task-2", "old": "src/Nav.js", "new": "src/Nav.jsx", "reason": "JSX requires .jsx extension" }
+  ],
   "orchestratorAnalysis": "Your assessment of the phase outcome"
 }
 ```
 
 - `status`: "complete" if all tasks passed, "partial" if some failed
 - `recommendedAction`: "advance" to proceed, "retry" if fixable issues remain, "halt" if phase is blocked
+- If you created a file at a different path than specified in targetPaths (e.g., different extension, different directory based on a discovered constraint), include a `corrections` entry mapping the old path to the new one. This updates the metadata to match reality. Example:
+
+  ```json
+  "corrections": [
+    {
+      "type": "targetPath",
+      "taskId": "phase-4-task-1",
+      "old": "src/views/Nav/Nav.js",
+      "new": "src/views/Nav/Nav.jsx",
+      "reason": "Vite requires .jsx extension for files containing JSX"
+    }
+  ]
+  ```
+
 - **Do NOT commit the `.trellis-phase-report.json` file.** The phase runner handles the final phase commit.
 - After writing the report, your work is done. The phase runner handles quality review independently.
 
@@ -196,4 +213,5 @@ For phases with extended timeouts (indicated by a "Long-Running Phase" section i
 - **Per-task failures**: Retry up to 3 times with adjusted approach. Analyze the error before retrying. If all retries fail, mark the task as failed and proceed.
 - **Sub-agent failures**: If the Agent tool returns an error or the sub-agent fails, read the output, analyze the error, and retry or mark failed.
 - **Check command failures**: Analyze the output carefully. Failures often indicate a real problem in the generated code — don't just retry blindly. Understand the error first.
+- **Path mismatches**: If a task's targetPaths conflict with discovered constraints, create at the correct path and include a corrections entry in your report. Do NOT create barrel/re-export wrappers.
 - **Do not create tasks in other phases.** If issues require work beyond this phase, include recommended corrective tasks in the phase report. The phase runner decides whether to act on them.

@@ -75,6 +75,7 @@ function makePhaseReport(
     recommendedAction: "advance",
     correctiveTasks: [],
     decisionsLog: [],
+    corrections: [],
     handoff: `# ${phaseId} handoff\nDone.`,
     ...overrides,
   };

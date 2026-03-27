@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { Phase, Task } from "../types/tasks.js";
-import type { SharedState, PhaseReport, JudgeAssessment, JudgeIssue, DecisionEntry } from "../types/state.js";
-import { JudgeAssessmentSchema } from "../types/state.js";
+import type { SharedState, PhaseReport, JudgeAssessment, JudgeIssue, JudgeCorrection, DecisionEntry } from "../types/state.js";
+import { JudgeAssessmentSchema, JudgeCorrectionSchema } from "../types/state.js";
 import type { RunContext } from "../cli.js";
 import type { ChangedFile } from "../git.js";
 
@@ -45,6 +45,116 @@ export function collectLearnings(state: SharedState): {
     tactical: tactical.slice(-tacticalBudget),
     constraint,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Shared reference context (used by orchestrator + fixer)
+// ---------------------------------------------------------------------------
+
+/**
+ * Builds the reference sections shared by both the orchestrator and the fix
+ * agent: learnings (as "Current Understanding"), implementation authority
+ * guidance, guidelines, and the original spec. Learnings appear FIRST so
+ * they have prime positioning; the spec is demoted to reference material.
+ */
+export function buildReferenceContext(state: SharedState, ctx: RunContext): string {
+  const lines: string[] = [];
+
+  const learnings = collectLearnings(state);
+  const hasLearnings =
+    learnings.constraint.length > 0 ||
+    learnings.architectural.length > 0 ||
+    learnings.tactical.length > 0;
+
+  // 1. Current Understanding — authoritative learnings from prior phases
+  if (hasLearnings) {
+    lines.push("## Current Understanding (authoritative — overrides original spec where they conflict)");
+    lines.push(
+      "Authoritative findings from completed phases. " +
+      "Where these conflict with the original spec below, Current Understanding takes precedence — " +
+      "they reflect the actual codebase state and runtime constraints discovered during implementation.",
+    );
+    if (learnings.constraint.length > 0) {
+      lines.push("");
+      lines.push("### Discovered Constraints (binding — override spec assumptions)");
+      for (const entry of learnings.constraint) {
+        lines.push(`- ${entry}`);
+      }
+      lines.push("");
+      lines.push(
+        "**Important**: Constraint entries often reflect general rules discovered via specific examples. " +
+        "Before starting tasks, review each constraint and determine if it applies broadly. " +
+        "For example, if a prior phase discovered that a specific `.js` file needed a `.jsx` extension " +
+        "because it contains JSX, apply that rule to ALL files containing JSX in this phase — " +
+        "do not wait to rediscover the same constraint file-by-file. Apply the principle, not just the instance.",
+      );
+    }
+    if (learnings.architectural.length > 0) {
+      lines.push("");
+      lines.push("### Architectural Decisions (binding — chosen approaches)");
+      for (const entry of learnings.architectural) {
+        lines.push(`- ${entry}`);
+      }
+    }
+    if (learnings.tactical.length > 0) {
+      lines.push("");
+      lines.push("### Tactical Notes (recent — context for current work)");
+      for (const entry of learnings.tactical) {
+        lines.push(`- ${entry}`);
+      }
+    }
+    lines.push("");
+  }
+
+  // 2. Implementation Authority — anti-hack instructions (only when learnings exist)
+  if (hasLearnings) {
+    lines.push("## Implementation Authority");
+    lines.push("");
+    lines.push(
+      "The targetPaths in each task reflect the best current understanding. If a learned " +
+      "constraint means the correct path differs from targetPaths, create the file at the " +
+      "CORRECT path and include a corrections entry in your report. The runner will update " +
+      "the metadata.",
+    );
+    lines.push("");
+    lines.push(
+      "NEVER create wrapper files, barrel re-exports, or shims whose sole purpose is making " +
+      "a file exist at a metadata path. Always do the architecturally correct thing and " +
+      "report the deviation.",
+    );
+    lines.push("");
+  }
+
+  // 3. Guidelines
+  lines.push("## Guidelines Content");
+  if (ctx.guidelinesPath) {
+    lines.push(
+      `(Pre-loaded from \`${basename(ctx.guidelinesPath)}\`. Also available on disk via the Read tool.)`,
+    );
+    lines.push("");
+    lines.push(readFileSync(ctx.guidelinesPath, "utf-8"));
+  } else {
+    lines.push("none configured");
+  }
+  lines.push("");
+
+  // 4. Original Spec — demoted to reference when learnings exist
+  if (hasLearnings) {
+    lines.push("## Original Spec (reference — superseded by Current Understanding where they conflict)");
+    lines.push(
+      "This spec informed the original plan. Runtime discoveries in Current Understanding above " +
+      "take precedence where they conflict.",
+    );
+  } else {
+    lines.push("## Spec Content");
+  }
+  lines.push(
+    `(Pre-loaded from \`${basename(ctx.specPath)}\`. Also available on disk via the Read tool.)`,
+  );
+  lines.push("");
+  lines.push(readFileSync(ctx.specPath, "utf-8"));
+
+  return lines.join("\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -107,68 +217,10 @@ export function buildPhaseContext(
     `Completed phases: ${state.completedPhases.length > 0 ? state.completedPhases.join(", ") : "none"}`,
   );
 
-  // Pre-load spec and guidelines content so the orchestrator doesn't waste
-  // turns reading these. They're still available on disk if the orchestrator
-  // needs to re-read them after context compaction.
+  // Shared reference context: learnings → authority → guidelines → spec
+  // Learnings appear first for prime positioning; spec is demoted to reference.
   lines.push("");
-  lines.push("## Spec Content");
-  lines.push(
-    `(Pre-loaded from \`${basename(ctx.specPath)}\`. Also available on disk via the Read tool.)`,
-  );
-  lines.push("");
-  lines.push(readFileSync(ctx.specPath, "utf-8"));
-  lines.push("");
-  lines.push("## Guidelines Content");
-  if (ctx.guidelinesPath) {
-    lines.push(
-      `(Pre-loaded from \`${basename(ctx.guidelinesPath)}\`. Also available on disk via the Read tool.)`,
-    );
-    lines.push("");
-    lines.push(readFileSync(ctx.guidelinesPath, "utf-8"));
-  } else {
-    lines.push("none configured");
-  }
-
-  // Spec amendments appear AFTER spec/guidelines so they get "last word" authority.
-  const learnings = collectLearnings(state);
-  if (learnings.constraint.length > 0 || learnings.architectural.length > 0 || learnings.tactical.length > 0) {
-    lines.push("");
-    lines.push("## Spec Amendments from Prior Phases");
-    lines.push(
-      "Authoritative findings from completed phases. " +
-      "Where these conflict with the spec above, amendments take precedence — " +
-      "they reflect the actual codebase state and runtime constraints discovered during implementation.",
-    );
-    if (learnings.constraint.length > 0) {
-      lines.push("");
-      lines.push("### Discovered Constraints (binding — override spec assumptions)");
-      for (const entry of learnings.constraint) {
-        lines.push(`- ${entry}`);
-      }
-      lines.push("");
-      lines.push(
-        "**Important**: Constraint entries often reflect general rules discovered via specific examples. " +
-        "Before starting tasks, review each constraint and determine if it applies broadly. " +
-        "For example, if a prior phase discovered that a specific `.js` file needed a `.jsx` extension " +
-        "because it contains JSX, apply that rule to ALL files containing JSX in this phase — " +
-        "do not wait to rediscover the same constraint file-by-file. Apply the principle, not just the instance.",
-      );
-    }
-    if (learnings.architectural.length > 0) {
-      lines.push("");
-      lines.push("### Architectural Decisions (binding — chosen approaches)");
-      for (const entry of learnings.architectural) {
-        lines.push(`- ${entry}`);
-      }
-    }
-    if (learnings.tactical.length > 0) {
-      lines.push("");
-      lines.push("### Tactical Notes (recent — context for current work)");
-      for (const entry of learnings.tactical) {
-        lines.push(`- ${entry}`);
-      }
-    }
-  }
+  lines.push(buildReferenceContext(state, ctx));
 
   lines.push("");
   lines.push("## Check Command");
@@ -225,6 +277,9 @@ export function buildPhaseContext(
   lines.push('  "correctiveTasks": [],');
   lines.push('  "decisionsLog": [');
   lines.push('    { "text": "Decision description", "tier": "architectural | tactical" }');
+  lines.push('  ],');
+  lines.push('  "corrections": [');
+  lines.push('    { "type": "targetPath", "taskId": "phase-1-task-1", "old": "src/Nav.js", "new": "src/Nav.jsx", "reason": "Vite requires .jsx for JSX files" }');
   lines.push('  ],');
   lines.push('  "orchestratorAnalysis": "Phase outcome assessment"');
   lines.push('}');
@@ -285,6 +340,7 @@ export function buildPhaseContext(
     lines.push("2. Focus on judge issues — they are the primary reason for this retry.");
     lines.push("3. Run checks after each fix.");
     lines.push("4. All tasks (original + corrective) must appear in the report.");
+    lines.push("5. If targetPaths don't match discovered constraints, create at the correct path and report the deviation as a correction. Do NOT create wrapper files.");
   }
 
   return lines.join("\n");
@@ -344,6 +400,7 @@ export function normalizeReport(
     recommendedAction,
     correctiveTasks: asStringArray(r["correctiveTasks"] ?? []),
     decisionsLog: asDecisionEntryArray(r["decisionsLog"] ?? []),
+    corrections: asCorrectionArray(r["corrections"] ?? []),
     handoff:
       typeof r["handoff"] === "string"
         ? r["handoff"]
@@ -376,6 +433,20 @@ function asDecisionEntryArray(val: unknown): DecisionEntry[] {
       return null;
     })
     .filter((v): v is DecisionEntry => v !== null);
+}
+
+/** Safely coerce a value to JudgeCorrection[]. Validates each entry against the schema. */
+function asCorrectionArray(val: unknown): JudgeCorrection[] {
+  if (!Array.isArray(val)) return [];
+  return val
+    .map((v): JudgeCorrection | null => {
+      try {
+        return JudgeCorrectionSchema.parse(v);
+      } catch {
+        return null;
+      }
+    })
+    .filter((v): v is JudgeCorrection => v !== null);
 }
 
 // ---------------------------------------------------------------------------
@@ -686,7 +757,12 @@ export function formatIssue(issue: JudgeIssue): string {
   return `${prefix}${issue.description}`;
 }
 
-export function buildFixPrompt(issues: JudgeIssue[], phase: Phase): string {
+export function buildFixPrompt(
+  issues: JudgeIssue[],
+  phase: Phase,
+  state: SharedState,
+  ctx: RunContext,
+): string {
   const lines: string[] = [];
 
   lines.push("# Fix Request");
@@ -706,9 +782,8 @@ export function buildFixPrompt(issues: JudgeIssue[], phase: Phase): string {
   lines.push("## Context");
   lines.push("");
   lines.push(`Phase: ${phase.name} (${phase.id})`);
-  lines.push(
-    "Read `spec.md` and `guidelines.md` in the project root for full spec context.",
-  );
+  lines.push("");
+  lines.push(buildReferenceContext(state, ctx));
 
   lines.push("");
   lines.push("## Output");

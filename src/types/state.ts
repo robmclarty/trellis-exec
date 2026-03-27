@@ -75,6 +75,7 @@ export const PhaseReportSchema = z.object({
   correctiveTasks: z.array(z.string()),
   decisionsLog: z.array(DecisionEntrySchema),
   handoff: z.string(),
+  corrections: z.array(JudgeCorrectionSchema).optional().default([]),
   startSha: z.string().optional(),
   endSha: z.string().optional(),
   judgeFixCycles: z.number().optional(),

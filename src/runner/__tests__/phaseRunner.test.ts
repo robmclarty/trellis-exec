@@ -149,6 +149,7 @@ function makePhaseReport(
     recommendedAction: "advance",
     correctiveTasks: [],
     decisionsLog: [],
+    corrections: [],
     handoff: `# ${phaseId} handoff\nDone.`,
     ...overrides,
   };
@@ -543,15 +544,28 @@ describe("phaseRunner", () => {
   });
 
   describe("buildFixPrompt", () => {
-    it("includes issue descriptions", () => {
-      const phase: Phase = makeTasksJson().phases[0]!;
+    it("includes issue descriptions and reference context", () => {
+      const tasksJson = makeTasksJson();
+      tmpDir = setupTmpDir(tasksJson);
+      const phase: Phase = tasksJson.phases[0]!;
+      const state: SharedState = {
+        currentPhase: "phase-1",
+        completedPhases: [],
+        phaseReports: [],
+        phaseRetries: {},
+      };
+      const ctx = makeDefaultConfig(tmpDir);
       const prompt = buildFixPrompt(
         [{ task: "task-1-1", severity: "must-fix", description: "Missing export" }],
         phase,
+        state,
+        ctx,
       );
 
       expect(prompt).toContain("Missing export");
       expect(prompt).toContain("task-1-1");
+      // Should include spec content from buildReferenceContext
+      expect(prompt).toContain("Spec Content");
     });
   });
 
@@ -884,8 +898,8 @@ describe("phaseRunner", () => {
     });
   });
 
-  describe("buildPhaseContext — spec amendments section", () => {
-    it("includes amendments section when prior phases have decisionsLog entries", () => {
+  describe("buildPhaseContext — learnings section", () => {
+    it("includes Current Understanding section when prior phases have decisionsLog entries", () => {
       const tasksJson = makeTasksJson();
       tmpDir = setupTmpDir(tasksJson);
       const config = makeDefaultConfig(tmpDir);
@@ -908,12 +922,12 @@ describe("phaseRunner", () => {
         config,
       );
 
-      expect(context).toContain("## Spec Amendments from Prior Phases");
+      expect(context).toContain("## Current Understanding (authoritative");
       expect(context).toContain("[phase-1] Vite requires .jsx extension for JSX files");
-      expect(context).toContain("amendments take precedence");
+      expect(context).toContain("Current Understanding takes precedence");
     });
 
-    it("omits amendments section when all decisionsLog arrays are empty", () => {
+    it("omits Current Understanding section when all decisionsLog arrays are empty", () => {
       const tasksJson = makeTasksJson();
       tmpDir = setupTmpDir(tasksJson);
       const config = makeDefaultConfig(tmpDir);
@@ -934,10 +948,10 @@ describe("phaseRunner", () => {
         config,
       );
 
-      expect(context).not.toContain("Spec Amendments from Prior Phases");
+      expect(context).not.toContain("Current Understanding");
     });
 
-    it("positions amendments after spec content", () => {
+    it("positions learnings before spec content", () => {
       const tasksJson = makeTasksJson();
       tmpDir = setupTmpDir(tasksJson);
       const config = makeDefaultConfig(tmpDir);
@@ -960,10 +974,10 @@ describe("phaseRunner", () => {
         config,
       );
 
-      const specIndex = context.indexOf("## Spec Content");
-      const amendmentsIndex = context.indexOf("## Spec Amendments from Prior Phases");
-      expect(specIndex).toBeGreaterThan(-1);
-      expect(amendmentsIndex).toBeGreaterThan(specIndex);
+      const learningsIndex = context.indexOf("## Current Understanding");
+      const specIndex = context.indexOf("## Original Spec");
+      expect(learningsIndex).toBeGreaterThan(-1);
+      expect(specIndex).toBeGreaterThan(learningsIndex);
     });
 
     it("renders constraint tier with binding label", () => {
