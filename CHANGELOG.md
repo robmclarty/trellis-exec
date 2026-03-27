@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.17
+
+- Fix markdown lint errors for blank lines around lists in README and docs
+
 ## 0.7.16
 
 - Update README with browser testing architecture, auto-detection, verification pipeline, new CLI flags, and new agents
