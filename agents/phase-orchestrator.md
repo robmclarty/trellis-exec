@@ -154,12 +154,12 @@ When all tasks are processed, use the **Write** tool to create `.trellis-phase-r
   "handoff": "Briefing for the next phase — what was created, key decisions, anything to watch for",
   "correctiveTasks": ["Description of what needs fixing, if recommending retry"],
   "decisionsLog": [
-    { "text": "esbuild in dev mode does not run Vite transform plugins — must use .jsx extensions", "tier": "constraint" },
+    { "text": "Build tool requires specific file extensions — apply discovered convention to all similar files", "tier": "constraint" },
     { "text": "Use PostgreSQL connection pooling via pgBouncer", "tier": "architectural" },
-    { "text": "Renamed Button.tsx to avoid Vite HMR warning", "tier": "tactical" }
+    { "text": "Renamed config file to match project convention", "tier": "tactical" }
   ],
   "corrections": [
-    { "type": "targetPath", "taskId": "phase-1-task-2", "old": "src/Nav.js", "new": "src/Nav.jsx", "reason": "JSX requires .jsx extension" }
+    { "type": "targetPath", "taskId": "phase-1-task-2", "old": "src/config.yaml", "new": "src/config.yml", "reason": "Project uses .yml extension convention" }
   ],
   "orchestratorAnalysis": "Your assessment of the phase outcome"
 }
@@ -174,9 +174,9 @@ When all tasks are processed, use the **Write** tool to create `.trellis-phase-r
     {
       "type": "targetPath",
       "taskId": "phase-4-task-1",
-      "old": "src/views/Nav/Nav.js",
-      "new": "src/views/Nav/Nav.jsx",
-      "reason": "Vite requires .jsx extension for files containing JSX"
+      "old": "src/config.yaml",
+      "new": "src/config.yml",
+      "reason": "Project uses .yml extension convention"
     }
   ]
   ```

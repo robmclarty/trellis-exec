@@ -105,4 +105,48 @@ describe("detectWebApp", () => {
     );
     expect(detectWebApp(d)).toBe(false);
   });
+
+  // ---
+  // Non-JS web frameworks
+  // ---
+
+  it("returns true for Django project with templates", () => {
+    const d = tmp();
+    writeFileSync(join(d, "manage.py"), "#!/usr/bin/env python");
+    mkdirSync(join(d, "templates"));
+    expect(detectWebApp(d)).toBe(true);
+  });
+
+  it("returns false for Django API-only project (no templates)", () => {
+    const d = tmp();
+    writeFileSync(join(d, "manage.py"), "#!/usr/bin/env python");
+    expect(detectWebApp(d)).toBe(false);
+  });
+
+  it("returns true for Rails project with views", () => {
+    const d = tmp();
+    writeFileSync(join(d, "Gemfile"), 'gem "rails"');
+    mkdirSync(join(d, "app", "views"), { recursive: true });
+    expect(detectWebApp(d)).toBe(true);
+  });
+
+  it("returns false for Rails API-only project (no views)", () => {
+    const d = tmp();
+    writeFileSync(join(d, "Gemfile"), 'gem "rails"');
+    expect(detectWebApp(d)).toBe(false);
+  });
+
+  it("returns true for Phoenix project with controllers", () => {
+    const d = tmp();
+    writeFileSync(join(d, "mix.exs"), "defmodule MyApp.MixProject do");
+    mkdirSync(join(d, "lib", "my_app_web", "controllers"), { recursive: true });
+    expect(detectWebApp(d)).toBe(true);
+  });
+
+  it("returns false for Elixir project without controllers", () => {
+    const d = tmp();
+    writeFileSync(join(d, "mix.exs"), "defmodule MyApp.MixProject do");
+    mkdirSync(join(d, "lib", "my_app"), { recursive: true });
+    expect(detectWebApp(d)).toBe(false);
+  });
 });

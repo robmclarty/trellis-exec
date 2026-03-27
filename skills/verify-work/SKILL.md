@@ -18,7 +18,7 @@ const result = await runCheck()
 
 **Always run `runCheck()` after every `dispatchSubAgent()` call.** This is not optional.
 
-The check command is configured per project (e.g., `npm run lint && npm run build && npm test`). You don't need to know what it runs — just call `runCheck()` and interpret the result.
+The check command is configured per project (e.g., `npm test`, `pytest`, `cargo test`, `go test ./...`, `make check`). You don't need to know what it runs — just call `runCheck()` and interpret the result.
 
 **Interpreting results:**
 

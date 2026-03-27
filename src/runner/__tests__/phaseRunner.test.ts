@@ -1157,6 +1157,48 @@ describe("phaseRunner", () => {
 
       expect(result).toBe(false);
     });
+
+    it("detects Go test files", () => {
+      mockedGetChangedFiles.mockReturnValueOnce([
+        { path: "pkg/auth/auth_test.go", status: "A" },
+      ]);
+      expect(hasNewTestFiles("/tmp/project", "abc123")).toBe(true);
+    });
+
+    it("detects Python test files (test_ prefix)", () => {
+      mockedGetChangedFiles.mockReturnValueOnce([
+        { path: "tests/test_auth.py", status: "A" },
+      ]);
+      expect(hasNewTestFiles("/tmp/project", "abc123")).toBe(true);
+    });
+
+    it("detects Python test files (_test suffix)", () => {
+      mockedGetChangedFiles.mockReturnValueOnce([
+        { path: "tests/auth_test.py", status: "A" },
+      ]);
+      expect(hasNewTestFiles("/tmp/project", "abc123")).toBe(true);
+    });
+
+    it("detects Ruby spec files", () => {
+      mockedGetChangedFiles.mockReturnValueOnce([
+        { path: "spec/models/user_spec.rb", status: "A" },
+      ]);
+      expect(hasNewTestFiles("/tmp/project", "abc123")).toBe(true);
+    });
+
+    it("detects Elixir test files", () => {
+      mockedGetChangedFiles.mockReturnValueOnce([
+        { path: "test/auth_test.exs", status: "A" },
+      ]);
+      expect(hasNewTestFiles("/tmp/project", "abc123")).toBe(true);
+    });
+
+    it("detects files in a tests/ directory", () => {
+      mockedGetChangedFiles.mockReturnValueOnce([
+        { path: "tests/integration/conftest.py", status: "A" },
+      ]);
+      expect(hasNewTestFiles("/tmp/project", "abc123")).toBe(true);
+    });
   });
 
   describe("runPhases — judge upgrade on timeout", () => {
@@ -1638,6 +1680,127 @@ describe("phaseRunner", () => {
 
       const result = detectTestCommand(dir);
       expect(result).toBeNull();
+
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    it("returns 'pytest' when pytest.ini exists", () => {
+      const dir = mkdtempSync(join(tmpdir(), "detect-test-cmd-"));
+      writeFileSync(join(dir, "pytest.ini"), "[pytest]");
+
+      expect(detectTestCommand(dir)).toBe("pytest");
+
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    it("returns 'pytest' when conftest.py exists", () => {
+      const dir = mkdtempSync(join(tmpdir(), "detect-test-cmd-"));
+      writeFileSync(join(dir, "conftest.py"), "import pytest");
+
+      expect(detectTestCommand(dir)).toBe("pytest");
+
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    it("returns 'pytest' when pyproject.toml has [tool.pytest section", () => {
+      const dir = mkdtempSync(join(tmpdir(), "detect-test-cmd-"));
+      writeFileSync(
+        join(dir, "pyproject.toml"),
+        "[tool.pytest.ini_options]\naddopts = '-v'",
+      );
+
+      expect(detectTestCommand(dir)).toBe("pytest");
+
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    it("returns 'go test ./...' when go.mod exists", () => {
+      const dir = mkdtempSync(join(tmpdir(), "detect-test-cmd-"));
+      writeFileSync(join(dir, "go.mod"), "module example.com/foo");
+
+      expect(detectTestCommand(dir)).toBe("go test ./...");
+
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    it("returns 'cargo test' when Cargo.toml exists", () => {
+      const dir = mkdtempSync(join(tmpdir(), "detect-test-cmd-"));
+      writeFileSync(join(dir, "Cargo.toml"), "[package]\nname = \"foo\"");
+
+      expect(detectTestCommand(dir)).toBe("cargo test");
+
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    it("returns 'bundle exec rspec' when .rspec exists", () => {
+      const dir = mkdtempSync(join(tmpdir(), "detect-test-cmd-"));
+      writeFileSync(join(dir, ".rspec"), "--format documentation");
+
+      expect(detectTestCommand(dir)).toBe("bundle exec rspec");
+
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    it("returns 'bundle exec rspec' when Gemfile + spec/ exists", () => {
+      const dir = mkdtempSync(join(tmpdir(), "detect-test-cmd-"));
+      writeFileSync(join(dir, "Gemfile"), 'gem "rspec"');
+      mkdirSync(join(dir, "spec"));
+
+      expect(detectTestCommand(dir)).toBe("bundle exec rspec");
+
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    it("returns 'mvn test' when pom.xml exists", () => {
+      const dir = mkdtempSync(join(tmpdir(), "detect-test-cmd-"));
+      writeFileSync(join(dir, "pom.xml"), "<project></project>");
+
+      expect(detectTestCommand(dir)).toBe("mvn test");
+
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    it("returns './gradlew test' when build.gradle exists", () => {
+      const dir = mkdtempSync(join(tmpdir(), "detect-test-cmd-"));
+      writeFileSync(join(dir, "build.gradle"), "apply plugin: 'java'");
+
+      expect(detectTestCommand(dir)).toBe("./gradlew test");
+
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    it("returns './gradlew test' when build.gradle.kts exists", () => {
+      const dir = mkdtempSync(join(tmpdir(), "detect-test-cmd-"));
+      writeFileSync(join(dir, "build.gradle.kts"), "plugins { java }");
+
+      expect(detectTestCommand(dir)).toBe("./gradlew test");
+
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    it("returns 'mix test' when mix.exs exists", () => {
+      const dir = mkdtempSync(join(tmpdir(), "detect-test-cmd-"));
+      writeFileSync(join(dir, "mix.exs"), "defmodule MyApp.MixProject do");
+
+      expect(detectTestCommand(dir)).toBe("mix test");
+
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    it("returns 'make test' when Makefile has a test target", () => {
+      const dir = mkdtempSync(join(tmpdir(), "detect-test-cmd-"));
+      writeFileSync(join(dir, "Makefile"), "build:\n\tgo build\n\ntest:\n\tgo test ./...");
+
+      expect(detectTestCommand(dir)).toBe("make test");
+
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    it("returns null when Makefile exists but has no test target", () => {
+      const dir = mkdtempSync(join(tmpdir(), "detect-test-cmd-"));
+      writeFileSync(join(dir, "Makefile"), "build:\n\tgo build\n\nclean:\n\trm -rf dist");
+
+      expect(detectTestCommand(dir)).toBeNull();
 
       rmSync(dir, { recursive: true, force: true });
     });

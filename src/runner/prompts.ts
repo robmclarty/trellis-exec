@@ -84,9 +84,11 @@ export function buildReferenceContext(state: SharedState, ctx: RunContext): stri
       lines.push(
         "**Important**: Constraint entries often reflect general rules discovered via specific examples. " +
         "Before starting tasks, review each constraint and determine if it applies broadly. " +
-        "For example, if a prior phase discovered that a specific `.js` file needed a `.jsx` extension " +
-        "because it contains JSX, apply that rule to ALL files containing JSX in this phase — " +
-        "do not wait to rediscover the same constraint file-by-file. Apply the principle, not just the instance.",
+        "For example, if a prior phase discovered that a file needed a different extension " +
+        "due to toolchain requirements (e.g., `.js` to `.jsx` for JSX support, or a module " +
+        "needed restructuring for the build system), apply that rule to ALL similar files " +
+        "in this phase — do not wait to rediscover the same constraint file-by-file. " +
+        "Apply the principle, not just the instance.",
       );
     }
     if (learnings.architectural.length > 0) {
@@ -279,7 +281,7 @@ export function buildPhaseContext(
   lines.push('    { "text": "Decision description", "tier": "architectural | tactical" }');
   lines.push('  ],');
   lines.push('  "corrections": [');
-  lines.push('    { "type": "targetPath", "taskId": "phase-1-task-1", "old": "src/Nav.js", "new": "src/Nav.jsx", "reason": "Vite requires .jsx for JSX files" }');
+  lines.push('    { "type": "targetPath", "taskId": "phase-1-task-1", "old": "src/config.yaml", "new": "src/config.yml", "reason": "Project convention uses .yml extension" }');
   lines.push('  ],');
   lines.push('  "orchestratorAnalysis": "Phase outcome assessment"');
   lines.push('}');
@@ -588,13 +590,13 @@ export function buildJudgePrompt(config: {
   );
   lines.push("");
   lines.push(judgeResponseFormat(
-    '{ "type": "targetPath", "taskId": "phase-1-task-2", "old": "src/Nav.css", "new": "src/Nav.module.css", "reason": "CSS Modules convention requires .module.css suffix" }',
+    '{ "type": "targetPath", "taskId": "phase-1-task-2", "old": "src/utils/helpers", "new": "src/utils/helpers.ts", "reason": "Missing file extension" }',
   ));
   lines.push("");
   lines.push(judgeEvaluationGuidance());
   lines.push("");
   lines.push(judgeCorrectionsGuidance(
-    "\n(e.g., `Nav.css` specified but `Nav.module.css` created, or `App.js` but `App.jsx` on disk)",
+    "\n(e.g., a file was created with a different extension or naming convention than specified in the task)",
   ));
   lines.push(
     "Only include corrections when the file exists at a different path, not when a file is genuinely missing.",

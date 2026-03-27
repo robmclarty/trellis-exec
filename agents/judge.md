@@ -34,13 +34,13 @@ Return a structured JSON assessment. **Output only the JSON block — no prose b
 {
   "passed": true,
   "issues": [
-    { "task": "phase-1-task-2", "severity": "must-fix", "description": "src/views/App.jsx does not exist but is required by acceptance criteria" }
+    { "task": "phase-1-task-2", "severity": "must-fix", "description": "src/views/App does not exist but is required by acceptance criteria" }
   ],
   "suggestions": [
     { "task": "phase-1-task-1", "severity": "minor", "description": "Consider extracting the color map to a shared constant" }
   ],
   "corrections": [
-    { "type": "targetPath", "taskId": "phase-5-task-1", "old": "src/views/Nav/Nav.css", "new": "src/views/Nav/Nav.module.css", "reason": "CSS Modules convention requires .module.css suffix" }
+    { "type": "targetPath", "taskId": "phase-5-task-1", "old": "src/views/Nav/styles", "new": "src/views/Nav/styles.css", "reason": "Missing file extension" }
   ]
 }
 ```
@@ -60,7 +60,7 @@ Set `passed` to `false` only if there are issues that would prevent the implemen
 
 ### Corrections (optional)
 
-If task targetPaths in the spec differ from actual filenames on disk (e.g., `Nav.css` vs `Nav.module.css`, or `App.js` vs `App.jsx`), include a `corrections` array. Each correction has:
+If task targetPaths in the spec differ from actual filenames on disk (e.g., a different extension or naming convention than specified), include a `corrections` array. Each correction has:
 
 - `type` — currently only `"targetPath"`
 - `taskId` — the task whose targetPaths need updating
