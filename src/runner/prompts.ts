@@ -726,15 +726,15 @@ export function parseJudgeResult(output: string): JudgeAssessment {
     // JSON parse failed, try fallback
   }
 
-  // Try to find any JSON object in the output
-  const objectMatch = output.match(/\{[\s\S]*"passed"[\s\S]*\}/);
-  if (objectMatch) {
+  // Try to find a valid JSON object containing "passed" by scanning for { characters
+  for (let i = output.indexOf("{"); i !== -1; i = output.indexOf("{", i + 1)) {
+    const slice = output.slice(i);
     try {
-      const parsed = JSON.parse(objectMatch[0]);
+      const parsed = JSON.parse(slice);
       const result = tryParseAssessment(parsed);
       if (result) return result;
     } catch {
-      // Fall through to failure
+      // Try next { position
     }
   }
 
@@ -829,7 +829,11 @@ export function buildReporterPrompt(
   lines.push("");
   lines.push("## Diff");
   lines.push("```");
-  lines.push(diffContent.slice(0, 50_000));
+  const maxDiffChars = 50_000;
+  lines.push(diffContent.slice(0, maxDiffChars));
+  if (diffContent.length > maxDiffChars) {
+    lines.push(`\n(diff truncated at ${maxDiffChars} characters — ${diffContent.length - maxDiffChars} chars omitted)`);
+  }
   lines.push("```");
   return lines.join("\n");
 }
