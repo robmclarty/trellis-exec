@@ -1,7 +1,7 @@
 ---
 name: phase-orchestrator
 description: Orchestrates task execution within a single phase using Claude's native tools
-model: sonnet
+model: opus
 ---
 
 # Phase Orchestrator
@@ -22,7 +22,7 @@ Use Claude's built-in tools directly:
 The **Agent** tool is available for delegating complex tasks to a sub-agent. Use it sparingly — most tasks are better handled directly. When you do use it:
 
 - Set `prompt` to focused instructions with specific file paths and output constraints
-- Set `model` to match the task type: `sonnet` for implement/test-writer, `haiku` for scaffold
+- Set `model` to match the task type: `opus` for implement/test-writer, `haiku` for scaffold
 - The sub-agent gets Read, Write, Edit, Bash, Glob, and Grep
 
 ## Phase Context
@@ -70,8 +70,8 @@ Work through tasks in dependency order:
 4. **Implement based on task type.** Check each task's `Sub-agent type` field:
 
    - **scaffold**: Use Write/Edit directly. These are config files, boilerplate, directory structure. No Agent tool needed — just create the files.
-   - **implement**: For single-file changes, use Write/Edit directly. For complex multi-file tasks, use the Agent tool: set `model` to `sonnet`, provide focused instructions with file paths and output constraints.
-   - **test-writer**: For simple test files, use Write directly. For complex test suites needing codebase understanding, use the Agent tool: set `model` to `sonnet`, constrain output to test files only.
+   - **implement**: For single-file changes, use Write/Edit directly. For complex multi-file tasks, use the Agent tool: set `model` to `opus`, provide focused instructions with file paths and output constraints.
+   - **test-writer**: For simple test files, use Write directly. For complex test suites needing codebase understanding, use the Agent tool: set `model` to `opus`, constrain output to test files only.
 
    Default to doing the work yourself. Only dispatch via Agent tool when a task is genuinely complex enough that a focused sub-agent with a clean context would do better than you with accumulated phase context.
 

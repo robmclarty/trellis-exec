@@ -58,7 +58,7 @@ Execute phases from a tasks.json file.
 | `--resume` | Resume from last incomplete task (default: `false`) |
 | `--check <command>` | Override check command (default: auto-detected) |
 | `--concurrency <n>` | Max parallel sub-agents (default: `3`) |
-| `--model <model>` | Override orchestrator model (default: `sonnet`) |
+| `--model <model>` | Override orchestrator model (default: `opus`) |
 | `--max-retries <n>` | Max phase retries (default: `2`) |
 | `--project-root <path>` | Override project root from tasks.json |
 | `--spec <path>` | Override spec path from tasks.json |

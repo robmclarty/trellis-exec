@@ -121,7 +121,7 @@ export function createAgentLauncher(config: AgentLauncherConfig): AgentLauncher 
     subAgentConfig: SubAgentConfig,
   ): Promise<SubAgentResult> {
     const agentFile = resolve(pluginRoot, "agents", subAgentConfig.type + ".md");
-    const model = subAgentConfig.model ?? "sonnet";
+    const model = subAgentConfig.model ?? "opus";
     const args = [
       "--agent",
       agentFile,
