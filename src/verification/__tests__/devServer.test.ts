@@ -165,3 +165,47 @@ describe("startDevServer", () => {
     ).rejects.toThrow();
   });
 });
+
+// --- startDevServer edge cases ------------------------------------------------
+
+describe("startDevServer edge cases", () => {
+  let handle: DevServerHandle | null = null;
+
+  afterEach(async () => {
+    if (handle) {
+      await handle.stop();
+      handle = null;
+    }
+  });
+
+  it("rejects with exit code in error message when process exits with non-zero code", async () => {
+    await expect(
+      startDevServer({
+        command: "exit 42",
+        cwd: tmpdir(),
+        readyTimeout: 5_000,
+      }),
+    ).rejects.toThrow(/exited/);
+  });
+
+  it("rejects when command is not found", async () => {
+    await expect(
+      startDevServer({
+        command: "nonexistent_command_xyz_123",
+        cwd: tmpdir(),
+        readyTimeout: 5_000,
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("times out when server never outputs a port and binds to no common port", async () => {
+    // A process that stays alive but never listens on any port
+    await expect(
+      startDevServer({
+        command: "sleep 60",
+        cwd: tmpdir(),
+        readyTimeout: 1_000,
+      }),
+    ).rejects.toThrow(/did not become ready/);
+  }, 15_000);
+});

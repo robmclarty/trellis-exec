@@ -40,64 +40,6 @@ export type AgentLauncher = {
 };
 
 /**
- * Assembles the sub-agent prompt following the §5 input contract.
- * Lists file paths (rather than inlining contents) since the claude agent
- * can read files directly from the filesystem.
- *
- * Note on permission enforcement (§10 #6): outputPaths are listed in the prompt
- * as a soft constraint. Runtime enforcement is handled by Claude CLI's --agent-file
- * permission model, not by this TypeScript code.
- */
-export function buildSubAgentPrompt(config: SubAgentConfig): string {
-  const lines: string[] = [];
-
-  lines.push(`You are a ${config.type} sub-agent. Your task:`);
-  lines.push("");
-  lines.push(config.instructions);
-  lines.push("");
-
-  if (config.outputPaths.length > 0) {
-    lines.push("You may ONLY create or modify these files:");
-    for (const p of config.outputPaths) {
-      lines.push(p);
-    }
-    lines.push("");
-  }
-
-  if (config.filePaths.length > 0) {
-    lines.push("Context files to reference:");
-    for (const p of config.filePaths) {
-      lines.push(p);
-    }
-    lines.push("");
-  }
-
-  lines.push(
-    "Use the Write tool to create new files and the Edit tool to modify existing files. Do not just output code as text.",
-  );
-
-  return lines.join("\n");
-}
-
-/**
- * Builds the CLI args array for a dispatchSubAgent call.
- */
-export function buildSubAgentArgs(
-  agentFile: string,
-  model: string,
-): string[] {
-  return [
-    "--agent",
-    agentFile,
-    "--output-format", "stream-json",
-    "--verbose",
-    "--dangerously-skip-permissions",
-    "--model",
-    model,
-  ];
-}
-
-/**
  * Spawns a `claude` CLI subprocess, optionally pipes stdin, and collects
  * stdout/stderr. Rejects on timeout.
  */
@@ -180,8 +122,39 @@ export function createAgentLauncher(config: AgentLauncherConfig): AgentLauncher 
   ): Promise<SubAgentResult> {
     const agentFile = resolve(pluginRoot, "agents", subAgentConfig.type + ".md");
     const model = subAgentConfig.model ?? "sonnet";
-    const args = buildSubAgentArgs(agentFile, model);
-    const prompt = buildSubAgentPrompt(subAgentConfig);
+    const args = [
+      "--agent",
+      agentFile,
+      "--output-format", "stream-json",
+      "--verbose",
+      "--dangerously-skip-permissions",
+      "--model",
+      model,
+    ];
+
+    const promptLines: string[] = [];
+    promptLines.push(`You are a ${subAgentConfig.type} sub-agent. Your task:`);
+    promptLines.push("");
+    promptLines.push(subAgentConfig.instructions);
+    promptLines.push("");
+    if (subAgentConfig.outputPaths.length > 0) {
+      promptLines.push("You may ONLY create or modify these files:");
+      for (const p of subAgentConfig.outputPaths) {
+        promptLines.push(p);
+      }
+      promptLines.push("");
+    }
+    if (subAgentConfig.filePaths.length > 0) {
+      promptLines.push("Context files to reference:");
+      for (const p of subAgentConfig.filePaths) {
+        promptLines.push(p);
+      }
+      promptLines.push("");
+    }
+    promptLines.push(
+      "Use the Write tool to create new files and the Edit tool to modify existing files. Do not just output code as text.",
+    );
+    const prompt = promptLines.join("\n");
 
     if (dryRun) {
       console.log("[dry-run] dispatchSubAgent:", "claude", args.join(" "));

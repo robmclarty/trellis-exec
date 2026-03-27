@@ -19,8 +19,6 @@ import type { ExecClaudeResult } from "../../orchestrator/agentLauncher.js";
 
 vi.mock("../../orchestrator/agentLauncher.js", () => ({
   createAgentLauncher: vi.fn(),
-  buildSubAgentPrompt: vi.fn(() => ""),
-  buildSubAgentArgs: vi.fn(() => []),
   execClaude: vi.fn(),
 }));
 
@@ -48,6 +46,9 @@ import {
   makePhaseCommit,
   collectLearnings,
   hasNewTestFiles,
+  reviewPhaseContract,
+  detectTestCommand,
+  selectJudgeModel,
 } from "../phaseRunner.js";
 import type { RunContext } from "../../cli.js";
 import { createAgentLauncher } from "../../orchestrator/agentLauncher.js";
@@ -431,7 +432,7 @@ describe("phaseRunner", () => {
         completedPhases: [],
         phaseReports: [],
         phaseRetries: {},
-        phaseReport: null,
+
       };
 
       const context = buildPhaseContext(
@@ -467,7 +468,7 @@ describe("phaseRunner", () => {
           }),
         ],
         phaseRetries: { "phase-1": 1 },
-        phaseReport: null,
+
       };
 
       const context = buildPhaseContext(
@@ -739,7 +740,7 @@ describe("phaseRunner", () => {
         completedPhases: [],
         phaseReports: [],
         phaseRetries: {},
-        phaseReport: null,
+
       };
       tmpDir = setupTmpDir(tasks);
       const ctx = makeDefaultConfig(tmpDir);
@@ -758,7 +759,7 @@ describe("phaseRunner", () => {
         completedPhases: [],
         phaseReports: [],
         phaseRetries: {},
-        phaseReport: null,
+
       };
 
       const learnings = collectLearnings(state);
@@ -780,7 +781,7 @@ describe("phaseRunner", () => {
           }),
         ],
         phaseRetries: {},
-        phaseReport: null,
+
       };
 
       const learnings = collectLearnings(state);
@@ -804,7 +805,7 @@ describe("phaseRunner", () => {
         completedPhases: reports.map((r) => r.phaseId),
         phaseReports: reports,
         phaseRetries: {},
-        phaseReport: null,
+
       };
 
       const learnings = collectLearnings(state);
@@ -829,7 +830,7 @@ describe("phaseRunner", () => {
           }),
         ],
         phaseRetries: {},
-        phaseReport: null,
+
       };
 
       const learnings = collectLearnings(state);
@@ -850,7 +851,7 @@ describe("phaseRunner", () => {
           }),
         ],
         phaseRetries: {},
-        phaseReport: null,
+
       };
 
       const learnings = collectLearnings(state);
@@ -873,7 +874,7 @@ describe("phaseRunner", () => {
         completedPhases: reports.map((r) => r.phaseId),
         phaseReports: reports,
         phaseRetries: {},
-        phaseReport: null,
+
       };
 
       const learnings = collectLearnings(state);
@@ -897,7 +898,7 @@ describe("phaseRunner", () => {
           }),
         ],
         phaseRetries: {},
-        phaseReport: null,
+
       };
 
       const context = buildPhaseContext(
@@ -923,7 +924,7 @@ describe("phaseRunner", () => {
           makePhaseReport("phase-1", { decisionsLog: [] }),
         ],
         phaseRetries: {},
-        phaseReport: null,
+
       };
 
       const context = buildPhaseContext(
@@ -949,7 +950,7 @@ describe("phaseRunner", () => {
           }),
         ],
         phaseRetries: {},
-        phaseReport: null,
+
       };
 
       const context = buildPhaseContext(
@@ -978,7 +979,7 @@ describe("phaseRunner", () => {
           }),
         ],
         phaseRetries: {},
-        phaseReport: null,
+
       };
 
       const context = buildPhaseContext(
@@ -1001,7 +1002,7 @@ describe("phaseRunner", () => {
         completedPhases: ["phase-1"],
         phaseReports: [],
         phaseRetries: {},
-        phaseReport: null,
+
       };
 
       const context = buildPhaseContext(
@@ -1424,6 +1425,232 @@ describe("phaseRunner", () => {
 
       expect(capturedOptions).toBeDefined();
       expect(capturedOptions!.timeout).toBe(1_200_000);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // reviewPhaseContract
+  // ---------------------------------------------------------------------------
+
+  describe("reviewPhaseContract", () => {
+    it("returns warning for tasks with no acceptance criteria", () => {
+      const phase: Phase = {
+        id: "phase-1",
+        name: "test",
+        description: "test phase",
+        requiresBrowserTest: false,
+        tasks: [
+          {
+            id: "task-1-1",
+            title: "Do something",
+            description: "A task",
+            dependsOn: [],
+            specSections: [],
+            targetPaths: ["src/foo.ts"],
+            acceptanceCriteria: [],
+            subAgentType: "implement",
+            status: "pending",
+          },
+        ],
+      };
+
+      const warnings = reviewPhaseContract(phase);
+      expect(warnings).toContainEqual(
+        expect.stringContaining("has no acceptance criteria"),
+      );
+    });
+
+    it("returns warning for vague criteria (< 10 chars)", () => {
+      const phase: Phase = {
+        id: "phase-1",
+        name: "test",
+        description: "test phase",
+        requiresBrowserTest: false,
+        tasks: [
+          {
+            id: "task-1-1",
+            title: "Do something",
+            description: "A task",
+            dependsOn: [],
+            specSections: [],
+            targetPaths: ["src/foo.ts"],
+            acceptanceCriteria: ["works"],
+            subAgentType: "implement",
+            status: "pending",
+          },
+        ],
+      };
+
+      const warnings = reviewPhaseContract(phase);
+      expect(warnings).toContainEqual(
+        expect.stringContaining("vague criterion"),
+      );
+    });
+
+    it("returns warning for tasks with no target paths", () => {
+      const phase: Phase = {
+        id: "phase-1",
+        name: "test",
+        description: "test phase",
+        requiresBrowserTest: false,
+        tasks: [
+          {
+            id: "task-1-1",
+            title: "Do something",
+            description: "A task",
+            dependsOn: [],
+            specSections: [],
+            targetPaths: [],
+            acceptanceCriteria: ["This criterion is long enough"],
+            subAgentType: "implement",
+            status: "pending",
+          },
+        ],
+      };
+
+      const warnings = reviewPhaseContract(phase);
+      expect(warnings).toContainEqual(
+        expect.stringContaining("has no target paths"),
+      );
+    });
+
+    it("skips corrective tasks", () => {
+      const phase: Phase = {
+        id: "phase-1",
+        name: "test",
+        description: "test phase",
+        requiresBrowserTest: false,
+        tasks: [
+          {
+            id: "phase-1-corrective-0",
+            title: "Fix something",
+            description: "A corrective task",
+            dependsOn: [],
+            specSections: [],
+            targetPaths: [],
+            acceptanceCriteria: [],
+            subAgentType: "implement",
+            status: "pending",
+          },
+        ],
+      };
+
+      const warnings = reviewPhaseContract(phase);
+      expect(warnings).toEqual([]);
+    });
+
+    it("returns empty array for well-formed phase", () => {
+      const phase: Phase = {
+        id: "phase-1",
+        name: "test",
+        description: "test phase",
+        requiresBrowserTest: false,
+        tasks: [
+          {
+            id: "task-1-1",
+            title: "Do something",
+            description: "A task",
+            dependsOn: [],
+            specSections: [],
+            targetPaths: ["src/foo.ts"],
+            acceptanceCriteria: ["The file src/foo.ts should export a function"],
+            subAgentType: "implement",
+            status: "pending",
+          },
+        ],
+      };
+
+      const warnings = reviewPhaseContract(phase);
+      expect(warnings).toEqual([]);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // detectTestCommand
+  // ---------------------------------------------------------------------------
+
+  describe("detectTestCommand", () => {
+    it("returns 'npm test' when package.json has a valid scripts.test", () => {
+      const dir = mkdtempSync(join(tmpdir(), "detect-test-cmd-"));
+      writeFileSync(
+        join(dir, "package.json"),
+        JSON.stringify({ scripts: { test: "vitest run" } }),
+      );
+
+      const result = detectTestCommand(dir);
+      expect(result).toBe("npm test");
+
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    it("returns null when package.json test script says 'no test specified'", () => {
+      const dir = mkdtempSync(join(tmpdir(), "detect-test-cmd-"));
+      writeFileSync(
+        join(dir, "package.json"),
+        JSON.stringify({
+          scripts: { test: 'echo "Error: no test specified" && exit 1' },
+        }),
+      );
+
+      const result = detectTestCommand(dir);
+      expect(result).toBeNull();
+
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    it("returns 'npx vitest run' when vitest.config.ts exists", () => {
+      const dir = mkdtempSync(join(tmpdir(), "detect-test-cmd-"));
+      writeFileSync(join(dir, "vitest.config.ts"), "export default {};");
+
+      const result = detectTestCommand(dir);
+      expect(result).toBe("npx vitest run");
+
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    it("returns 'npx jest' when jest.config.js exists", () => {
+      const dir = mkdtempSync(join(tmpdir(), "detect-test-cmd-"));
+      writeFileSync(join(dir, "jest.config.js"), "module.exports = {};");
+
+      const result = detectTestCommand(dir);
+      expect(result).toBe("npx jest");
+
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    it("returns null when no test runner found", () => {
+      const dir = mkdtempSync(join(tmpdir(), "detect-test-cmd-"));
+
+      const result = detectTestCommand(dir);
+      expect(result).toBeNull();
+
+      rmSync(dir, { recursive: true, force: true });
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // selectJudgeModel
+  // ---------------------------------------------------------------------------
+
+  describe("selectJudgeModel", () => {
+    it("returns override when provided", () => {
+      const result = selectJudgeModel(10, 1, "haiku");
+      expect(result).toBe("haiku");
+    });
+
+    it("returns 'sonnet' for small diffs with few tasks", () => {
+      const result = selectJudgeModel(100, 2);
+      expect(result).toBe("sonnet");
+    });
+
+    it("returns 'opus' for large diffs", () => {
+      const result = selectJudgeModel(200, 1);
+      expect(result).toBe("opus");
+    });
+
+    it("returns 'opus' for many tasks even if diff is small", () => {
+      const result = selectJudgeModel(50, 5);
+      expect(result).toBe("opus");
     });
   });
 });

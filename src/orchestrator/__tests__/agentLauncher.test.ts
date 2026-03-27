@@ -6,8 +6,6 @@ vi.mock("node:child_process", () => ({
 }));
 
 import {
-  buildSubAgentPrompt,
-  buildSubAgentArgs,
   execClaude,
   createAgentLauncher,
 } from "../agentLauncher.js";
@@ -45,55 +43,6 @@ function createMockProcess() {
 
 beforeEach(() => {
   vi.clearAllMocks();
-});
-
-describe("buildSubAgentPrompt", () => {
-  it("includes type, instructions, outputPaths, filePaths, and tool reminder", () => {
-    const config = makeSubAgentConfig();
-    const prompt = buildSubAgentPrompt(config);
-    expect(prompt).toContain("implement sub-agent");
-    expect(prompt).toContain("Build the thing");
-    expect(prompt).toContain("You may ONLY create or modify");
-    expect(prompt).toContain("src/out.ts");
-    expect(prompt).toContain("Context files to reference");
-    expect(prompt).toContain("src/ref.ts");
-    expect(prompt).toContain("Write tool");
-  });
-
-  it("omits outputPaths section when empty", () => {
-    const config = makeSubAgentConfig({ outputPaths: [] });
-    const prompt = buildSubAgentPrompt(config);
-    expect(prompt).not.toContain("You may ONLY create or modify");
-  });
-
-  it("omits filePaths section when empty", () => {
-    const config = makeSubAgentConfig({ filePaths: [] });
-    const prompt = buildSubAgentPrompt(config);
-    expect(prompt).not.toContain("Context files to reference");
-  });
-});
-
-describe("buildSubAgentArgs", () => {
-  it("returns correct flags array", () => {
-    const args = buildSubAgentArgs("/path/to/agent.md", "sonnet");
-    expect(args).toEqual([
-      "--agent",
-      "/path/to/agent.md",
-      "--output-format", "stream-json",
-      "--verbose",
-      "--dangerously-skip-permissions",
-      "--model",
-      "sonnet",
-    ]);
-  });
-
-  it("includes --verbose when using stream-json (required by CLI for piped stdin)", () => {
-    const args = buildSubAgentArgs("/any/agent.md", "opus");
-    const fmtIndex = args.indexOf("stream-json");
-    const verboseIndex = args.indexOf("--verbose");
-    expect(fmtIndex).toBeGreaterThan(-1);
-    expect(verboseIndex).toBeGreaterThan(-1);
-  });
 });
 
 describe("execClaude", () => {

@@ -3,7 +3,7 @@ import { z } from "zod";
 export const CheckResultSchema = z.object({
   passed: z.boolean(),
   output: z.string().optional(),
-  exitCode: z.number().optional(),
+  exitCode: z.number(),
 });
 
 export const JudgeIssueObjectSchema = z.object({
@@ -84,7 +84,6 @@ export const SharedStateSchema = z.object({
   completedPhases: z.array(z.string()),
   phaseReports: z.array(PhaseReportSchema),
   phaseRetries: z.record(z.string(), z.number()),
-  phaseReport: PhaseReportSchema.nullable().default(null),
 });
 
 export type DecisionEntry = z.infer<typeof DecisionEntrySchema>;

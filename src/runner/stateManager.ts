@@ -18,7 +18,6 @@ export function initState(tasksJson: TasksJson): SharedState {
     completedPhases: [],
     phaseReports: [],
     phaseRetries: {},
-    phaseReport: null,
   };
 }
 
@@ -79,7 +78,6 @@ export function updateStateAfterPhase(
     completedPhases: [...state.completedPhases, state.currentPhase],
     phaseReports: [...state.phaseReports, report],
     currentPhase: nextPhase?.id ?? "",
-    phaseReport: null,
   };
 }
 
@@ -121,24 +119,44 @@ export function updateTaskStatus(
  * Marks completed tasks as "complete" and failed tasks as "failed".
  * Silently skips task IDs not found in the phase (e.g., corrective tasks
  * dynamically added during retries).
+ *
+ * Uses a single pass through the phase's tasks instead of O(n) per update.
  */
 export function applyReportToTasks(
   tasksJson: TasksJson,
   phaseId: string,
   report: PhaseReport,
 ): TasksJson {
-  let updated = tasksJson;
+  const phaseIndex = tasksJson.phases.findIndex((p) => p.id === phaseId);
+  if (phaseIndex < 0) return tasksJson;
+
+  // Build a status map from both arrays for O(1) lookup
+  const statusMap = new Map<string, TaskStatus>();
   for (const taskId of report.tasksCompleted) {
-    try {
-      updated = updateTaskStatus(updated, phaseId, taskId, "complete");
-    } catch { /* corrective/dynamic task IDs may not exist in original tasks.json */ }
+    statusMap.set(taskId, "complete");
   }
   for (const taskId of report.tasksFailed) {
-    try {
-      updated = updateTaskStatus(updated, phaseId, taskId, "failed");
-    } catch { /* skip */ }
+    statusMap.set(taskId, "failed");
   }
-  return updated;
+
+  const phase = tasksJson.phases[phaseIndex]!;
+  let changed = false;
+  const updatedTasks = phase.tasks.map((t) => {
+    const newStatus = statusMap.get(t.id);
+    if (newStatus !== undefined && newStatus !== t.status) {
+      changed = true;
+      return { ...t, status: newStatus };
+    }
+    return t;
+  });
+
+  if (!changed) return tasksJson;
+
+  const updatedPhases = tasksJson.phases.map((p, i) =>
+    i === phaseIndex ? { ...p, tasks: updatedTasks } : p,
+  );
+
+  return { ...tasksJson, phases: updatedPhases };
 }
 
 /**

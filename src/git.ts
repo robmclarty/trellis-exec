@@ -32,36 +32,70 @@ export type ChangedFile = {
  */
 export function getChangedFiles(cwd: string, fromSha?: string): ChangedFile[] {
   try {
-    const ref = fromSha ? `${fromSha}..HEAD` : "HEAD";
+    if (fromSha) {
+      // Range query: must use git diff + ls-files (two spawns)
+      const output = execFileSync(
+        "git",
+        ["diff", "--name-status", `${fromSha}..HEAD`],
+        { cwd, encoding: "utf-8", stdio: "pipe" },
+      );
+      const files = output
+        .trim()
+        .split("\n")
+        .filter((line) => line.length > 0)
+        .map((line) => {
+          const [status, ...rest] = line.split("\t");
+          return { path: rest.join("\t"), status: status as ChangedFile["status"] };
+        });
+
+      const untrackedOutput = execFileSync(
+        "git",
+        ["ls-files", "--others", "--exclude-standard"],
+        { cwd, encoding: "utf-8", stdio: "pipe" },
+      );
+      const untrackedFiles = untrackedOutput
+        .trim()
+        .split("\n")
+        .filter((line) => line.length > 0)
+        .map((filePath) => ({ path: filePath, status: "?" as ChangedFile["status"] }));
+
+      return [...files, ...untrackedFiles];
+    }
+
+    // No ref range: use single git status --porcelain (one spawn instead of two)
     const output = execFileSync(
       "git",
-      ["diff", "--name-status", ref],
+      ["status", "--porcelain"],
       { cwd, encoding: "utf-8", stdio: "pipe" },
     );
-    const files = output
+    return output
       .trim()
       .split("\n")
       .filter((line) => line.length > 0)
       .map((line) => {
-        const [status, ...rest] = line.split("\t");
-        return { path: rest.join("\t"), status: status as ChangedFile["status"] };
+        // Porcelain format: XY filename (or XY old -> new for renames)
+        const indexStatus = line[0]!;
+        const workTreeStatus = line[1]!;
+        const filePath = line.slice(3);
+
+        // Map porcelain status codes to our ChangedFile status
+        if (indexStatus === "?" && workTreeStatus === "?") {
+          return { path: filePath, status: "?" as ChangedFile["status"] };
+        }
+        if (indexStatus === "A" || workTreeStatus === "A") {
+          return { path: filePath, status: "A" as ChangedFile["status"] };
+        }
+        if (indexStatus === "D" || workTreeStatus === "D") {
+          return { path: filePath, status: "D" as ChangedFile["status"] };
+        }
+        if (indexStatus === "R" || workTreeStatus === "R") {
+          // Rename: format is "R  old -> new"
+          const parts = filePath.split(" -> ");
+          return { path: parts[1] ?? filePath, status: "R" as ChangedFile["status"] };
+        }
+        return { path: filePath, status: "M" as ChangedFile["status"] };
       });
-
-    // Include untracked files (new files not yet git-added)
-    const untrackedOutput = execFileSync(
-      "git",
-      ["ls-files", "--others", "--exclude-standard"],
-      { cwd, encoding: "utf-8", stdio: "pipe" },
-    );
-    const untrackedFiles = untrackedOutput
-      .trim()
-      .split("\n")
-      .filter((line) => line.length > 0)
-      .map((filePath) => ({ path: filePath, status: "?" as ChangedFile["status"] }));
-
-    return [...files, ...untrackedFiles];
   } catch {
-    // When a range query fails, fall back to plain HEAD diff
     if (fromSha) return getChangedFiles(cwd);
     return [];
   }

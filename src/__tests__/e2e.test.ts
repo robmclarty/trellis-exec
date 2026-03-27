@@ -34,8 +34,6 @@ const TEST_PROJECT_DIR = join(FIXTURES_DIR, "test-project");
 
 vi.mock("../orchestrator/agentLauncher.js", () => ({
   createAgentLauncher: vi.fn(),
-  buildSubAgentPrompt: vi.fn(() => ""),
-  buildSubAgentArgs: vi.fn(() => []),
   execClaude: vi.fn(),
 }));
 
@@ -346,7 +344,7 @@ describe("e2e integration tests", () => {
         completedPhases: ["phase-1"],
         phaseReports: [phase1Report],
         phaseRetries: {},
-        phaseReport: null,
+
       };
       writeFileSync(join(tmpDir, "state.json"), JSON.stringify(resumeState));
 

@@ -207,4 +207,42 @@ describe("verifyCompletion", () => {
       expect(result.passed).toBe(true);
     });
   });
+
+  describe("TODO/FIXME scan edge cases", () => {
+    it("flags multiple TODOs in a single added file", () => {
+      mockGetChangedFiles.mockReturnValue([
+        { path: "src/multi.ts", status: "A" },
+      ]);
+      mockReadFileSync.mockReturnValue(
+        "const a = 1; // TODO: first\nconst b = 2; // TODO: second\nconst c = 3; // FIXME: third\n",
+      );
+
+      const result = verifyCompletion(
+        "/project", makePhase(), makeReport(), "abc123",
+      );
+      expect(result.passed).toBe(false);
+      expect(result.failures).toHaveLength(3);
+      expect(result.failures[0]).toContain("src/multi.ts:1");
+      expect(result.failures[0]).toContain("TODO");
+      expect(result.failures[1]).toContain("src/multi.ts:2");
+      expect(result.failures[1]).toContain("TODO");
+      expect(result.failures[2]).toContain("src/multi.ts:3");
+      expect(result.failures[2]).toContain("FIXME");
+    });
+
+    it("does NOT flag lowercase 'todo'", () => {
+      mockGetChangedFiles.mockReturnValue([
+        { path: "src/lower.ts", status: "A" },
+      ]);
+      mockReadFileSync.mockReturnValue(
+        "// todo: this should not be flagged\n// fixme: also not flagged\n// hack: also not flagged\n",
+      );
+
+      const result = verifyCompletion(
+        "/project", makePhase(), makeReport(), "abc123",
+      );
+      expect(result.passed).toBe(true);
+      expect(result.failures).toHaveLength(0);
+    });
+  });
 });

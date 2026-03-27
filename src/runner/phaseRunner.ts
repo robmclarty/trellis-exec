@@ -99,6 +99,77 @@ type PhaseExecResult = {
 // Pure helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * Applies judge assessment to report and tasks.json:
+ * - Applies corrections (targetPath renames) and writes tasks.json to disk
+ * - Upgrades report to "complete" if judge passed but orchestrator failed
+ * - Downgrades report to "retry" if judge found issues but orchestrator said advance
+ *
+ * Returns the updated report and tasks.json.
+ */
+function applyJudgeOutcome(config: {
+  judgeResult: JudgePhaseResult;
+  report: PhaseReport;
+  tasksJson: TasksJson;
+  phaseId: string;
+  phaseExecStatus: "complete" | "partial" | "failed";
+  tasksJsonPath: string;
+  verbose?: boolean;
+}): { report: PhaseReport; tasksJson: TasksJson } {
+  let { report, tasksJson } = config;
+  const { judgeResult, phaseId, phaseExecStatus, tasksJsonPath, verbose } = config;
+
+  report = { ...report, judgeAssessment: judgeResult.assessment };
+
+  // Apply judge corrections to tasks.json (e.g., targetPath renames)
+  const corrections = judgeResult.assessment.corrections ?? [];
+  if (corrections.length > 0) {
+    const result = applyCorrections(tasksJson, corrections);
+    tasksJson = result.tasksJson;
+    writeFileSync(tasksJsonPath, JSON.stringify(tasksJson, null, 2), "utf-8");
+    report = { ...report, decisionsLog: [...report.decisionsLog, ...result.decisions] };
+    if (verbose) {
+      console.log(`Applied ${corrections.length} judge correction(s) to tasks.json`);
+    }
+  }
+
+  // Upgrade: orchestrator failed/partial but judge confirms work is correct
+  if (
+    judgeResult.assessment.passed &&
+    report.recommendedAction === "retry" &&
+    phaseExecStatus !== "complete"
+  ) {
+    console.log(
+      `Judge passed phase "${phaseId}" despite orchestrator failure. Advancing.`,
+    );
+    report = {
+      ...report,
+      status: "complete",
+      recommendedAction: "advance",
+    };
+  }
+
+  // Downgrade: orchestrator said advance but judge found issues
+  if (
+    !judgeResult.assessment.passed &&
+    report.recommendedAction === "advance"
+  ) {
+    console.log(
+      `Judge found unresolved issues in phase "${phaseId}". Recommending retry.`,
+    );
+    report = {
+      ...report,
+      recommendedAction: "retry",
+      correctiveTasks: [
+        ...report.correctiveTasks,
+        ...judgeResult.assessment.issues.map(formatIssue),
+      ],
+    };
+  }
+
+  return { report, tasksJson };
+}
+
 function getHandoffFromState(state: SharedState): string {
   const last = state.phaseReports.at(-1);
   return last?.handoff ?? "";
@@ -1016,7 +1087,7 @@ export async function runPhases(
         continue;
       }
 
-      state = { ...state, currentPhase: phase.id, phaseReport: null };
+      state = { ...state, currentPhase: phase.id };
       const phaseStartTime = Date.now();
 
       const taskCount = phase.tasks.length;
@@ -1063,7 +1134,6 @@ export async function runPhases(
         }
       }
 
-      state = { ...state, phaseReport: report };
       saveState(localCtx.statePath, state);
 
       // Judge loop: runs based on judgeMode setting
@@ -1084,53 +1154,17 @@ export async function runPhases(
           ...(report.startSha ? { startSha: report.startSha } : {}),
         });
 
-        report = { ...report, judgeAssessment: judgeResult.assessment };
-
-        // Apply judge corrections to tasks.json (e.g., targetPath renames)
-        const corrections = judgeResult.assessment.corrections ?? [];
-        if (corrections.length > 0) {
-          const result = applyCorrections(mutableTasksJson, corrections);
-          mutableTasksJson = result.tasksJson;
-          writeFileSync(localCtx.tasksJsonPath, JSON.stringify(mutableTasksJson, null, 2), "utf-8");
-          report = { ...report, decisionsLog: [...report.decisionsLog, ...result.decisions] };
-          if (localCtx.verbose) {
-            console.log(`Applied ${corrections.length} judge correction(s) to tasks.json`);
-          }
-        }
-
-        // Upgrade: orchestrator failed/partial but judge confirms work is correct
-        if (
-          judgeResult.assessment.passed &&
-          report.recommendedAction === "retry" &&
-          phaseResult.status !== "complete"
-        ) {
-          console.log(
-            `Judge passed phase "${phase.id}" despite orchestrator failure. Advancing.`,
-          );
-          report = {
-            ...report,
-            status: "complete",
-            recommendedAction: "advance",
-          };
-        }
-
-        // Downgrade: orchestrator said advance but judge found issues
-        if (
-          !judgeResult.assessment.passed &&
-          report.recommendedAction === "advance"
-        ) {
-          console.log(
-            `Judge found unresolved issues in phase "${phase.id}". Recommending retry.`,
-          );
-          report = {
-            ...report,
-            recommendedAction: "retry",
-            correctiveTasks: [
-              ...report.correctiveTasks,
-              ...judgeResult.assessment.issues.map(formatIssue),
-            ],
-          };
-        }
+        const judgeOutcome = applyJudgeOutcome({
+          judgeResult,
+          report,
+          tasksJson: mutableTasksJson,
+          phaseId: phase.id,
+          phaseExecStatus: phaseResult.status,
+          tasksJsonPath: localCtx.tasksJsonPath,
+          verbose: localCtx.verbose,
+        });
+        report = judgeOutcome.report;
+        mutableTasksJson = judgeOutcome.tasksJson;
       }
 
       // Completion verification — runs after judge so corrected targetPaths are used
@@ -1406,54 +1440,17 @@ export async function runSinglePhase(
         ...(report.startSha ? { startSha: report.startSha } : {}),
       });
 
-      report = { ...report, judgeAssessment: judgeResult.assessment };
-
-      // Apply judge corrections to tasks.json (e.g., targetPath renames)
-      const corrections = judgeResult.assessment.corrections ?? [];
-      if (corrections.length > 0) {
-        const result = applyCorrections(correctedTasksJson, corrections);
-        correctedTasksJson = result.tasksJson;
-        writeFileSync(localCtx.tasksJsonPath, JSON.stringify(correctedTasksJson, null, 2), "utf-8");
-        report = { ...report, decisionsLog: [...report.decisionsLog, ...result.decisions] };
-        if (localCtx.verbose) {
-          console.log(`Applied ${corrections.length} judge correction(s) to tasks.json`);
-        }
-      }
-
-      // Upgrade: orchestrator failed/partial but judge confirms work is correct
-      if (
-        judgeResult.assessment.passed &&
-        report.recommendedAction === "retry" &&
-        phaseResult.status !== "complete"
-      ) {
-        console.log(
-          `Judge passed phase "${phase.id}" despite orchestrator failure. Advancing.`,
-        );
-        report = {
-          ...report,
-          status: "complete",
-          recommendedAction: "advance",
-        };
-      }
-
-      // Downgrade: orchestrator said advance but judge found issues
-      if (
-        !judgeResult.assessment.passed &&
-        report.recommendedAction === "advance"
-      ) {
-        console.log(
-          `Judge found unresolved issues in phase "${phase.id}". Downgrading to partial.`,
-        );
-        report = {
-          ...report,
-          status: "partial",
-          recommendedAction: "retry",
-          correctiveTasks: [
-            ...report.correctiveTasks,
-            ...judgeResult.assessment.issues.map(formatIssue),
-          ],
-        };
-      }
+      const judgeOutcome = applyJudgeOutcome({
+        judgeResult,
+        report,
+        tasksJson: correctedTasksJson,
+        phaseId: phase.id,
+        phaseExecStatus: phaseResult.status,
+        tasksJsonPath: localCtx.tasksJsonPath,
+        verbose: localCtx.verbose,
+      });
+      report = judgeOutcome.report;
+      correctedTasksJson = judgeOutcome.tasksJson;
     }
 
     // Completion verification — runs after judge so corrected targetPaths are used

@@ -486,4 +486,58 @@ describe("stateManager", () => {
       expect(tasks.phases[0]?.tasks[0]?.targetPaths).toEqual(["package.json"]);
     });
   });
+
+  describe("loadState edge cases", () => {
+    it("throws with descriptive error for truncated JSON", () => {
+      const statePath = join(tmpDir, "truncated.json");
+      writeFileSync(statePath, '{"currentPhase": "phase-1", "completedPha', "utf-8");
+
+      expect(() => loadState(statePath)).toThrow(/Failed to parse state file/);
+    });
+
+    it("throws for valid JSON that does not match SharedState schema", () => {
+      const statePath = join(tmpDir, "wrong-schema.json");
+      writeFileSync(
+        statePath,
+        JSON.stringify({
+          currentPhase: "phase-1",
+          // missing completedPhases, phaseReports, phaseRetries
+        }),
+        "utf-8",
+      );
+
+      expect(() => loadState(statePath)).toThrow();
+    });
+  });
+
+  describe("applyReportToTasks edge cases", () => {
+    it("silently skips corrective task IDs not present in the phase", () => {
+      const tasks = makeTasksJson();
+      const report: PhaseReport = {
+        ...makePhaseReport("phase-1"),
+        tasksCompleted: ["corrective-new-task"],
+        tasksFailed: [],
+      };
+
+      // Should not throw; real tasks remain unchanged
+      const updated = applyReportToTasks(tasks, "phase-1", report);
+      const task = updated.phases[0]?.tasks.find((t: Task) => t.id === "task-1-1");
+      expect(task?.status).toBe("pending");
+    });
+
+    it("failed wins when a task appears in both completed and failed lists", () => {
+      const tasks = makeTasksJson();
+      const report: PhaseReport = {
+        ...makePhaseReport("phase-1"),
+        tasksCompleted: ["task-1-1"],
+        tasksFailed: ["task-1-1"],
+      };
+
+      const updated = applyReportToTasks(tasks, "phase-1", report);
+      const task = updated.phases[0]?.tasks.find((t: Task) => t.id === "task-1-1");
+      // tasksFailed is processed after tasksCompleted in the statusMap,
+      // so "failed" overwrites "complete"
+      expect(task?.status).toBe("failed");
+    });
+  });
 });

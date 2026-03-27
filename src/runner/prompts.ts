@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import type { Phase } from "../types/tasks.js";
+import type { Phase, Task } from "../types/tasks.js";
 import type { SharedState, PhaseReport, JudgeAssessment, JudgeIssue, DecisionEntry } from "../types/state.js";
 import { JudgeAssessmentSchema } from "../types/state.js";
 import type { RunContext } from "../cli.js";
@@ -374,6 +374,63 @@ function asDecisionEntryArray(val: unknown): DecisionEntry[] {
 // Judge prompts & parsing
 // ---------------------------------------------------------------------------
 
+/** Renders task details and acceptance criteria for judge prompts. */
+function formatTasksWithCriteria(tasks: Task[]): string {
+  const lines: string[] = [];
+  lines.push("## Phase Tasks & Acceptance Criteria");
+  lines.push("");
+  for (const task of tasks) {
+    lines.push(`### ${task.id}: ${task.title}`);
+    lines.push(`Description: ${task.description}`);
+    lines.push(`Target paths: ${task.targetPaths.join(", ")}`);
+    lines.push(`Spec sections: ${task.specSections.join(", ")}`);
+    lines.push("Acceptance criteria:");
+    for (const criterion of task.acceptanceCriteria) {
+      lines.push(`- ${criterion}`);
+    }
+    lines.push("");
+  }
+  return lines.join("\n");
+}
+
+/** Renders the JSON response format instructions shared by judge/rejudge. */
+function judgeResponseFormat(correctionExample: string): string {
+  const lines: string[] = [];
+  lines.push("```json");
+  lines.push('{');
+  lines.push('  "passed": true,');
+  lines.push('  "issues": [');
+  lines.push('    { "task": "phase-1-task-2", "severity": "must-fix", "description": "..." }');
+  lines.push('  ],');
+  lines.push('  "suggestions": [');
+  lines.push('    { "task": "phase-1-task-1", "severity": "minor", "description": "..." }');
+  lines.push('  ],');
+  lines.push('  "corrections": [');
+  lines.push(`    ${correctionExample}`);
+  lines.push('  ]');
+  lines.push('}');
+  lines.push("```");
+  return lines.join("\n");
+}
+
+/** Shared judge evaluation guidance. */
+function judgeEvaluationGuidance(): string {
+  return (
+    "Set `passed` to false only for must-fix problems: spec violations, bugs, " +
+    "missing requirements, incomplete tasks. Style suggestions alone do not cause failure."
+  );
+}
+
+/** Shared corrections guidance. */
+function judgeCorrectionsGuidance(detail: string): string {
+  return (
+    "If a task's targetPaths don't match the actual filenames on disk" +
+    (detail ? ` ${detail}` : "") +
+    ", add a `corrections` entry to reconcile the metadata. " +
+    "Corrections are NOT issues and do not affect the `passed` verdict."
+  );
+}
+
 export function buildJudgePrompt(config: {
   changedFiles: ChangedFile[];
   diffContent: string;
@@ -398,19 +455,7 @@ export function buildJudgePrompt(config: {
   lines.push("```");
 
   lines.push("");
-  lines.push("## Phase Tasks & Acceptance Criteria");
-  lines.push("");
-  for (const task of config.phase.tasks) {
-    lines.push(`### ${task.id}: ${task.title}`);
-    lines.push(`Description: ${task.description}`);
-    lines.push(`Target paths: ${task.targetPaths.join(", ")}`);
-    lines.push(`Spec sections: ${task.specSections.join(", ")}`);
-    lines.push("Acceptance criteria:");
-    for (const criterion of task.acceptanceCriteria) {
-      lines.push(`- ${criterion}`);
-    }
-    lines.push("");
-  }
+  lines.push(formatTasksWithCriteria(config.phase.tasks));
 
   lines.push("## Spec & Guidelines");
   lines.push("");
@@ -463,32 +508,17 @@ export function buildJudgePrompt(config: {
       "Return ONLY a JSON block — no prose before or after — in this exact format:",
   );
   lines.push("");
-  lines.push("```json");
-  lines.push('{');
-  lines.push('  "passed": true,');
-  lines.push('  "issues": [');
-  lines.push('    { "task": "phase-1-task-2", "severity": "must-fix", "description": "..." }');
-  lines.push('  ],');
-  lines.push('  "suggestions": [');
-  lines.push('    { "task": "phase-1-task-1", "severity": "minor", "description": "..." }');
-  lines.push('  ],');
-  lines.push('  "corrections": [');
-  lines.push('    { "type": "targetPath", "taskId": "phase-1-task-2", "old": "src/Nav.css", "new": "src/Nav.module.css", "reason": "CSS Modules convention requires .module.css suffix" }');
-  lines.push('  ]');
-  lines.push('}');
-  lines.push("```");
+  lines.push(judgeResponseFormat(
+    '{ "type": "targetPath", "taskId": "phase-1-task-2", "old": "src/Nav.css", "new": "src/Nav.module.css", "reason": "CSS Modules convention requires .module.css suffix" }',
+  ));
   lines.push("");
-  lines.push(
-    "Set `passed` to false only for must-fix problems: spec violations, bugs, " +
-      "missing requirements, incomplete tasks. Style suggestions alone do not cause failure.",
-  );
+  lines.push(judgeEvaluationGuidance());
   lines.push("");
+  lines.push(judgeCorrectionsGuidance(
+    "\n(e.g., `Nav.css` specified but `Nav.module.css` created, or `App.js` but `App.jsx` on disk)",
+  ));
   lines.push(
-    "If a task's targetPaths don't match the actual filenames on disk " +
-      "(e.g., `Nav.css` specified but `Nav.module.css` created, or `App.js` but `App.jsx` on disk), " +
-      "add a `corrections` entry. Corrections reconcile task metadata with reality — " +
-      "they are NOT issues and do not affect the `passed` verdict. " +
-      "Only include corrections when the file exists at a different path, not when a file is genuinely missing.",
+    "Only include corrections when the file exists at a different path, not when a file is genuinely missing.",
   );
 
   return lines.join("\n");
@@ -537,19 +567,7 @@ export function buildRejudgePrompt(config: {
   lines.push("```");
 
   lines.push("");
-  lines.push("## Phase Tasks & Acceptance Criteria");
-  lines.push("");
-  for (const task of config.phase.tasks) {
-    lines.push(`### ${task.id}: ${task.title}`);
-    lines.push(`Description: ${task.description}`);
-    lines.push(`Target paths: ${task.targetPaths.join(", ")}`);
-    lines.push(`Spec sections: ${task.specSections.join(", ")}`);
-    lines.push("Acceptance criteria:");
-    for (const criterion of task.acceptanceCriteria) {
-      lines.push(`- ${criterion}`);
-    }
-    lines.push("");
-  }
+  lines.push(formatTasksWithCriteria(config.phase.tasks));
 
   lines.push("## Spec & Guidelines");
   lines.push("");
@@ -566,31 +584,13 @@ export function buildRejudgePrompt(config: {
       "Return ONLY a JSON block — no prose before or after — in this exact format:",
   );
   lines.push("");
-  lines.push("```json");
-  lines.push('{');
-  lines.push('  "passed": true,');
-  lines.push('  "issues": [');
-  lines.push('    { "task": "phase-1-task-2", "severity": "must-fix", "description": "..." }');
-  lines.push('  ],');
-  lines.push('  "suggestions": [');
-  lines.push('    { "task": "phase-1-task-1", "severity": "minor", "description": "..." }');
-  lines.push('  ],');
-  lines.push('  "corrections": [');
-  lines.push('    { "type": "targetPath", "taskId": "phase-1-task-2", "old": "src/Nav.css", "new": "src/Nav.module.css", "reason": "CSS Modules convention" }');
-  lines.push('  ]');
-  lines.push('}');
-  lines.push("```");
+  lines.push(judgeResponseFormat(
+    '{ "type": "targetPath", "taskId": "phase-1-task-2", "old": "src/Nav.css", "new": "src/Nav.module.css", "reason": "CSS Modules convention" }',
+  ));
   lines.push("");
-  lines.push(
-    "Set `passed` to false only for must-fix problems: spec violations, bugs, " +
-      "missing requirements, regressions. Style suggestions alone do not cause failure.",
-  );
+  lines.push(judgeEvaluationGuidance());
   lines.push("");
-  lines.push(
-    "If a task's targetPaths don't match the actual filenames on disk, " +
-      "add a `corrections` entry to reconcile the metadata. " +
-      "Corrections are NOT issues and do not affect the `passed` verdict.",
-  );
+  lines.push(judgeCorrectionsGuidance(""));
 
   return lines.join("\n");
 }

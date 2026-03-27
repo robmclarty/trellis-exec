@@ -37,7 +37,7 @@ function makeState(overrides: Partial<SharedState> = {}): SharedState {
     completedPhases: [],
     phaseReports: [],
     phaseRetries: {},
-    phaseReport: null,
+
     ...overrides,
   };
 }
