@@ -3,7 +3,7 @@ import { basename, join } from "node:path";
 import type { Phase, Task } from "../types/tasks.js";
 import type { SharedState, PhaseReport, JudgeAssessment, JudgeIssue, JudgeCorrection, DecisionEntry } from "../types/state.js";
 import { JudgeAssessmentSchema, JudgeCorrectionSchema } from "../types/state.js";
-import type { RunContext } from "../cli.js";
+import type { RunContext } from "../types/runner.js";
 import type { ChangedFile } from "../git.js";
 
 // ---------------------------------------------------------------------------
@@ -696,16 +696,18 @@ function tryParseAssessment(raw: unknown): JudgeAssessment | null {
   if (typeof raw !== "object" || raw === null) return null;
   const obj = raw as Record<string, unknown>;
 
-  // Normalize issue/suggestion arrays before Zod validation
-  if (Array.isArray(obj["issues"])) {
-    obj["issues"] = normalizeIssueArray(obj["issues"]);
+  // Normalize into a new object to avoid mutating the input (this function
+  // may be called multiple times on the same parsed JSON object).
+  const normalized: Record<string, unknown> = { ...obj };
+  if (Array.isArray(normalized["issues"])) {
+    normalized["issues"] = normalizeIssueArray(normalized["issues"]);
   }
-  if (Array.isArray(obj["suggestions"])) {
-    obj["suggestions"] = normalizeIssueArray(obj["suggestions"]);
+  if (Array.isArray(normalized["suggestions"])) {
+    normalized["suggestions"] = normalizeIssueArray(normalized["suggestions"]);
   }
 
   try {
-    return JudgeAssessmentSchema.parse(obj);
+    return JudgeAssessmentSchema.parse(normalized);
   } catch {
     return null;
   }

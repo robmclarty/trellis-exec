@@ -50,7 +50,7 @@ vi.mock("../git.js", () => ({
 import { parsePlan } from "../compile/planParser.js";
 import { enrichPlan } from "../compile/planEnricher.js";
 import { runPhases, dryRunReport } from "../runner/phaseRunner.js";
-import type { RunContext } from "../cli.js";
+import type { RunContext } from "../types/runner.js";
 import {
   resolveExecutionOrder,
   detectTargetPathOverlaps,

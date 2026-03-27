@@ -2,9 +2,9 @@ import { readFileSync, writeFileSync, existsSync, unlinkSync, statSync, realpath
 import { resolve, basename, join } from "node:path";
 import { createInterface } from "node:readline";
 import type { TasksJson, Phase, Task } from "../types/tasks.js";
-import type { SharedState, PhaseReport, JudgeAssessment, JudgeIssue, CheckResult } from "../types/state.js";
+import type { SharedState, PhaseReport, CheckResult } from "../types/state.js";
 import type { TrajectoryLogger } from "../logging/trajectoryLogger.js";
-import type { RunContext } from "../cli.js";
+import type { RunContext } from "../types/runner.js";
 import {
   initState,
   loadState,
@@ -30,26 +30,18 @@ import {
   commitAll,
   getGitRoot,
 } from "../git.js";
-import type { ChangedFile } from "../git.js";
-import { createCheckRunner } from "../verification/checkRunner.js";
 import { verifyCompletion } from "../verification/completionVerifier.js";
-import { isPlaywrightAvailable, runBrowserSmoke } from "../verification/browserSmoke.js";
-import { detectDevServerCommand, startDevServer } from "../verification/devServer.js";
-import { runBrowserAcceptance } from "../verification/browserAcceptance.js";
-import type { BrowserSmokeReport, BrowserAcceptanceReport } from "../types/state.js";
+import type { BrowserAcceptanceReport } from "../types/state.js";
 import { createAgentLauncher } from "../orchestrator/agentLauncher.js";
 import {
   REPORT_FILENAME,
-  collectLearnings,
   buildPhaseContext,
   normalizeReport,
-  formatIssue,
-  parseJudgeResult,
-  buildJudgePrompt,
-  buildRejudgePrompt,
-  buildFixPrompt,
   buildReporterPrompt,
 } from "./prompts.js";
+import { judgePhase, applyJudgeOutcome } from "./judgeRunner.js";
+import { runBrowserSmokeForPhase, runEndOfBuildAcceptance } from "./browserRunner.js";
+import { hasNewTestFiles, detectTestCommand } from "./testDetector.js";
 
 /**
  * Warn if projectRoot looks misconfigured (e.g. points inside .specs/).
@@ -98,77 +90,6 @@ type PhaseExecResult = {
 // ---------------------------------------------------------------------------
 // Pure helpers
 // ---------------------------------------------------------------------------
-
-/**
- * Applies judge assessment to report and tasks.json:
- * - Applies corrections (targetPath renames) and writes tasks.json to disk
- * - Upgrades report to "complete" if judge passed but orchestrator failed
- * - Downgrades report to "retry" if judge found issues but orchestrator said advance
- *
- * Returns the updated report and tasks.json.
- */
-function applyJudgeOutcome(config: {
-  judgeResult: JudgePhaseResult;
-  report: PhaseReport;
-  tasksJson: TasksJson;
-  phaseId: string;
-  phaseExecStatus: "complete" | "partial" | "failed";
-  tasksJsonPath: string;
-  verbose?: boolean;
-}): { report: PhaseReport; tasksJson: TasksJson } {
-  let { report, tasksJson } = config;
-  const { judgeResult, phaseId, phaseExecStatus, tasksJsonPath, verbose } = config;
-
-  report = { ...report, judgeAssessment: judgeResult.assessment, judgeFixCycles: judgeResult.correctionAttempts };
-
-  // Apply judge corrections to tasks.json (e.g., targetPath renames)
-  const corrections = judgeResult.assessment.corrections ?? [];
-  if (corrections.length > 0) {
-    const result = applyCorrections(tasksJson, corrections);
-    tasksJson = result.tasksJson;
-    writeFileSync(tasksJsonPath, JSON.stringify(tasksJson, null, 2), "utf-8");
-    report = { ...report, decisionsLog: [...report.decisionsLog, ...result.decisions] };
-    if (verbose) {
-      console.log(`Applied ${corrections.length} judge correction(s) to tasks.json`);
-    }
-  }
-
-  // Upgrade: orchestrator failed/partial but judge confirms work is correct
-  if (
-    judgeResult.assessment.passed &&
-    report.recommendedAction === "retry" &&
-    phaseExecStatus !== "complete"
-  ) {
-    console.log(
-      `Judge passed phase "${phaseId}" despite orchestrator failure. Advancing.`,
-    );
-    report = {
-      ...report,
-      status: "complete",
-      recommendedAction: "advance",
-    };
-  }
-
-  // Downgrade: orchestrator said advance but judge found issues
-  if (
-    !judgeResult.assessment.passed &&
-    report.recommendedAction === "advance"
-  ) {
-    console.log(
-      `Judge found unresolved issues in phase "${phaseId}". Recommending retry.`,
-    );
-    report = {
-      ...report,
-      recommendedAction: "retry",
-      correctiveTasks: [
-        ...report.correctiveTasks,
-        ...judgeResult.assessment.issues.map(formatIssue),
-      ],
-    };
-  }
-
-  return { report, tasksJson };
-}
 
 function getHandoffFromState(state: SharedState): string {
   const last = state.phaseReports.at(-1);
@@ -305,178 +226,6 @@ export function dryRunReport(tasksJson: TasksJson, ctx: RunContext): string {
 }
 
 // ---------------------------------------------------------------------------
-// Browser smoke check (Tier 1)
-// ---------------------------------------------------------------------------
-
-async function runBrowserSmokeForPhase(
-  ctx: RunContext,
-  phase: Phase,
-  projectRoot: string,
-): Promise<BrowserSmokeReport | null> {
-  if (!(await isPlaywrightAvailable())) {
-    if (ctx.verbose) console.log("Browser smoke: Playwright not available, skipping.");
-    return { passed: true, skipped: true, reason: "Playwright not available", consoleErrors: [], interactionFailures: [] };
-  }
-
-  const devCmd = ctx.devServerCommand ?? detectDevServerCommand(projectRoot);
-  if (!devCmd) {
-    if (ctx.verbose) console.log("Browser smoke: no dev server command found, skipping.");
-    return { passed: true, skipped: true, reason: "No dev server command", consoleErrors: [], interactionFailures: [] };
-  }
-
-  console.log(`Running browser smoke check for "${phase.id}"…`);
-
-  let handle;
-  try {
-    handle = await startDevServer({ command: devCmd, cwd: projectRoot });
-  } catch (err) {
-    console.log(`Browser smoke: dev server failed to start: ${err instanceof Error ? err.message : String(err)}`);
-    return { passed: true, skipped: true, reason: `Dev server failed: ${err instanceof Error ? err.message : String(err)}`, consoleErrors: [], interactionFailures: [] };
-  }
-
-  try {
-    const report = await runBrowserSmoke({
-      url: handle.url,
-      phaseId: phase.id,
-      screenshotDir: join(projectRoot, ".trellis", "screenshots"),
-    });
-    const status = report.passed ? "passed" : "failed";
-    console.log(`Browser smoke check ${status} for "${phase.id}".`);
-    if (!report.passed) {
-      if (report.consoleErrors.length > 0) {
-        console.log(`  Console errors: ${report.consoleErrors.length}`);
-      }
-      if (report.interactionFailures.length > 0) {
-        console.log(`  Interaction failures: ${report.interactionFailures.length}`);
-      }
-    }
-    return report;
-  } finally {
-    await handle.stop();
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Browser acceptance tests (Tier 2) — end-of-build
-// ---------------------------------------------------------------------------
-
-async function runEndOfBuildAcceptance(
-  ctx: RunContext,
-  tasksJson: TasksJson,
-  projectRoot: string,
-): Promise<BrowserAcceptanceReport | null> {
-  const hasBrowserPhases = tasksJson.phases.some((p) => p.requiresBrowserTest);
-  if (!hasBrowserPhases) return null;
-
-  if (!(await isPlaywrightAvailable())) {
-    if (ctx.verbose) console.log("Browser acceptance: Playwright not available, skipping.");
-    return null;
-  }
-
-  const devCmd = ctx.devServerCommand ?? detectDevServerCommand(projectRoot);
-  if (!devCmd) {
-    if (ctx.verbose) console.log("Browser acceptance: no dev server command found, skipping.");
-    return null;
-  }
-
-  console.log("Starting end-of-build browser acceptance tests…");
-
-  let handle;
-  try {
-    handle = await startDevServer({ command: devCmd, cwd: projectRoot });
-  } catch (err) {
-    console.log(`Browser acceptance: dev server failed to start: ${err instanceof Error ? err.message : String(err)}`);
-    return null;
-  }
-
-  try {
-    const launcher = createAgentLauncher({
-      pluginRoot: ctx.pluginRoot,
-      projectRoot,
-    });
-
-    const report = await runBrowserAcceptance({
-      specPath: ctx.specPath,
-      projectRoot,
-      devServerHandle: handle,
-      maxRetries: ctx.browserTestRetries,
-      saveTests: ctx.saveE2eTests,
-      agentLauncher: launcher,
-    });
-
-    return report;
-  } finally {
-    await handle.stop();
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Test auto-detection
-// ---------------------------------------------------------------------------
-
-const TEST_FILE_PATTERNS = [
-  /\.test\.[jt]sx?$/,
-  /\.spec\.[jt]sx?$/,
-  /__tests__\//,
-  /\.test\.\w+$/,
-];
-
-/**
- * Returns true if any newly added files look like test files.
- */
-export function hasNewTestFiles(projectRoot: string, startSha?: string): boolean {
-  const changed = getChangedFiles(projectRoot, startSha);
-  return changed.some(
-    (f) =>
-      (f.status === "A" || f.status === "?" || f.status === "M") &&
-      TEST_FILE_PATTERNS.some((re) => re.test(f.path)),
-  );
-}
-
-/**
- * Attempts to detect a test command from the project.
- * Returns null if no test runner can be identified.
- */
-export function detectTestCommand(projectRoot: string): string | null {
-  // Check package.json test script
-  const pkgPath = join(projectRoot, "package.json");
-  if (existsSync(pkgPath)) {
-    try {
-      const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
-      const testScript = pkg?.scripts?.test;
-      if (
-        typeof testScript === "string" &&
-        testScript.length > 0 &&
-        !testScript.includes("no test specified")
-      ) {
-        return "npm test";
-      }
-    } catch {
-      // ignore parse errors
-    }
-  }
-
-  // Check for common test runner configs
-  const configs: Array<{ file: string; command: string }> = [
-    { file: "vitest.config.ts", command: "npx vitest run" },
-    { file: "vitest.config.js", command: "npx vitest run" },
-    { file: "vitest.config.mts", command: "npx vitest run" },
-    { file: "jest.config.ts", command: "npx jest" },
-    { file: "jest.config.js", command: "npx jest" },
-    { file: "jest.config.cjs", command: "npx jest" },
-    { file: "jest.config.mjs", command: "npx jest" },
-  ];
-
-  for (const { file, command } of configs) {
-    if (existsSync(join(projectRoot, file))) {
-      return command;
-    }
-  }
-
-  return null;
-}
-
-// ---------------------------------------------------------------------------
 // Interactive prompt
 // ---------------------------------------------------------------------------
 
@@ -522,205 +271,6 @@ export async function promptForContinuation(options?: {
       },
     );
   });
-}
-
-// ---------------------------------------------------------------------------
-// Judge loop
-// ---------------------------------------------------------------------------
-
-type JudgePhaseResult = {
-  assessment: JudgeAssessment;
-  correctionAttempts: number;
-};
-
-const SMALL_DIFF_LINE_THRESHOLD = 150;
-const SMALL_TASK_THRESHOLD = 3;
-
-/**
- * Selects the judge model based on diff size and task count.
- * Small diffs with few tasks use Sonnet; larger work uses Opus.
- * An explicit override (from --judge-model) takes precedence.
- */
-export function selectJudgeModel(
-  diffLineCount: number,
-  taskCount: number,
-  override?: string,
-): string {
-  if (override) return override;
-  if (diffLineCount < SMALL_DIFF_LINE_THRESHOLD && taskCount < SMALL_TASK_THRESHOLD) {
-    return "sonnet";
-  }
-  return "opus";
-}
-
-async function judgePhase(config: {
-  phase: Phase;
-  report: PhaseReport;
-  state: SharedState;
-  projectRoot: string;
-  ctx: RunContext;
-  logger: TrajectoryLogger;
-  maxCorrections?: number;
-  startSha?: string;
-}): Promise<JudgePhaseResult> {
-  const maxCorrections = config.maxCorrections ?? 2;
-  const { phase, report, state, projectRoot, ctx, logger, startSha } = config;
-
-  let changedFiles = getChangedFiles(projectRoot, startSha);
-  if (changedFiles.length === 0) {
-    return {
-      assessment: { passed: true, issues: [], suggestions: [], corrections: [] },
-      correctionAttempts: 0,
-    };
-  }
-
-  const launcher = createAgentLauncher({
-    pluginRoot: ctx.pluginRoot,
-    projectRoot,
-    dryRun: ctx.dryRun,
-  });
-
-  let assessment: JudgeAssessment = { passed: true, issues: [], suggestions: [], corrections: [] };
-  let previousIssues: JudgeIssue[] | undefined;
-  let fixDiffContent: string | undefined;
-  let fixChangedFiles: ChangedFile[] | undefined;
-
-  for (let attempt = 0; attempt <= maxCorrections; attempt++) {
-    // Build prompt: first pass uses full phase diff, subsequent passes use fix-only diff
-    let prompt: string;
-    let diffForModel: string;
-    if (attempt > 0 && previousIssues && fixDiffContent && fixChangedFiles) {
-      prompt = buildRejudgePrompt({
-        fixDiff: fixDiffContent,
-        fixChangedFiles,
-        previousIssues,
-        phase,
-      });
-      diffForModel = fixDiffContent;
-    } else {
-      const diffContent = getDiffContent(projectRoot, startSha);
-      prompt = buildJudgePrompt({
-        changedFiles,
-        diffContent,
-        phase,
-        orchestratorReport: report,
-      });
-      diffForModel = diffContent;
-    }
-
-    const diffLineCount = diffForModel.split("\n").length;
-    const judgeModel = selectJudgeModel(diffLineCount, phase.tasks.length, ctx.judgeModel);
-
-    if (ctx.verbose) {
-      console.log(
-        `[judge] attempt ${attempt + 1}, reviewing ${changedFiles.length} changed file(s), model: ${judgeModel} (${diffLineCount} diff lines, ${phase.tasks.length} tasks)`,
-      );
-    }
-
-    const judgeSpinner = startSpinner("Judging");
-    const startTime = Date.now();
-    const result = await launcher.dispatchSubAgent({
-      type: "judge",
-      model: judgeModel,
-      taskId: `${phase.id}-judge-${attempt}`,
-      instructions: prompt,
-      filePaths: changedFiles.map((f) => f.path),
-      outputPaths: [],
-    });
-    const duration = Date.now() - startTime;
-    judgeSpinner.stop();
-
-    logger.append({
-      phaseId: phase.id,
-      turnNumber: 0,
-      type: "judge_invoke",
-      input: { attempt, fileCount: changedFiles.length },
-      output: result.output.slice(0, 2000),
-      duration,
-    });
-
-    // If the sub-agent process itself failed (e.g. CLI error), treat as
-    // infrastructure failure and skip the fix-judge cycle entirely.
-    if (!result.success) {
-      const reason = result.error || "unknown sub-agent failure";
-      console.log(`[judge] sub-agent failed on attempt ${attempt + 1}: ${reason}`);
-      // Pass through — treat as if judge approved so we don't waste cycles
-      // on fix-agent retries for infra issues.
-      return {
-        assessment: { passed: true, issues: [], suggestions: [], corrections: [] },
-        correctionAttempts: attempt,
-      };
-    }
-
-    assessment = parseJudgeResult(result.output);
-
-    if (assessment.passed) {
-      if (ctx.verbose) {
-        console.log(`[judge] passed on attempt ${attempt + 1}`);
-      }
-      return { assessment, correctionAttempts: attempt };
-    }
-
-    // Judge found issues — save for targeted re-judging
-    previousIssues = assessment.issues;
-
-    console.log(
-      `Judge found ${assessment.issues.length} issue(s) in phase "${phase.id}":`,
-    );
-    for (const issue of assessment.issues) {
-      console.log(`  - ${formatIssue(issue)}`);
-    }
-
-    if (attempt >= maxCorrections) {
-      break;
-    }
-
-    // Capture SHA before fix for targeted diff
-    const preFixSha = getCurrentSha(projectRoot);
-
-    // Dispatch fix agent
-    console.log(`Dispatching fix agent (attempt ${attempt + 1})…`);
-    const fixPrompt = buildFixPrompt(assessment.issues, phase, state, ctx);
-
-    await launcher.dispatchSubAgent({
-      type: "fix",
-      taskId: `${phase.id}-fix-${attempt}`,
-      instructions: fixPrompt,
-      filePaths: changedFiles.map((f) => f.path),
-      outputPaths: changedFiles
-        .filter((f) => f.status !== "D")
-        .map((f) => f.path),
-    });
-
-    // Run check command after fix if configured
-    if (ctx.checkCommand) {
-      const checkRunner = createCheckRunner({
-        command: ctx.checkCommand,
-        cwd: projectRoot,
-      });
-      const checkResult = await checkRunner.run();
-      if (ctx.verbose) {
-        console.log(
-          `[check] after fix: ${checkResult.passed ? "passed" : "failed"}`,
-        );
-      }
-    }
-
-    // Capture fix-only diff for targeted re-judging
-    if (preFixSha) {
-      fixDiffContent = getDiffContent(projectRoot, preFixSha);
-      fixChangedFiles = getChangedFiles(projectRoot, preFixSha);
-    } else {
-      // Fallback: use full diff if no SHA available
-      fixDiffContent = getDiffContent(projectRoot, startSha);
-      fixChangedFiles = changedFiles;
-    }
-
-    // Refresh changed files for file paths context
-    changedFiles = getChangedFiles(projectRoot, startSha);
-  }
-
-  return { assessment, correctionAttempts: maxCorrections };
 }
 
 // ---------------------------------------------------------------------------
@@ -1530,20 +1080,3 @@ export async function runSinglePhase(
   };
 }
 
-// ---------------------------------------------------------------------------
-// Re-exports from prompts.ts for backward compatibility
-// ---------------------------------------------------------------------------
-
-export {
-  REPORT_FILENAME,
-  collectLearnings,
-  buildReferenceContext,
-  buildPhaseContext,
-  normalizeReport,
-  formatIssue,
-  parseJudgeResult,
-  buildJudgePrompt,
-  buildRejudgePrompt,
-  buildFixPrompt,
-  buildReporterPrompt,
-} from "./prompts.js";

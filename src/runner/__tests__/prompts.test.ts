@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Phase } from "../../types/tasks.js";
 import type { SharedState, PhaseReport, JudgeIssue } from "../../types/state.js";
 import type { ChangedFile } from "../../git.js";
-import type { RunContext } from "../../cli.js";
+import type { RunContext } from "../../types/runner.js";
 
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs")>();

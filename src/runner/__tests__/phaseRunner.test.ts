@@ -35,22 +35,23 @@ vi.mock("../../git.js", () => ({
 import {
   runPhases,
   dryRunReport,
+  createDefaultCheck,
+  extractScopes,
+  makePhaseCommit,
+  reviewPhaseContract,
+} from "../phaseRunner.js";
+import {
   buildPhaseContext,
   buildJudgePrompt,
   parseJudgeResult,
   buildFixPrompt,
   buildReporterPrompt,
   normalizeReport,
-  createDefaultCheck,
-  extractScopes,
-  makePhaseCommit,
   collectLearnings,
-  hasNewTestFiles,
-  reviewPhaseContract,
-  detectTestCommand,
-  selectJudgeModel,
-} from "../phaseRunner.js";
-import type { RunContext } from "../../cli.js";
+} from "../prompts.js";
+import { selectJudgeModel } from "../judgeRunner.js";
+import { hasNewTestFiles, detectTestCommand } from "../testDetector.js";
+import type { RunContext } from "../../types/runner.js";
 import { createAgentLauncher } from "../../orchestrator/agentLauncher.js";
 import { getChangedFiles, getDiffContent, commitAll, ensureInitialCommit, getCurrentSha } from "../../git.js";
 
