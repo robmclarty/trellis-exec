@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.19
+
+- Make test auto-detection language-agnostic: support Python (pytest), Go, Rust, Ruby (rspec), Java (Maven/Gradle), Elixir, and Makefile projects
+- Extend web app detection for Django, Rails, and Phoenix frameworks (two-signal heuristic to avoid false positives on API-only projects)
+- Replace JS-specific prompt examples with language-neutral alternatives across prompts, agents, and skills
+
 ## 0.7.18
 
 - Fix `runSinglePhase` missing orchestrator correction pre-application (--phase runs now apply corrections correctly)
