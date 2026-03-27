@@ -1021,6 +1021,128 @@ export function makePhaseCommit(
 }
 
 // ---------------------------------------------------------------------------
+// Post-execution pipeline (shared by runPhases and runSinglePhase)
+// ---------------------------------------------------------------------------
+
+type PhasePipelineConfig = {
+  phase: Phase;
+  phaseExecStatus: "complete" | "partial" | "failed";
+  report: PhaseReport;
+  state: SharedState;
+  tasksJson: TasksJson;
+  localCtx: RunContext;
+  projectRoot: string;
+  logger: TrajectoryLogger;
+};
+
+type PhasePipelineResult = {
+  report: PhaseReport;
+  tasksJson: TasksJson;
+};
+
+/**
+ * Shared post-execution pipeline: browser smoke → orchestrator corrections →
+ * judge loop → completion verification → test detection.
+ *
+ * Both `runPhases` and `runSinglePhase` delegate here after `executePhase`
+ * returns, ensuring corrections, judging, and verification stay in sync.
+ */
+async function runPostExecutionPipeline(
+  config: PhasePipelineConfig,
+): Promise<PhasePipelineResult> {
+  const { phase, phaseExecStatus, state, localCtx, projectRoot, logger } = config;
+  let { report, tasksJson } = config;
+
+  // Browser smoke check (Tier 1) — before judge
+  if (phase.requiresBrowserTest && report.status !== "failed") {
+    const smokeReport = await runBrowserSmokeForPhase(localCtx, phase, projectRoot);
+    if (smokeReport) {
+      report = { ...report, browserSmokeReport: smokeReport };
+    }
+  }
+
+  // Apply orchestrator-reported corrections before judge
+  const orchCorrections = report.corrections ?? [];
+  if (orchCorrections.length > 0) {
+    const { tasksJson: corrected, decisions } = applyCorrections(
+      tasksJson, orchCorrections,
+    );
+    tasksJson = corrected;
+    report = {
+      ...report,
+      decisionsLog: [...report.decisionsLog, ...decisions],
+    };
+    writeFileSync(localCtx.tasksJsonPath, JSON.stringify(tasksJson, null, 2), "utf-8");
+    if (localCtx.verbose) {
+      console.log(`Applied ${orchCorrections.length} orchestrator correction(s) to tasks.json`);
+    }
+  }
+
+  // Judge loop: runs based on judgeMode setting
+  const hasChanges = getChangedFiles(projectRoot, report.startSha).length > 0;
+  const shouldJudge =
+    localCtx.judgeMode !== "never" &&
+    (localCtx.judgeMode === "always" ||
+      (localCtx.judgeMode === "on-failure" && phaseExecStatus !== "complete"));
+  if (shouldJudge && (phaseExecStatus !== "failed" || hasChanges)) {
+    console.log(`Judging phase "${phase.id}"…`);
+
+    const judgeResult = await judgePhase({
+      phase,
+      report,
+      state,
+      projectRoot,
+      ctx: localCtx,
+      logger,
+      ...(report.startSha ? { startSha: report.startSha } : {}),
+    });
+
+    const judgeOutcome = applyJudgeOutcome({
+      judgeResult,
+      report,
+      tasksJson,
+      phaseId: phase.id,
+      phaseExecStatus,
+      tasksJsonPath: localCtx.tasksJsonPath,
+      verbose: localCtx.verbose,
+    });
+    report = judgeOutcome.report;
+    tasksJson = judgeOutcome.tasksJson;
+  }
+
+  // Completion verification — runs after judge so corrected targetPaths are used
+  const correctedPhase = tasksJson.phases.find((p) => p.id === phase.id) ?? phase;
+  if (report.status === "complete" || report.status === "partial") {
+    const verification = verifyCompletion(
+      projectRoot, correctedPhase, report, report.startSha,
+    );
+    if (!verification.passed) {
+      console.log(`Completion verification failed for "${phase.id}":`);
+      for (const f of verification.failures) console.log(`  - ${f}`);
+      report = {
+        ...report,
+        status: "partial",
+        recommendedAction: "retry",
+        correctiveTasks: [...report.correctiveTasks, ...verification.failures],
+      };
+    } else {
+      console.log(`Completion verification passed for "${phase.id}".`);
+    }
+  }
+
+  // Auto-detect test suites if no --check was provided
+  if (!localCtx.checkCommand && hasNewTestFiles(projectRoot, report.startSha)) {
+    const detected = detectTestCommand(projectRoot);
+    if (detected) {
+      console.log(`Detected new test files. Setting check command: ${detected}`);
+      localCtx.checkCommand = detected;
+    }
+  }
+
+  return { report, tasksJson };
+}
+
+// ---------------------------------------------------------------------------
 // Main loop
 // ---------------------------------------------------------------------------
 
@@ -1128,93 +1250,20 @@ export async function runPhases(
 
       let report = phaseResult.report;
 
-      // Browser smoke check (Tier 1) — before judge
-      if (phase.requiresBrowserTest && report.status !== "failed") {
-        const smokeReport = await runBrowserSmokeForPhase(localCtx, phase, projectRoot);
-        if (smokeReport) {
-          report = { ...report, browserSmokeReport: smokeReport };
-        }
-      }
-
       saveState(localCtx.statePath, state);
 
-      // Apply orchestrator-reported corrections before judge
-      const orchCorrections = report.corrections ?? [];
-      if (orchCorrections.length > 0) {
-        const { tasksJson: corrected, decisions } = applyCorrections(
-          mutableTasksJson, orchCorrections,
-        );
-        mutableTasksJson = corrected;
-        report = {
-          ...report,
-          decisionsLog: [...report.decisionsLog, ...decisions],
-        };
-        writeFileSync(localCtx.tasksJsonPath, JSON.stringify(mutableTasksJson, null, 2), "utf-8");
-        if (localCtx.verbose) {
-          console.log(`Applied ${orchCorrections.length} orchestrator correction(s) to tasks.json`);
-        }
-      }
-
-      // Judge loop: runs based on judgeMode setting
-      const hasChanges = getChangedFiles(projectRoot, report.startSha).length > 0;
-      const shouldJudge =
-        localCtx.judgeMode !== "never" &&
-        (localCtx.judgeMode === "always" ||
-          (localCtx.judgeMode === "on-failure" && phaseResult.status !== "complete"));
-      if (shouldJudge && (phaseResult.status !== "failed" || hasChanges)) {
-        console.log(`Judging phase "${phase.id}"…`);
-
-        const judgeResult = await judgePhase({
-          phase,
-          report,
-          state,
-          projectRoot,
-          ctx: localCtx,
-          logger,
-          ...(report.startSha ? { startSha: report.startSha } : {}),
-        });
-
-        const judgeOutcome = applyJudgeOutcome({
-          judgeResult,
-          report,
-          tasksJson: mutableTasksJson,
-          phaseId: phase.id,
-          phaseExecStatus: phaseResult.status,
-          tasksJsonPath: localCtx.tasksJsonPath,
-          verbose: localCtx.verbose,
-        });
-        report = judgeOutcome.report;
-        mutableTasksJson = judgeOutcome.tasksJson;
-      }
-
-      // Completion verification — runs after judge so corrected targetPaths are used
-      const correctedPhase = mutableTasksJson.phases[phaseIndex]!;
-      if (report.status === "complete" || report.status === "partial") {
-        const verification = verifyCompletion(
-          projectRoot, correctedPhase, report, report.startSha,
-        );
-        if (!verification.passed) {
-          console.log(`Completion verification failed for "${phase.id}":`);
-          for (const f of verification.failures) console.log(`  - ${f}`);
-          report = {
-            ...report,
-            status: "partial",
-            recommendedAction: "retry",
-            correctiveTasks: [...report.correctiveTasks, ...verification.failures],
-          };
-        } else {
-          console.log(`Completion verification passed for "${phase.id}".`);
-        }
-      }
-
-      // Auto-detect test suites if no --check was provided
-      if (!localCtx.checkCommand && hasNewTestFiles(projectRoot, report.startSha)) {
-        const detected = detectTestCommand(projectRoot);
-        if (detected) {
-          console.log(`Detected new test files. Setting check command: ${detected}`);
-          localCtx.checkCommand = detected;
-        }
-      }
+      const pipeline = await runPostExecutionPipeline({
+        phase,
+        phaseExecStatus: phaseResult.status,
+        report,
+        state,
+        tasksJson: mutableTasksJson,
+        localCtx,
+        projectRoot,
+        logger,
+      });
+      report = pipeline.report;
+      mutableTasksJson = pipeline.tasksJson;
 
       // Determine action: combine report recommendation with user input
       let action: "advance" | "retry" | "skip" | "halt" =
@@ -1432,76 +1481,19 @@ export async function runSinglePhase(
 
     phaseUsage = phaseResult.usage;
     let report = phaseResult.report;
-    let correctedTasksJson = tasksJson;
 
-    // Browser smoke check (Tier 1) — before judge
-    if (phase.requiresBrowserTest && report.status !== "failed") {
-      const smokeReport = await runBrowserSmokeForPhase(localCtx, phase, projectRoot);
-      if (smokeReport) {
-        report = { ...report, browserSmokeReport: smokeReport };
-      }
-    }
-
-    // Judge loop: runs based on judgeMode setting
-    const hasChanges = getChangedFiles(projectRoot, report.startSha).length > 0;
-    const shouldJudge =
-      localCtx.judgeMode !== "never" &&
-      (localCtx.judgeMode === "always" ||
-        (localCtx.judgeMode === "on-failure" && phaseResult.status !== "complete"));
-    if (shouldJudge && (phaseResult.status !== "failed" || hasChanges)) {
-      console.log(`Judging phase "${phase.id}"…`);
-
-      const judgeResult = await judgePhase({
-        phase,
-        report,
-        state,
-        projectRoot,
-        ctx: localCtx,
-        logger,
-        ...(report.startSha ? { startSha: report.startSha } : {}),
-      });
-
-      const judgeOutcome = applyJudgeOutcome({
-        judgeResult,
-        report,
-        tasksJson: correctedTasksJson,
-        phaseId: phase.id,
-        phaseExecStatus: phaseResult.status,
-        tasksJsonPath: localCtx.tasksJsonPath,
-        verbose: localCtx.verbose,
-      });
-      report = judgeOutcome.report;
-      correctedTasksJson = judgeOutcome.tasksJson;
-    }
-
-    // Completion verification — runs after judge so corrected targetPaths are used
-    const correctedPhase = correctedTasksJson.phases.find((p) => p.id === phase.id) ?? phase;
-    if (report.status === "complete" || report.status === "partial") {
-      const verification = verifyCompletion(
-        projectRoot, correctedPhase, report, report.startSha,
-      );
-      if (!verification.passed) {
-        console.log(`Completion verification failed for "${phase.id}":`);
-        for (const f of verification.failures) console.log(`  - ${f}`);
-        report = {
-          ...report,
-          status: "partial",
-          recommendedAction: "retry",
-          correctiveTasks: [...report.correctiveTasks, ...verification.failures],
-        };
-      } else {
-        console.log(`Completion verification passed for "${phase.id}".`);
-      }
-    }
-
-    // Auto-detect test suites if no --check was provided
-    if (!localCtx.checkCommand && hasNewTestFiles(projectRoot, report.startSha)) {
-      const detected = detectTestCommand(projectRoot);
-      if (detected) {
-        console.log(`Detected new test files. Setting check command: ${detected}`);
-        localCtx.checkCommand = detected;
-      }
-    }
+    const pipeline = await runPostExecutionPipeline({
+      phase,
+      phaseExecStatus: phaseResult.status,
+      report,
+      state,
+      tasksJson,
+      localCtx,
+      projectRoot,
+      logger,
+    });
+    report = pipeline.report;
+    const correctedTasksJson = pipeline.tasksJson;
 
     if (report.status === "complete" && report.recommendedAction === "advance") {
       makePhaseCommit(projectRoot, phase, report);
