@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.21
+
+- Fix browser acceptance tester output parsing when CLI returns content block arrays instead of plain strings
+- Add verbose logging of raw browser-tester output for debugging parse failures
+- Strengthen browser-tester agent output format instructions to improve JSON compliance
+- Track sub-agent token usage (judge, fix) in phase summary reports for accurate cost reporting
+- Fix outdated model defaults and add --timeout documentation
+- Fix ASCII diagram alignment in README
+
 ## 0.7.20
 
 - Change default orchestrator model from sonnet to opus
