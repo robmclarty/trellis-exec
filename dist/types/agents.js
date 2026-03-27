@@ -7,11 +7,17 @@ export const SubAgentConfigSchema = z.object({
     outputPaths: z.array(z.string()),
     model: z.string().optional(),
 });
+export const UsageStatsSchema = z.object({
+    inputTokens: z.number(),
+    outputTokens: z.number(),
+    costUsd: z.number(),
+});
 export const SubAgentResultSchema = z.object({
     success: z.boolean(),
     output: z.string(),
     filesModified: z.array(z.string()),
     error: z.string().optional(),
+    usage: UsageStatsSchema.optional(),
 });
 export const TrajectoryEventTypeSchema = z.enum([
     "phase_exec",

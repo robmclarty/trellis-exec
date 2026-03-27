@@ -9,6 +9,7 @@ import { getChangedFiles, getDiffContent, getCurrentSha } from "../git.js";
 import { createCheckRunner } from "../verification/checkRunner.js";
 import { createAgentLauncher } from "../orchestrator/agentLauncher.js";
 import { applyCorrections } from "./stateManager.js";
+import type { UsageStats } from "../ui/streamParser.js";
 import { startSpinner } from "../ui/spinner.js";
 import {
   formatIssue,
@@ -25,6 +26,7 @@ import {
 export type JudgePhaseResult = {
   assessment: JudgeAssessment;
   correctionAttempts: number;
+  usage?: UsageStats;
 };
 
 // ---------------------------------------------------------------------------
@@ -68,6 +70,9 @@ export async function judgePhase(config: {
   const maxCorrections = config.maxCorrections ?? 2;
   const { phase, report, state, projectRoot, ctx, logger, startSha } = config;
 
+  const usageOrEmpty = (u: UsageStats) =>
+    u.inputTokens > 0 || u.outputTokens > 0 ? { usage: u } : {};
+
   let changedFiles = getChangedFiles(projectRoot, startSha);
   if (changedFiles.length === 0) {
     return {
@@ -86,6 +91,7 @@ export async function judgePhase(config: {
   let previousIssues: JudgeIssue[] | undefined;
   let fixDiffContent: string | undefined;
   let fixChangedFiles: ChangedFile[] | undefined;
+  const accUsage: UsageStats = { inputTokens: 0, outputTokens: 0, costUsd: 0 };
 
   for (let attempt = 0; attempt <= maxCorrections; attempt++) {
     // Build prompt: first pass uses full phase diff, subsequent passes use fix-only diff
@@ -132,6 +138,12 @@ export async function judgePhase(config: {
     const duration = Date.now() - startTime;
     judgeSpinner.stop();
 
+    if (result.usage) {
+      accUsage.inputTokens += result.usage.inputTokens;
+      accUsage.outputTokens += result.usage.outputTokens;
+      accUsage.costUsd += result.usage.costUsd;
+    }
+
     logger.append({
       phaseId: phase.id,
       turnNumber: 0,
@@ -151,6 +163,7 @@ export async function judgePhase(config: {
       return {
         assessment: { passed: true, issues: [], suggestions: [], corrections: [] },
         correctionAttempts: attempt,
+        ...usageOrEmpty(accUsage),
       };
     }
 
@@ -160,7 +173,7 @@ export async function judgePhase(config: {
       if (ctx.verbose) {
         console.log(`[judge] passed on attempt ${attempt + 1}`);
       }
-      return { assessment, correctionAttempts: attempt };
+      return { assessment, correctionAttempts: attempt, ...usageOrEmpty(accUsage) };
     }
 
     // Judge found issues — save for targeted re-judging
@@ -184,7 +197,7 @@ export async function judgePhase(config: {
     console.log(`Dispatching fix agent (attempt ${attempt + 1})…`);
     const fixPrompt = buildFixPrompt(assessment.issues, phase, state, ctx);
 
-    await launcher.dispatchSubAgent({
+    const fixResult = await launcher.dispatchSubAgent({
       type: "fix",
       taskId: `${phase.id}-fix-${attempt}`,
       instructions: fixPrompt,
@@ -193,6 +206,12 @@ export async function judgePhase(config: {
         .filter((f) => f.status !== "D")
         .map((f) => f.path),
     });
+
+    if (fixResult.usage) {
+      accUsage.inputTokens += fixResult.usage.inputTokens;
+      accUsage.outputTokens += fixResult.usage.outputTokens;
+      accUsage.costUsd += fixResult.usage.costUsd;
+    }
 
     // Run check command after fix if configured
     if (ctx.checkCommand) {
@@ -222,7 +241,7 @@ export async function judgePhase(config: {
     changedFiles = getChangedFiles(projectRoot, startSha);
   }
 
-  return { assessment, correctionAttempts: maxCorrections };
+  return { assessment, correctionAttempts: maxCorrections, ...usageOrEmpty(accUsage) };
 }
 
 // ---------------------------------------------------------------------------

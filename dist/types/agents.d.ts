@@ -7,11 +7,21 @@ export declare const SubAgentConfigSchema: z.ZodObject<{
     outputPaths: z.ZodArray<z.ZodString>;
     model: z.ZodOptional<z.ZodString>;
 }, z.core.$strip>;
+export declare const UsageStatsSchema: z.ZodObject<{
+    inputTokens: z.ZodNumber;
+    outputTokens: z.ZodNumber;
+    costUsd: z.ZodNumber;
+}, z.core.$strip>;
 export declare const SubAgentResultSchema: z.ZodObject<{
     success: z.ZodBoolean;
     output: z.ZodString;
     filesModified: z.ZodArray<z.ZodString>;
     error: z.ZodOptional<z.ZodString>;
+    usage: z.ZodOptional<z.ZodObject<{
+        inputTokens: z.ZodNumber;
+        outputTokens: z.ZodNumber;
+        costUsd: z.ZodNumber;
+    }, z.core.$strip>>;
 }, z.core.$strip>;
 export declare const TrajectoryEventTypeSchema: z.ZodEnum<{
     phase_exec: "phase_exec";

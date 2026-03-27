@@ -57,7 +57,35 @@ describe("parseStreamLine", () => {
             usage: { inputTokens: 5000, outputTokens: 1200, costUsd: 0.05 },
         });
     });
-    it("returns empty text for result event with non-string result", () => {
+    it("extracts text from result event with content block array", () => {
+        const line = JSON.stringify({
+            type: "result",
+            result: [{ type: "text", text: "final answer" }],
+            total_cost_usd: 0.05,
+            usage: { input_tokens: 100, output_tokens: 50 },
+        });
+        const event = parseStreamLine(line);
+        expect(event).toMatchObject({
+            type: "result",
+            text: "final answer",
+            usage: { inputTokens: 100, outputTokens: 50, costUsd: 0.05 },
+        });
+    });
+    it("joins multiple text blocks in result content block array", () => {
+        const line = JSON.stringify({
+            type: "result",
+            result: [
+                { type: "text", text: "part one" },
+                { type: "tool_use", id: "123" },
+                { type: "text", text: " part two" },
+            ],
+        });
+        expect(parseStreamLine(line)).toMatchObject({
+            type: "result",
+            text: "part one part two",
+        });
+    });
+    it("returns empty text for result event with non-string non-array result", () => {
         const line = JSON.stringify({ type: "result", result: 42 });
         expect(parseStreamLine(line)).toEqual({ type: "result", text: "" });
     });
@@ -117,6 +145,19 @@ describe("extractResultText", () => {
             JSON.stringify({ type: "result", result: "second" }),
         ].join("\n");
         expect(extractResultText(lines)).toBe("second");
+    });
+    it("extracts text from result with content block array", () => {
+        const lines = [
+            JSON.stringify({
+                type: "assistant",
+                message: { content: [{ type: "text", text: "thinking..." }] },
+            }),
+            JSON.stringify({
+                type: "result",
+                result: [{ type: "text", text: "block answer" }],
+            }),
+        ].join("\n");
+        expect(extractResultText(lines)).toBe("block answer");
     });
     it("returns empty string for empty input", () => {
         expect(extractResultText("")).toBe("");

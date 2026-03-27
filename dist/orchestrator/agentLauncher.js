@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { resolve } from "node:path";
-import { extractResultText } from "../ui/streamParser.js";
+import { extractResultText, extractUsage } from "../ui/streamParser.js";
 const DEFAULT_TIMEOUT = 300_000; // 5 minutes for sub-agent execution
 const ORCHESTRATOR_TIMEOUT = 1_800_000; // 30 minutes for phase orchestration
 export const COMPILE_TIMEOUT = 600_000; // 10 minutes for plan decomposition
@@ -110,18 +110,21 @@ export function createAgentLauncher(config) {
             };
         }
         const output = extractResultText(result.stdout) || result.stdout;
+        const usage = extractUsage(result.stdout);
         if (result.exitCode !== 0) {
             return {
                 success: false,
                 output,
                 filesModified: [],
                 error: result.stderr || `claude exited with code ${result.exitCode}`,
+                ...(usage ? { usage } : {}),
             };
         }
         return {
             success: true,
             output,
             filesModified: [],
+            ...(usage ? { usage } : {}),
         };
     }
     async function runPhaseOrchestrator(prompt, agentFile, model, options) {

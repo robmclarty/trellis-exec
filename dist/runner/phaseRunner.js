@@ -439,6 +439,7 @@ export function makePhaseCommit(projectRoot, phase, report) {
 async function runPostExecutionPipeline(config) {
     const { phase, phaseExecStatus, state, localCtx, projectRoot, logger } = config;
     let { report, tasksJson } = config;
+    let subAgentUsage;
     // Browser smoke check (Tier 1) — before judge
     if (phase.requiresBrowserTest && report.status !== "failed") {
         const smokeReport = await runBrowserSmokeForPhase(localCtx, phase, projectRoot);
@@ -476,6 +477,9 @@ async function runPostExecutionPipeline(config) {
             logger,
             ...(report.startSha ? { startSha: report.startSha } : {}),
         });
+        if (judgeResult.usage) {
+            subAgentUsage = judgeResult.usage;
+        }
         const judgeOutcome = applyJudgeOutcome({
             judgeResult,
             report,
@@ -515,7 +519,7 @@ async function runPostExecutionPipeline(config) {
             localCtx.checkCommand = detected;
         }
     }
-    return { report, tasksJson };
+    return { report, tasksJson, ...(subAgentUsage ? { subAgentUsage } : {}) };
 }
 // ---------------------------------------------------------------------------
 // Main loop
@@ -610,6 +614,20 @@ export async function runPhases(ctx, tasksJson) {
             });
             report = pipeline.report;
             mutableTasksJson = pipeline.tasksJson;
+            // Accumulate sub-agent usage (judge, fix) into phase totals
+            if (pipeline.subAgentUsage) {
+                const prev = phaseTokens[phase.id];
+                if (prev) {
+                    phaseTokens[phase.id] = {
+                        inputTokens: prev.inputTokens + pipeline.subAgentUsage.inputTokens,
+                        outputTokens: prev.outputTokens + pipeline.subAgentUsage.outputTokens,
+                        costUsd: prev.costUsd + pipeline.subAgentUsage.costUsd,
+                    };
+                }
+                else {
+                    phaseTokens[phase.id] = { ...pipeline.subAgentUsage };
+                }
+            }
             // Determine action: combine report recommendation with user input
             let action = report.recommendedAction === "advance"
                 ? "advance"
@@ -797,6 +815,17 @@ export async function runSinglePhase(ctx, tasksJson, phaseId) {
         });
         report = pipeline.report;
         const correctedTasksJson = pipeline.tasksJson;
+        // Merge sub-agent usage into orchestrator usage for total phase cost
+        if (pipeline.subAgentUsage && phaseUsage) {
+            phaseUsage = {
+                inputTokens: phaseUsage.inputTokens + pipeline.subAgentUsage.inputTokens,
+                outputTokens: phaseUsage.outputTokens + pipeline.subAgentUsage.outputTokens,
+                costUsd: phaseUsage.costUsd + pipeline.subAgentUsage.costUsd,
+            };
+        }
+        else if (pipeline.subAgentUsage) {
+            phaseUsage = pipeline.subAgentUsage;
+        }
         if (report.status === "complete" && report.recommendedAction === "advance") {
             makePhaseCommit(projectRoot, phase, report);
             report = { ...report, endSha: getCurrentSha(projectRoot) ?? report.startSha };

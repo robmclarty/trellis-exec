@@ -88,6 +88,7 @@ export async function runEndOfBuildAcceptance(ctx, tasksJson, projectRoot) {
             maxRetries: ctx.browserTestRetries,
             saveTests: ctx.saveE2eTests,
             agentLauncher: launcher,
+            verbose: ctx.verbose,
         });
         return report;
     }

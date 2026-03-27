@@ -35,9 +35,9 @@ You receive:
 - Capture screenshots on failure for debugging context.
 - Write complete, runnable test files — not snippets.
 
-## Output
+## CRITICAL: Output Format
 
-Return ONLY a JSON block in this exact format:
+Your response **MUST** end with a fenced JSON block in exactly this format. This is how the harness parses your results — if you omit it or place text after it, the results are lost.
 
 ```json
 {
@@ -49,8 +49,15 @@ Return ONLY a JSON block in this exact format:
 }
 ```
 
-If no tests could be generated or run, still return the JSON block with an empty results array:
+- One entry per acceptance criterion tested.
+- `"passed"`: `true` if the criterion was verified, `false` if the test failed.
+- `"detail"`: include only for failures — the error message or what was expected vs. found.
+- `"testFilePath"`: the absolute path to the generated test file.
+
+If no tests could be generated or run, return:
 
 ```json
 { "results": [], "testFilePath": null }
 ```
+
+**Do NOT place any text after the closing ``` of the JSON block.** The JSON block must be the absolute last thing in your response.

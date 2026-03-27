@@ -4,6 +4,9 @@
  * Each stdout line is a JSON object. We care about:
  * - `{"type":"assistant","message":{"content":[{"type":"text","text":"..."}]}}` — model text
  * - `{"type":"result","result":"...","total_cost_usd":...}` — final result with usage
+ *
+ * The `result` field may be a plain string or an array of content blocks
+ * (`[{"type":"text","text":"..."}]`). Both formats are handled.
  */
 /**
  * Parse a single NDJSON line into a StreamEvent.
@@ -23,26 +26,35 @@ export function parseStreamLine(line) {
         const message = parsed.message;
         if (!message)
             return { type: "other" };
-        const content = message.content;
-        if (!Array.isArray(content))
+        const text = extractTextFromContentBlocks(message.content);
+        if (text.length === 0)
             return { type: "other" };
-        const texts = content
-            .filter((c) => c.type === "text" && typeof c.text === "string")
-            .map((c) => c.text);
-        if (texts.length === 0)
-            return { type: "other" };
-        return { type: "text", text: texts.join("") };
+        return { type: "text", text };
     }
     if (parsed.type === "result") {
         const result = parsed.result;
         const usage = extractUsageFromParsed(parsed);
         return {
             type: "result",
-            text: typeof result === "string" ? result : "",
+            text: typeof result === "string"
+                ? result
+                : extractTextFromContentBlocks(result),
             ...(usage ? { usage } : {}),
         };
     }
     return { type: "other" };
+}
+/**
+ * Extract concatenated text from a content-blocks array.
+ * Handles both `[{"type":"text","text":"..."}]` arrays and non-array values.
+ */
+function extractTextFromContentBlocks(value) {
+    if (!Array.isArray(value))
+        return "";
+    const texts = value
+        .filter((c) => c.type === "text" && typeof c.text === "string")
+        .map((c) => c.text);
+    return texts.join("");
 }
 /**
  * Extract usage stats from a parsed result JSON object.

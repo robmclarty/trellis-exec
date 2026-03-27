@@ -4,6 +4,9 @@
  * Each stdout line is a JSON object. We care about:
  * - `{"type":"assistant","message":{"content":[{"type":"text","text":"..."}]}}` — model text
  * - `{"type":"result","result":"...","total_cost_usd":...}` — final result with usage
+ *
+ * The `result` field may be a plain string or an array of content blocks
+ * (`[{"type":"text","text":"..."}]`). Both formats are handled.
  */
 export type UsageStats = {
     inputTokens: number;

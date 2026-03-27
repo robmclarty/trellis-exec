@@ -12,6 +12,7 @@ export type BrowserAcceptanceConfig = {
   saveTests: boolean;
   testOutputDir?: string;
   agentLauncher: AgentLauncher;
+  verbose?: boolean;
 };
 
 type TesterResult = {
@@ -60,6 +61,12 @@ export async function runBrowserAcceptance(
       filePaths: [config.specPath],
       outputPaths: [testOutputDir],
     });
+
+    if (config.verbose) {
+      console.log(`[browser-tester] raw output (${testerResult.output.length} chars):`);
+      console.log(testerResult.output.slice(0, 2000));
+      if (testerResult.output.length > 2000) console.log("[…truncated]");
+    }
 
     lastResults = parseTesterOutput(testerResult.output);
 

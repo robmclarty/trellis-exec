@@ -28,6 +28,12 @@ export async function runBrowserAcceptance(config) {
             filePaths: [config.specPath],
             outputPaths: [testOutputDir],
         });
+        if (config.verbose) {
+            console.log(`[browser-tester] raw output (${testerResult.output.length} chars):`);
+            console.log(testerResult.output.slice(0, 2000));
+            if (testerResult.output.length > 2000)
+                console.log("[…truncated]");
+        }
         lastResults = parseTesterOutput(testerResult.output);
         // If the tester returned no structured results, stop — there's nothing to fix.
         if (lastResults.results.length === 0) {

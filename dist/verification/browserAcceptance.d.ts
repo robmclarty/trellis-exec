@@ -9,6 +9,7 @@ export type BrowserAcceptanceConfig = {
     saveTests: boolean;
     testOutputDir?: string;
     agentLauncher: AgentLauncher;
+    verbose?: boolean;
 };
 /**
  * Runs the end-of-build browser acceptance test cycle.

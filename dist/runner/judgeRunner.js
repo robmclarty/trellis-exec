@@ -29,6 +29,7 @@ export function selectJudgeModel(diffLineCount, taskCount, override) {
 export async function judgePhase(config) {
     const maxCorrections = config.maxCorrections ?? 2;
     const { phase, report, state, projectRoot, ctx, logger, startSha } = config;
+    const usageOrEmpty = (u) => u.inputTokens > 0 || u.outputTokens > 0 ? { usage: u } : {};
     let changedFiles = getChangedFiles(projectRoot, startSha);
     if (changedFiles.length === 0) {
         return {
@@ -45,6 +46,7 @@ export async function judgePhase(config) {
     let previousIssues;
     let fixDiffContent;
     let fixChangedFiles;
+    const accUsage = { inputTokens: 0, outputTokens: 0, costUsd: 0 };
     for (let attempt = 0; attempt <= maxCorrections; attempt++) {
         // Build prompt: first pass uses full phase diff, subsequent passes use fix-only diff
         let prompt;
@@ -85,6 +87,11 @@ export async function judgePhase(config) {
         });
         const duration = Date.now() - startTime;
         judgeSpinner.stop();
+        if (result.usage) {
+            accUsage.inputTokens += result.usage.inputTokens;
+            accUsage.outputTokens += result.usage.outputTokens;
+            accUsage.costUsd += result.usage.costUsd;
+        }
         logger.append({
             phaseId: phase.id,
             turnNumber: 0,
@@ -103,6 +110,7 @@ export async function judgePhase(config) {
             return {
                 assessment: { passed: true, issues: [], suggestions: [], corrections: [] },
                 correctionAttempts: attempt,
+                ...usageOrEmpty(accUsage),
             };
         }
         assessment = parseJudgeResult(result.output);
@@ -110,7 +118,7 @@ export async function judgePhase(config) {
             if (ctx.verbose) {
                 console.log(`[judge] passed on attempt ${attempt + 1}`);
             }
-            return { assessment, correctionAttempts: attempt };
+            return { assessment, correctionAttempts: attempt, ...usageOrEmpty(accUsage) };
         }
         // Judge found issues — save for targeted re-judging
         previousIssues = assessment.issues;
@@ -126,7 +134,7 @@ export async function judgePhase(config) {
         // Dispatch fix agent
         console.log(`Dispatching fix agent (attempt ${attempt + 1})…`);
         const fixPrompt = buildFixPrompt(assessment.issues, phase, state, ctx);
-        await launcher.dispatchSubAgent({
+        const fixResult = await launcher.dispatchSubAgent({
             type: "fix",
             taskId: `${phase.id}-fix-${attempt}`,
             instructions: fixPrompt,
@@ -135,6 +143,11 @@ export async function judgePhase(config) {
                 .filter((f) => f.status !== "D")
                 .map((f) => f.path),
         });
+        if (fixResult.usage) {
+            accUsage.inputTokens += fixResult.usage.inputTokens;
+            accUsage.outputTokens += fixResult.usage.outputTokens;
+            accUsage.costUsd += fixResult.usage.costUsd;
+        }
         // Run check command after fix if configured
         if (ctx.checkCommand) {
             const checkRunner = createCheckRunner({
@@ -159,7 +172,7 @@ export async function judgePhase(config) {
         // Refresh changed files for file paths context
         changedFiles = getChangedFiles(projectRoot, startSha);
     }
-    return { assessment, correctionAttempts: maxCorrections };
+    return { assessment, correctionAttempts: maxCorrections, ...usageOrEmpty(accUsage) };
 }
 // ---------------------------------------------------------------------------
 // Judge outcome application

@@ -105,6 +105,7 @@ export async function runEndOfBuildAcceptance(
       maxRetries: ctx.browserTestRetries,
       saveTests: ctx.saveE2eTests,
       agentLauncher: launcher,
+      verbose: ctx.verbose,
     });
 
     return report;

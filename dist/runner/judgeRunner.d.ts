@@ -3,9 +3,11 @@ import type { TasksJson } from "../types/tasks.js";
 import type { SharedState, PhaseReport, JudgeAssessment } from "../types/state.js";
 import type { TrajectoryLogger } from "../logging/trajectoryLogger.js";
 import type { RunContext } from "../types/runner.js";
+import type { UsageStats } from "../ui/streamParser.js";
 export type JudgePhaseResult = {
     assessment: JudgeAssessment;
     correctionAttempts: number;
+    usage?: UsageStats;
 };
 /**
  * Selects the judge model based on diff size and task count.

@@ -592,6 +592,7 @@ type PhasePipelineConfig = {
 type PhasePipelineResult = {
   report: PhaseReport;
   tasksJson: TasksJson;
+  subAgentUsage?: UsageStats;
 };
 
 /**
@@ -606,6 +607,7 @@ async function runPostExecutionPipeline(
 ): Promise<PhasePipelineResult> {
   const { phase, phaseExecStatus, state, localCtx, projectRoot, logger } = config;
   let { report, tasksJson } = config;
+  let subAgentUsage: UsageStats | undefined;
 
   // Browser smoke check (Tier 1) — before judge
   if (phase.requiresBrowserTest && report.status !== "failed") {
@@ -651,6 +653,10 @@ async function runPostExecutionPipeline(
       ...(report.startSha ? { startSha: report.startSha } : {}),
     });
 
+    if (judgeResult.usage) {
+      subAgentUsage = judgeResult.usage;
+    }
+
     const judgeOutcome = applyJudgeOutcome({
       judgeResult,
       report,
@@ -693,7 +699,7 @@ async function runPostExecutionPipeline(
     }
   }
 
-  return { report, tasksJson };
+  return { report, tasksJson, ...(subAgentUsage ? { subAgentUsage } : {}) };
 }
 
 // ---------------------------------------------------------------------------
@@ -818,6 +824,20 @@ export async function runPhases(
       });
       report = pipeline.report;
       mutableTasksJson = pipeline.tasksJson;
+
+      // Accumulate sub-agent usage (judge, fix) into phase totals
+      if (pipeline.subAgentUsage) {
+        const prev = phaseTokens[phase.id];
+        if (prev) {
+          phaseTokens[phase.id] = {
+            inputTokens: prev.inputTokens + pipeline.subAgentUsage.inputTokens,
+            outputTokens: prev.outputTokens + pipeline.subAgentUsage.outputTokens,
+            costUsd: prev.costUsd + pipeline.subAgentUsage.costUsd,
+          };
+        } else {
+          phaseTokens[phase.id] = { ...pipeline.subAgentUsage };
+        }
+      }
 
       // Determine action: combine report recommendation with user input
       let action: "advance" | "retry" | "skip" | "halt" =
@@ -1050,6 +1070,17 @@ export async function runSinglePhase(
     });
     report = pipeline.report;
     const correctedTasksJson = pipeline.tasksJson;
+
+    // Merge sub-agent usage into orchestrator usage for total phase cost
+    if (pipeline.subAgentUsage && phaseUsage) {
+      phaseUsage = {
+        inputTokens: phaseUsage.inputTokens + pipeline.subAgentUsage.inputTokens,
+        outputTokens: phaseUsage.outputTokens + pipeline.subAgentUsage.outputTokens,
+        costUsd: phaseUsage.costUsd + pipeline.subAgentUsage.costUsd,
+      };
+    } else if (pipeline.subAgentUsage) {
+      phaseUsage = pipeline.subAgentUsage;
+    }
 
     if (report.status === "complete" && report.recommendedAction === "advance") {
       makePhaseCommit(projectRoot, phase, report);

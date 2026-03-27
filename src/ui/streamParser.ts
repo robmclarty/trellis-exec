@@ -4,6 +4,9 @@
  * Each stdout line is a JSON object. We care about:
  * - `{"type":"assistant","message":{"content":[{"type":"text","text":"..."}]}}` — model text
  * - `{"type":"result","result":"...","total_cost_usd":...}` — final result with usage
+ *
+ * The `result` field may be a plain string or an array of content blocks
+ * (`[{"type":"text","text":"..."}]`). Both formats are handled.
  */
 
 export type UsageStats = {
@@ -35,15 +38,9 @@ export function parseStreamLine(line: string): StreamEvent {
     const message = parsed.message as Record<string, unknown> | undefined;
     if (!message) return { type: "other" };
 
-    const content = message.content as Array<Record<string, unknown>> | undefined;
-    if (!Array.isArray(content)) return { type: "other" };
-
-    const texts = content
-      .filter((c) => c.type === "text" && typeof c.text === "string")
-      .map((c) => c.text as string);
-
-    if (texts.length === 0) return { type: "other" };
-    return { type: "text", text: texts.join("") };
+    const text = extractTextFromContentBlocks(message.content);
+    if (text.length === 0) return { type: "other" };
+    return { type: "text", text };
   }
 
   if (parsed.type === "result") {
@@ -51,12 +48,26 @@ export function parseStreamLine(line: string): StreamEvent {
     const usage = extractUsageFromParsed(parsed);
     return {
       type: "result",
-      text: typeof result === "string" ? result : "",
+      text: typeof result === "string"
+        ? result
+        : extractTextFromContentBlocks(result),
       ...(usage ? { usage } : {}),
     };
   }
 
   return { type: "other" };
+}
+
+/**
+ * Extract concatenated text from a content-blocks array.
+ * Handles both `[{"type":"text","text":"..."}]` arrays and non-array values.
+ */
+function extractTextFromContentBlocks(value: unknown): string {
+  if (!Array.isArray(value)) return "";
+  const texts = (value as Array<Record<string, unknown>>)
+    .filter((c) => c.type === "text" && typeof c.text === "string")
+    .map((c) => c.text as string);
+  return texts.join("");
 }
 
 /**
