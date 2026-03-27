@@ -54,24 +54,24 @@ Execute phases from a tasks.json file.
 | Flag | Description |
 |------|-------------|
 | `--phase <id>` | Run a specific phase only |
-| `--dry-run` | Print execution plan without running |
-| `--resume` | Resume from last incomplete task |
-| `--check <command>` | Override check command |
-| `--concurrency <n>` | Max parallel sub-agents (default: 3) |
-| `--model <model>` | Override orchestrator model |
-| `--max-retries <n>` | Max phase retries (default: 2) |
+| `--dry-run` | Print execution plan without running (default: `false`) |
+| `--resume` | Resume from last incomplete task (default: `false`) |
+| `--check <command>` | Override check command (default: auto-detected) |
+| `--concurrency <n>` | Max parallel sub-agents (default: `3`) |
+| `--model <model>` | Override orchestrator model (default: `sonnet`) |
+| `--max-retries <n>` | Max phase retries (default: `2`) |
 | `--project-root <path>` | Override project root from tasks.json |
 | `--spec <path>` | Override spec path from tasks.json |
 | `--plan <path>` | Override plan path from tasks.json |
 | `--guidelines <path>` | Override guidelines path from tasks.json |
 | `--judge <mode>` | Judge mode: `always`, `on-failure`, `never` (default: `always`) |
 | `--judge-model <model>` | Override judge model (default: adaptive) |
-| `--headless` | Disable interactive prompts |
-| `--long-run` | Set 2-hour timeout for complex phases |
-| `--verbose` | Print debug output |
-| `--dev-server <cmd>` | Dev server start command for browser testing |
-| `--save-e2e-tests` | Save generated acceptance tests to project |
-| `--browser-test-retries <n>` | Max retries for browser acceptance loop (default: 3) |
+| `--headless` | Disable interactive prompts (default: `false`) |
+| `--long-run` | Set 2-hour timeout for complex phases (default: `false`) |
+| `--verbose` | Print debug output (default: `false`) |
+| `--dev-server <cmd>` | Dev server start command for browser testing (default: auto-detected) |
+| `--save-e2e-tests` | Save generated acceptance tests to project (default: `false`) |
+| `--browser-test-retries <n>` | Max retries for browser acceptance loop (default: `3`) |
 
 ### `trellis-exec compile <plan.md>`
 
@@ -83,8 +83,8 @@ Compile a plan.md into tasks.json.
 | `--guidelines <path>` | Path to project guidelines (optional) |
 | `--project-root <path>` | Project root relative to output (default: `.`) |
 | `--output <path>` | Output path (default: `./tasks.json`) |
-| `--enrich` | Run LLM enrichment to fill ambiguous fields |
-| `--timeout <ms>` | Timeout for LLM calls (default: 600000) |
+| `--enrich` | Run LLM enrichment to fill ambiguous fields (default: `false`) |
+| `--timeout <ms>` | Timeout for LLM calls (default: `600000`) |
 
 ### `trellis-exec status <tasks.json>`
 
