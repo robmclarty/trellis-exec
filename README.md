@@ -138,7 +138,7 @@ Show execution status for all phases and tasks.
          ▼               ▼              ▼
    ┌────────────┐ ┌───────────┐ ┌─────────────┐
    │ implement  │ │ scaffold  │ │ test-writer │
-   │  (Sonnet)  │ │  (Haiku)   │ │   (Sonnet)  │
+   │  (Sonnet)  │ │  (Haiku)  │ │   (Sonnet)  │
    └─────┬──────┘ └──────┬────┘ └───────┬─────┘
          │               │              │
          └───────────────┼──────────────┘
@@ -191,19 +191,19 @@ Show execution status for all phases and tasks.
                      ·
                      ·  (after all phases complete)
                      ·
-          ┌──────────▼───────────────────────────┐
-          │  BROWSER ACCEPTANCE LOOP (optional)  │
+          ┌──────────▼────────────────────────────┐
+          │  BROWSER ACCEPTANCE LOOP (optional)   │
           │  src/verification/browserAcceptance.ts│
-          │                                      │
-          │  ┌────────────────┐ ┌──────────────┐ │
-          │  │ browser-tester │ │ browser-fixer│ │
-          │  │   (Opus)       │ │   (Sonnet)   │ │
-          │  │ generate tests │ │ fix app code │ │
-          │  │ from spec      │ │ re-run tests │ │
-          │  └───────┬────────┘ └──────┬───────┘ │
+          │                                       │
+          │  ┌────────────────┐ ┌──────────────┐  │
+          │  │ browser-tester │ │ browser-fixer│  │
+          │  │   (Opus)       │ │   (Sonnet)   │  │
+          │  │ generate tests │ │ fix app code │  │
+          │  │ from spec      │ │ re-run tests │  │
+          │  └───────┬────────┘ └──────┬───────┘  │
           │          │◀────────────────┘          │
           │          │  (retry until all pass)    │
-          └──────────┴───────────────────────────┘
+          └──────────┴────────────────────────────┘
 ```
 
 The system has five layers:
