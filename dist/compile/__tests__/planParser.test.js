@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { readFileSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { parsePlan } from "../planParser.js";

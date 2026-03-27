@@ -3,7 +3,7 @@ import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
-import { getGitRoot, getCurrentSha, ensureInitialCommit, commitAll, getChangedFiles, getChangedFilesRange, getDiffContent, getDiffContentRange, } from "../git.js";
+import { getGitRoot, getCurrentSha, ensureInitialCommit, commitAll, getChangedFiles, getDiffContent, } from "../git.js";
 function git(cwd, ...args) {
     return execFileSync("git", args, {
         cwd,
@@ -109,7 +109,7 @@ describe("git utilities", () => {
             expect(log).toContain("- Created form");
         });
     });
-    describe("getChangedFilesRange", () => {
+    describe("getChangedFiles with fromSha", () => {
         it("returns files changed between two commits plus untracked", () => {
             initRepo(tmpDir);
             writeFileSync(join(tmpDir, "base.txt"), "base");
@@ -122,7 +122,7 @@ describe("git utilities", () => {
             git(tmpDir, "commit", "-m", "add committed file");
             // Create untracked file
             writeFileSync(join(tmpDir, "untracked.txt"), "untracked");
-            const files = getChangedFilesRange(tmpDir, baseSha);
+            const files = getChangedFiles(tmpDir, baseSha);
             const paths = files.map((f) => f.path);
             expect(paths).toContain("committed.txt");
             expect(paths).toContain("untracked.txt");
@@ -134,11 +134,11 @@ describe("git utilities", () => {
             git(tmpDir, "add", "-A");
             git(tmpDir, "commit", "-m", "init");
             const sha = git(tmpDir, "rev-parse", "HEAD");
-            const files = getChangedFilesRange(tmpDir, sha);
+            const files = getChangedFiles(tmpDir, sha);
             expect(files).toEqual([]);
         });
     });
-    describe("getDiffContentRange", () => {
+    describe("getDiffContent with fromSha", () => {
         it("includes both committed and uncommitted diffs", () => {
             initRepo(tmpDir);
             writeFileSync(join(tmpDir, "file.txt"), "original");
@@ -151,7 +151,7 @@ describe("git utilities", () => {
             git(tmpDir, "commit", "-m", "modify");
             // Uncommitted change
             writeFileSync(join(tmpDir, "new.txt"), "new content");
-            const diff = getDiffContentRange(tmpDir, baseSha);
+            const diff = getDiffContent(tmpDir, baseSha);
             expect(diff).toContain("modified");
             expect(diff).toContain("new content");
         });
@@ -164,11 +164,11 @@ describe("git utilities", () => {
             writeFileSync(join(tmpDir, "file.txt"), "changed");
             git(tmpDir, "add", "-A");
             git(tmpDir, "commit", "-m", "change");
-            const diff = getDiffContentRange(tmpDir, baseSha);
+            const diff = getDiffContent(tmpDir, baseSha);
             expect(diff).toContain("changed");
         });
     });
-    describe("getChangedFiles (existing)", () => {
+    describe("getChangedFiles (no fromSha)", () => {
         it("returns untracked files", () => {
             initRepo(tmpDir);
             git(tmpDir, "commit", "--allow-empty", "-m", "init");
@@ -177,7 +177,7 @@ describe("git utilities", () => {
             expect(files).toEqual([{ path: "new.txt", status: "?" }]);
         });
     });
-    describe("getDiffContent (existing)", () => {
+    describe("getDiffContent (no fromSha)", () => {
         it("includes untracked files via intent-to-add", () => {
             initRepo(tmpDir);
             git(tmpDir, "commit", "--allow-empty", "-m", "init");

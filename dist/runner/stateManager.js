@@ -14,7 +14,6 @@ export function initState(tasksJson) {
         completedPhases: [],
         phaseReports: [],
         phaseRetries: {},
-        phaseReport: null,
     };
 }
 /**
@@ -68,7 +67,6 @@ export function updateStateAfterPhase(state, report, phases) {
         completedPhases: [...state.completedPhases, state.currentPhase],
         phaseReports: [...state.phaseReports, report],
         currentPhase: nextPhase?.id ?? "",
-        phaseReport: null,
     };
 }
 /**
@@ -95,22 +93,73 @@ export function updateTaskStatus(tasksJson, phaseId, taskId, status) {
  * Marks completed tasks as "complete" and failed tasks as "failed".
  * Silently skips task IDs not found in the phase (e.g., corrective tasks
  * dynamically added during retries).
+ *
+ * Uses a single pass through the phase's tasks instead of O(n) per update.
  */
 export function applyReportToTasks(tasksJson, phaseId, report) {
-    let updated = tasksJson;
+    const phaseIndex = tasksJson.phases.findIndex((p) => p.id === phaseId);
+    if (phaseIndex < 0)
+        return tasksJson;
+    // Build a status map from both arrays for O(1) lookup
+    const statusMap = new Map();
     for (const taskId of report.tasksCompleted) {
-        try {
-            updated = updateTaskStatus(updated, phaseId, taskId, "complete");
-        }
-        catch { /* corrective/dynamic task IDs may not exist in original tasks.json */ }
+        statusMap.set(taskId, "complete");
     }
     for (const taskId of report.tasksFailed) {
-        try {
-            updated = updateTaskStatus(updated, phaseId, taskId, "failed");
-        }
-        catch { /* skip */ }
+        statusMap.set(taskId, "failed");
     }
-    return updated;
+    const phase = tasksJson.phases[phaseIndex];
+    let changed = false;
+    const updatedTasks = phase.tasks.map((t) => {
+        const newStatus = statusMap.get(t.id);
+        if (newStatus !== undefined && newStatus !== t.status) {
+            changed = true;
+            return { ...t, status: newStatus };
+        }
+        return t;
+    });
+    if (!changed)
+        return tasksJson;
+    const updatedPhases = tasksJson.phases.map((p, i) => i === phaseIndex ? { ...p, tasks: updatedTasks } : p);
+    return { ...tasksJson, phases: updatedPhases };
+}
+/**
+ * Applies judge-provided corrections to tasks.json.
+ * Currently supports targetPath renames — replacing stale spec paths
+ * with the actual paths the orchestrator created on disk.
+ *
+ * Returns the updated TasksJson and auto-generated constraint-tier
+ * decision entries so corrections propagate to future phases.
+ */
+export function applyCorrections(tasksJson, corrections) {
+    if (corrections.length === 0) {
+        return { tasksJson, decisions: [] };
+    }
+    const decisions = [];
+    let updated = tasksJson;
+    for (const correction of corrections) {
+        if (correction.type === "targetPath") {
+            updated = {
+                ...updated,
+                phases: updated.phases.map((phase) => ({
+                    ...phase,
+                    tasks: phase.tasks.map((task) => {
+                        if (task.id !== correction.taskId)
+                            return task;
+                        return {
+                            ...task,
+                            targetPaths: task.targetPaths.map((tp) => tp === correction.old ? correction.new : tp),
+                        };
+                    }),
+                })),
+            };
+            decisions.push({
+                text: `[${correction.taskId}] targetPath renamed: ${correction.old} → ${correction.new} (${correction.reason})`,
+                tier: "constraint",
+            });
+        }
+    }
+    return { tasksJson: updated, decisions };
 }
 /**
  * Returns the commit range (startSha..endSha) for a completed phase,

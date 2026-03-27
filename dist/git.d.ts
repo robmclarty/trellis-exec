@@ -8,22 +8,26 @@ export type ChangedFile = {
     status: "A" | "M" | "D" | "R" | (string & {});
 };
 /**
- * Returns the list of files changed relative to HEAD.
+ * Returns the list of files changed relative to HEAD (or since `fromSha` if provided).
  *
- * `git diff --name-status HEAD` captures what changed since the last commit.
  * Also includes untracked files (status "?").
  *
  * @param cwd - Working directory (project root)
+ * @param fromSha - Optional base SHA; when provided uses `fromSha..HEAD` range
  * @returns Array of changed files with their git status letter
  */
-export declare function getChangedFiles(cwd: string): ChangedFile[];
+export declare function getChangedFiles(cwd: string, fromSha?: string): ChangedFile[];
 /**
- * Returns the full unified diff relative to HEAD.
+ * Returns the full unified diff relative to HEAD (or since `fromSha` if provided).
+ *
+ * When `fromSha` is supplied, returns committed changes (`fromSha..HEAD`) plus
+ * any uncommitted working-tree changes concatenated together.
  *
  * @param cwd - Working directory (project root)
+ * @param fromSha - Optional base SHA; when provided includes committed + uncommitted diffs
  * @returns The unified diff string, or empty string on failure
  */
-export declare function getDiffContent(cwd: string): string;
+export declare function getDiffContent(cwd: string, fromSha?: string): string;
 /**
  * Returns the current HEAD SHA, or null if the repo has no commits.
  */
@@ -38,15 +42,4 @@ export declare function ensureInitialCommit(cwd: string): string;
  * Returns the new commit SHA, or null if there was nothing to commit.
  */
 export declare function commitAll(cwd: string, message: string): string | null;
-/**
- * Returns files changed between a base SHA and HEAD, plus untracked files.
- * Used by the judge to see all changes in a phase (including per-task commits).
- */
-export declare function getChangedFilesRange(cwd: string, fromSha: string): ChangedFile[];
-/**
- * Returns the unified diff covering all changes since fromSha,
- * including both committed changes (fromSha..HEAD) and any
- * uncommitted changes in the working tree.
- */
-export declare function getDiffContentRange(cwd: string, fromSha: string): string;
 //# sourceMappingURL=git.d.ts.map

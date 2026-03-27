@@ -2,7 +2,7 @@ import { describe, it, beforeEach, afterEach, expect } from "vitest";
 import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync, } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { initState, loadState, saveState, updateStateAfterPhase, updateTaskStatus, applyReportToTasks, getPhaseCommitRange, } from "../stateManager.js";
+import { initState, loadState, saveState, updateStateAfterPhase, updateTaskStatus, applyReportToTasks, applyCorrections, getPhaseCommitRange, } from "../stateManager.js";
 function makeTasksJson() {
     return {
         projectRoot: ".",
@@ -282,6 +282,150 @@ describe("stateManager", () => {
             applyReportToTasks(tasks, "phase-1", report);
             const task = tasks.phases[0]?.tasks.find((t) => t.id === "task-1-1");
             expect(task?.status).toBe("pending");
+        });
+    });
+    describe("applyCorrections", () => {
+        it("replaces a targetPath in the correct task", () => {
+            const tasks = makeTasksJson();
+            const { tasksJson: updated } = applyCorrections(tasks, [
+                {
+                    type: "targetPath",
+                    taskId: "task-1-1",
+                    old: "package.json",
+                    new: "package.jsonc",
+                    reason: "JSONC convention used",
+                },
+            ]);
+            const task = updated.phases[0]?.tasks.find((t) => t.id === "task-1-1");
+            expect(task?.targetPaths).toEqual(["package.jsonc"]);
+        });
+        it("generates a constraint-tier decision entry", () => {
+            const tasks = makeTasksJson();
+            const { decisions } = applyCorrections(tasks, [
+                {
+                    type: "targetPath",
+                    taskId: "task-1-1",
+                    old: "package.json",
+                    new: "package.jsonc",
+                    reason: "JSONC convention used",
+                },
+            ]);
+            expect(decisions).toHaveLength(1);
+            expect(decisions[0]?.tier).toBe("constraint");
+            expect(decisions[0]?.text).toContain("package.json");
+            expect(decisions[0]?.text).toContain("package.jsonc");
+            expect(decisions[0]?.text).toContain("task-1-1");
+        });
+        it("is a no-op for a non-existent taskId", () => {
+            const tasks = makeTasksJson();
+            const { tasksJson: updated, decisions } = applyCorrections(tasks, [
+                {
+                    type: "targetPath",
+                    taskId: "nonexistent-task",
+                    old: "foo.js",
+                    new: "foo.jsx",
+                    reason: "JSX required",
+                },
+            ]);
+            // targetPaths unchanged across all tasks
+            expect(updated.phases[0]?.tasks[0]?.targetPaths).toEqual(["package.json"]);
+            expect(updated.phases[1]?.tasks[0]?.targetPaths).toEqual(["src/index.ts"]);
+            // Decision still generated (records the intent even if task not found)
+            expect(decisions).toHaveLength(1);
+        });
+        it("handles multiple corrections on the same task", () => {
+            const tasks = {
+                ...makeTasksJson(),
+                phases: [
+                    {
+                        id: "phase-1",
+                        name: "scaffolding",
+                        description: "Set up project",
+                        requiresBrowserTest: false,
+                        tasks: [
+                            {
+                                id: "task-1-1",
+                                title: "Create components",
+                                description: "Create components",
+                                dependsOn: [],
+                                specSections: [],
+                                targetPaths: ["src/Nav.css", "src/Modal.css"],
+                                acceptanceCriteria: [],
+                                subAgentType: "implement",
+                                status: "pending",
+                            },
+                        ],
+                    },
+                ],
+            };
+            const { tasksJson: updated, decisions } = applyCorrections(tasks, [
+                { type: "targetPath", taskId: "task-1-1", old: "src/Nav.css", new: "src/Nav.module.css", reason: "CSS Modules" },
+                { type: "targetPath", taskId: "task-1-1", old: "src/Modal.css", new: "src/Modal.module.css", reason: "CSS Modules" },
+            ]);
+            const task = updated.phases[0]?.tasks[0];
+            expect(task?.targetPaths).toEqual(["src/Nav.module.css", "src/Modal.module.css"]);
+            expect(decisions).toHaveLength(2);
+        });
+        it("returns unchanged input for empty corrections", () => {
+            const tasks = makeTasksJson();
+            const { tasksJson: updated, decisions } = applyCorrections(tasks, []);
+            expect(updated).toBe(tasks); // same reference — early return
+            expect(decisions).toEqual([]);
+        });
+        it("does not mutate the original TasksJson", () => {
+            const tasks = makeTasksJson();
+            applyCorrections(tasks, [
+                {
+                    type: "targetPath",
+                    taskId: "task-1-1",
+                    old: "package.json",
+                    new: "package.jsonc",
+                    reason: "test",
+                },
+            ]);
+            expect(tasks.phases[0]?.tasks[0]?.targetPaths).toEqual(["package.json"]);
+        });
+    });
+    describe("loadState edge cases", () => {
+        it("throws with descriptive error for truncated JSON", () => {
+            const statePath = join(tmpDir, "truncated.json");
+            writeFileSync(statePath, '{"currentPhase": "phase-1", "completedPha', "utf-8");
+            expect(() => loadState(statePath)).toThrow(/Failed to parse state file/);
+        });
+        it("throws for valid JSON that does not match SharedState schema", () => {
+            const statePath = join(tmpDir, "wrong-schema.json");
+            writeFileSync(statePath, JSON.stringify({
+                currentPhase: "phase-1",
+                // missing completedPhases, phaseReports, phaseRetries
+            }), "utf-8");
+            expect(() => loadState(statePath)).toThrow();
+        });
+    });
+    describe("applyReportToTasks edge cases", () => {
+        it("silently skips corrective task IDs not present in the phase", () => {
+            const tasks = makeTasksJson();
+            const report = {
+                ...makePhaseReport("phase-1"),
+                tasksCompleted: ["corrective-new-task"],
+                tasksFailed: [],
+            };
+            // Should not throw; real tasks remain unchanged
+            const updated = applyReportToTasks(tasks, "phase-1", report);
+            const task = updated.phases[0]?.tasks.find((t) => t.id === "task-1-1");
+            expect(task?.status).toBe("pending");
+        });
+        it("failed wins when a task appears in both completed and failed lists", () => {
+            const tasks = makeTasksJson();
+            const report = {
+                ...makePhaseReport("phase-1"),
+                tasksCompleted: ["task-1-1"],
+                tasksFailed: ["task-1-1"],
+            };
+            const updated = applyReportToTasks(tasks, "phase-1", report);
+            const task = updated.phases[0]?.tasks.find((t) => t.id === "task-1-1");
+            // tasksFailed is processed after tasksCompleted in the statusMap,
+            // so "failed" overwrites "complete"
+            expect(task?.status).toBe("failed");
         });
     });
 });

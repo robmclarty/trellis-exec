@@ -2,7 +2,7 @@ import { z } from "zod";
 export declare const CheckResultSchema: z.ZodObject<{
     passed: z.ZodBoolean;
     output: z.ZodOptional<z.ZodString>;
-    exitCode: z.ZodOptional<z.ZodNumber>;
+    exitCode: z.ZodNumber;
 }, z.core.$strip>;
 export declare const JudgeIssueObjectSchema: z.ZodObject<{
     task: z.ZodOptional<z.ZodString>;
@@ -14,6 +14,15 @@ export declare const JudgeIssueSchema: z.ZodUnion<readonly [z.ZodString, z.ZodOb
     severity: z.ZodOptional<z.ZodString>;
     description: z.ZodString;
 }, z.core.$strip>]>;
+export declare const JudgeCorrectionSchema: z.ZodObject<{
+    type: z.ZodEnum<{
+        targetPath: "targetPath";
+    }>;
+    taskId: z.ZodString;
+    old: z.ZodString;
+    new: z.ZodString;
+    reason: z.ZodString;
+}, z.core.$strip>;
 export declare const JudgeAssessmentSchema: z.ZodObject<{
     passed: z.ZodBoolean;
     issues: z.ZodArray<z.ZodUnion<readonly [z.ZodString, z.ZodObject<{
@@ -26,6 +35,15 @@ export declare const JudgeAssessmentSchema: z.ZodObject<{
         severity: z.ZodOptional<z.ZodString>;
         description: z.ZodString;
     }, z.core.$strip>]>>;
+    corrections: z.ZodDefault<z.ZodOptional<z.ZodArray<z.ZodObject<{
+        type: z.ZodEnum<{
+            targetPath: "targetPath";
+        }>;
+        taskId: z.ZodString;
+        old: z.ZodString;
+        new: z.ZodString;
+        reason: z.ZodString;
+    }, z.core.$strip>>>>;
 }, z.core.$strip>;
 export declare const DecisionTierSchema: z.ZodEnum<{
     architectural: "architectural";
@@ -95,6 +113,15 @@ export declare const PhaseReportSchema: z.ZodObject<{
             severity: z.ZodOptional<z.ZodString>;
             description: z.ZodString;
         }, z.core.$strip>]>>;
+        corrections: z.ZodDefault<z.ZodOptional<z.ZodArray<z.ZodObject<{
+            type: z.ZodEnum<{
+                targetPath: "targetPath";
+            }>;
+            taskId: z.ZodString;
+            old: z.ZodString;
+            new: z.ZodString;
+            reason: z.ZodString;
+        }, z.core.$strip>>>>;
     }, z.core.$strip>>;
     browserSmokeReport: z.ZodOptional<z.ZodObject<{
         passed: z.ZodBoolean;
@@ -148,6 +175,15 @@ export declare const SharedStateSchema: z.ZodObject<{
                 severity: z.ZodOptional<z.ZodString>;
                 description: z.ZodString;
             }, z.core.$strip>]>>;
+            corrections: z.ZodDefault<z.ZodOptional<z.ZodArray<z.ZodObject<{
+                type: z.ZodEnum<{
+                    targetPath: "targetPath";
+                }>;
+                taskId: z.ZodString;
+                old: z.ZodString;
+                new: z.ZodString;
+                reason: z.ZodString;
+            }, z.core.$strip>>>>;
         }, z.core.$strip>>;
         browserSmokeReport: z.ZodOptional<z.ZodObject<{
             passed: z.ZodBoolean;
@@ -177,60 +213,11 @@ export declare const SharedStateSchema: z.ZodObject<{
         endSha: z.ZodOptional<z.ZodString>;
     }, z.core.$strip>>;
     phaseRetries: z.ZodRecord<z.ZodString, z.ZodNumber>;
-    phaseReport: z.ZodDefault<z.ZodNullable<z.ZodObject<{
-        phaseId: z.ZodString;
-        status: z.ZodEnum<{
-            complete: "complete";
-            failed: "failed";
-            partial: "partial";
-        }>;
-        summary: z.ZodString;
-        tasksCompleted: z.ZodArray<z.ZodString>;
-        tasksFailed: z.ZodArray<z.ZodString>;
-        judgeAssessment: z.ZodOptional<z.ZodObject<{
-            passed: z.ZodBoolean;
-            issues: z.ZodArray<z.ZodUnion<readonly [z.ZodString, z.ZodObject<{
-                task: z.ZodOptional<z.ZodString>;
-                severity: z.ZodOptional<z.ZodString>;
-                description: z.ZodString;
-            }, z.core.$strip>]>>;
-            suggestions: z.ZodArray<z.ZodUnion<readonly [z.ZodString, z.ZodObject<{
-                task: z.ZodOptional<z.ZodString>;
-                severity: z.ZodOptional<z.ZodString>;
-                description: z.ZodString;
-            }, z.core.$strip>]>>;
-        }, z.core.$strip>>;
-        browserSmokeReport: z.ZodOptional<z.ZodObject<{
-            passed: z.ZodBoolean;
-            skipped: z.ZodBoolean;
-            reason: z.ZodOptional<z.ZodString>;
-            consoleErrors: z.ZodArray<z.ZodString>;
-            interactionFailures: z.ZodArray<z.ZodString>;
-            screenshot: z.ZodOptional<z.ZodString>;
-        }, z.core.$strip>>;
-        orchestratorAnalysis: z.ZodString;
-        recommendedAction: z.ZodEnum<{
-            advance: "advance";
-            retry: "retry";
-            halt: "halt";
-        }>;
-        correctiveTasks: z.ZodArray<z.ZodString>;
-        decisionsLog: z.ZodArray<z.ZodObject<{
-            text: z.ZodString;
-            tier: z.ZodEnum<{
-                architectural: "architectural";
-                tactical: "tactical";
-                constraint: "constraint";
-            }>;
-        }, z.core.$strip>>;
-        handoff: z.ZodString;
-        startSha: z.ZodOptional<z.ZodString>;
-        endSha: z.ZodOptional<z.ZodString>;
-    }, z.core.$strip>>>;
 }, z.core.$strip>;
 export type DecisionEntry = z.infer<typeof DecisionEntrySchema>;
 export type CheckResult = z.infer<typeof CheckResultSchema>;
 export type JudgeIssue = z.infer<typeof JudgeIssueSchema>;
+export type JudgeCorrection = z.infer<typeof JudgeCorrectionSchema>;
 export type JudgeAssessment = z.infer<typeof JudgeAssessmentSchema>;
 export type BrowserSmokeReport = z.infer<typeof BrowserSmokeReportSchema>;
 export type BrowserAcceptanceResult = z.infer<typeof BrowserAcceptanceResultSchema>;

@@ -1,14 +1,12 @@
 import { describe, it, beforeEach, afterEach, expect, vi } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, mkdirSync, } from "node:fs";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 // ---------------------------------------------------------------------------
 // Mocks — must be declared before imports of the module under test
 // ---------------------------------------------------------------------------
 vi.mock("../../orchestrator/agentLauncher.js", () => ({
     createAgentLauncher: vi.fn(),
-    buildSubAgentPrompt: vi.fn(() => ""),
-    buildSubAgentArgs: vi.fn(() => []),
     execClaude: vi.fn(),
 }));
 vi.mock("../../git.js", () => ({
@@ -17,18 +15,15 @@ vi.mock("../../git.js", () => ({
     getCurrentSha: vi.fn(() => "abc123"),
     ensureInitialCommit: vi.fn(() => "abc123"),
     commitAll: vi.fn(() => null),
-    getChangedFilesRange: vi.fn(() => []),
-    getDiffContentRange: vi.fn(() => ""),
     getGitRoot: vi.fn(() => null),
 }));
 // Import module under test and mocked modules AFTER vi.mock declarations
-import { runPhases, dryRunReport, buildPhaseContext, buildJudgePrompt, parseJudgeResult, buildFixPrompt, buildReporterPrompt, normalizeReport, createDefaultCheck, extractScopes, makePhaseCommit, collectLearnings, hasNewTestFiles, } from "../phaseRunner.js";
+import { runPhases, dryRunReport, buildPhaseContext, buildJudgePrompt, parseJudgeResult, buildFixPrompt, buildReporterPrompt, normalizeReport, createDefaultCheck, extractScopes, makePhaseCommit, collectLearnings, hasNewTestFiles, reviewPhaseContract, detectTestCommand, selectJudgeModel, } from "../phaseRunner.js";
 import { createAgentLauncher } from "../../orchestrator/agentLauncher.js";
-import { getChangedFiles, commitAll, getChangedFilesRange, getDiffContentRange, ensureInitialCommit, getCurrentSha } from "../../git.js";
+import { getChangedFiles, getDiffContent, commitAll, ensureInitialCommit, getCurrentSha } from "../../git.js";
 const mockedGetChangedFiles = vi.mocked(getChangedFiles);
+const mockedGetDiffContent = vi.mocked(getDiffContent);
 const mockedCommitAll = vi.mocked(commitAll);
-const mockedGetChangedFilesRange = vi.mocked(getChangedFilesRange);
-const mockedGetDiffContentRange = vi.mocked(getDiffContentRange);
 const mockedEnsureInitialCommit = vi.mocked(ensureInitialCommit);
 const mockedGetCurrentSha = vi.mocked(getCurrentSha);
 // ---------------------------------------------------------------------------
@@ -155,8 +150,20 @@ function setupTmpDir(tasksJson) {
  * Sets up mocks so that each phase completes successfully.
  * The mock orchestrator writes a report file to disk and exits 0.
  */
-function setupMocksForSuccess(tmpDir, phaseReports) {
+function setupMocksForSuccess(tmpDir, phaseReports, tasksJson) {
     const mockCreateAgentLauncher = createAgentLauncher;
+    // Create target files on disk so completion verifier passes
+    if (tasksJson) {
+        for (const phase of tasksJson.phases) {
+            for (const task of phase.tasks) {
+                for (const targetPath of task.targetPaths) {
+                    const fullPath = join(tmpDir, targetPath);
+                    mkdirSync(dirname(fullPath), { recursive: true });
+                    writeFileSync(fullPath, "", "utf-8");
+                }
+            }
+        }
+    }
     let launchCount = 0;
     const phaseIds = [...phaseReports.keys()];
     mockCreateAgentLauncher.mockImplementation(() => ({
@@ -207,7 +214,7 @@ describe("phaseRunner", () => {
                     }),
                 ],
             ]);
-            setupMocksForSuccess(tmpDir, reports);
+            setupMocksForSuccess(tmpDir, reports, tasksJson);
             const result = await runPhases(config, tasksJson);
             expect(result.success).toBe(true);
             expect(result.phasesCompleted).toContain("phase-1");
@@ -324,7 +331,6 @@ describe("phaseRunner", () => {
                 completedPhases: [],
                 phaseReports: [],
                 phaseRetries: {},
-                phaseReport: null,
             };
             const context = buildPhaseContext(tasksJson.phases[0], state, "", config);
             expect(context).toContain("task-1-1");
@@ -352,7 +358,6 @@ describe("phaseRunner", () => {
                     }),
                 ],
                 phaseRetries: { "phase-1": 1 },
-                phaseReport: null,
             };
             const context = buildPhaseContext(tasksJson.phases[0], state, "", config);
             expect(context).toContain("Previous Attempt");
@@ -566,7 +571,6 @@ describe("phaseRunner", () => {
                 completedPhases: [],
                 phaseReports: [],
                 phaseRetries: {},
-                phaseReport: null,
             };
             tmpDir = setupTmpDir(tasks);
             const ctx = makeDefaultConfig(tmpDir);
@@ -583,7 +587,6 @@ describe("phaseRunner", () => {
                 completedPhases: [],
                 phaseReports: [],
                 phaseRetries: {},
-                phaseReport: null,
             };
             const learnings = collectLearnings(state);
             expect(learnings.architectural).toEqual([]);
@@ -603,7 +606,6 @@ describe("phaseRunner", () => {
                     }),
                 ],
                 phaseRetries: {},
-                phaseReport: null,
             };
             const learnings = collectLearnings(state);
             expect(learnings.tactical).toEqual([
@@ -622,7 +624,6 @@ describe("phaseRunner", () => {
                 completedPhases: reports.map((r) => r.phaseId),
                 phaseReports: reports,
                 phaseRetries: {},
-                phaseReport: null,
             };
             const learnings = collectLearnings(state);
             // Architectural is always preserved
@@ -643,7 +644,6 @@ describe("phaseRunner", () => {
                     }),
                 ],
                 phaseRetries: {},
-                phaseReport: null,
             };
             const learnings = collectLearnings(state);
             expect(learnings.tactical).toEqual(["[phase-2] Important finding"]);
@@ -662,7 +662,6 @@ describe("phaseRunner", () => {
                     }),
                 ],
                 phaseRetries: {},
-                phaseReport: null,
             };
             const learnings = collectLearnings(state);
             expect(learnings.architectural).toEqual(["[phase-1] Use ESM modules"]);
@@ -680,7 +679,6 @@ describe("phaseRunner", () => {
                 completedPhases: reports.map((r) => r.phaseId),
                 phaseReports: reports,
                 phaseRetries: {},
-                phaseReport: null,
             };
             const learnings = collectLearnings(state);
             expect(learnings.constraint).toContain("[phase-0] esbuild requires .jsx");
@@ -702,7 +700,6 @@ describe("phaseRunner", () => {
                     }),
                 ],
                 phaseRetries: {},
-                phaseReport: null,
             };
             const context = buildPhaseContext(tasksJson.phases[1], state, "Phase 1 done.", config);
             expect(context).toContain("## Spec Amendments from Prior Phases");
@@ -720,7 +717,6 @@ describe("phaseRunner", () => {
                     makePhaseReport("phase-1", { decisionsLog: [] }),
                 ],
                 phaseRetries: {},
-                phaseReport: null,
             };
             const context = buildPhaseContext(tasksJson.phases[1], state, "Phase 1 done.", config);
             expect(context).not.toContain("Spec Amendments from Prior Phases");
@@ -738,7 +734,6 @@ describe("phaseRunner", () => {
                     }),
                 ],
                 phaseRetries: {},
-                phaseReport: null,
             };
             const context = buildPhaseContext(tasksJson.phases[1], state, "Phase 1 done.", config);
             const specIndex = context.indexOf("## Spec Content");
@@ -759,7 +754,6 @@ describe("phaseRunner", () => {
                     }),
                 ],
                 phaseRetries: {},
-                phaseReport: null,
             };
             const context = buildPhaseContext(tasksJson.phases[1], state, "Phase 1 done.", config);
             expect(context).toContain("### Discovered Constraints (binding");
@@ -774,24 +768,23 @@ describe("phaseRunner", () => {
                 completedPhases: ["phase-1"],
                 phaseReports: [],
                 phaseRetries: {},
-                phaseReport: null,
             };
             const context = buildPhaseContext(tasksJson.phases[1], state, "Phase 1 done.", config);
             expect(context).toContain("## Prior Phase Handoff (authoritative");
         });
     });
     describe("runPhases — range-based judging", () => {
-        it("uses getChangedFilesRange with startSha during judge phase", async () => {
+        it("uses getChangedFiles with startSha during judge phase", async () => {
             const tasksJson = makeTasksJson();
             tmpDir = setupTmpDir(tasksJson);
             const config = makeDefaultConfig(tmpDir);
             // ensureInitialCommit returns the baseline SHA
             mockedEnsureInitialCommit.mockReturnValue("baseline-sha-000");
             // Range-based functions return some files so judge runs
-            mockedGetChangedFilesRange.mockReturnValue([
+            mockedGetChangedFiles.mockReturnValue([
                 { path: "package.json", status: "A" },
             ]);
-            mockedGetDiffContentRange.mockReturnValue("diff --git a/package.json");
+            mockedGetDiffContent.mockReturnValue("diff --git a/package.json");
             mockedGetCurrentSha.mockReturnValue("final-sha-999");
             mockedCommitAll.mockReturnValue("commit-sha-111");
             const reports = new Map([
@@ -808,21 +801,21 @@ describe("phaseRunner", () => {
                     }),
                 ],
             ]);
-            setupMocksForSuccess(tmpDir, reports);
+            setupMocksForSuccess(tmpDir, reports, tasksJson);
             await runPhases(config, tasksJson);
             // Verify range-based git functions were called with the baseline SHA
-            expect(mockedGetChangedFilesRange).toHaveBeenCalledWith(tmpDir, "baseline-sha-000");
-            expect(mockedGetDiffContentRange).toHaveBeenCalledWith(tmpDir, "baseline-sha-000");
+            expect(mockedGetChangedFiles).toHaveBeenCalledWith(tmpDir, "baseline-sha-000");
+            expect(mockedGetDiffContent).toHaveBeenCalledWith(tmpDir, "baseline-sha-000");
         });
         it("tracks startSha and endSha in phase reports", async () => {
             const tasksJson = makeTasksJson();
             tmpDir = setupTmpDir(tasksJson);
             const config = makeDefaultConfig(tmpDir);
             mockedEnsureInitialCommit.mockReturnValue("start-sha-aaa");
-            mockedGetChangedFilesRange.mockReturnValue([
+            mockedGetChangedFiles.mockReturnValue([
                 { path: "file.ts", status: "A" },
             ]);
-            mockedGetDiffContentRange.mockReturnValue("some diff");
+            mockedGetDiffContent.mockReturnValue("some diff");
             mockedGetCurrentSha.mockReturnValue("end-sha-bbb");
             mockedCommitAll.mockReturnValue("commit-sha-ccc");
             const reports = new Map([
@@ -839,7 +832,7 @@ describe("phaseRunner", () => {
                     }),
                 ],
             ]);
-            setupMocksForSuccess(tmpDir, reports);
+            setupMocksForSuccess(tmpDir, reports, tasksJson);
             const result = await runPhases(config, tasksJson);
             // Phase reports should include SHA tracking
             const phaseReport = result.finalState.phaseReports.find((r) => r.phaseId === "phase-1");
@@ -847,13 +840,13 @@ describe("phaseRunner", () => {
         });
     });
     describe("hasNewTestFiles", () => {
-        it("uses getChangedFilesRange when startSha is provided", () => {
-            mockedGetChangedFilesRange.mockReturnValueOnce([
+        it("uses getChangedFiles with fromSha when startSha is provided", () => {
+            mockedGetChangedFiles.mockReturnValueOnce([
                 { path: "test/foo.test.ts", status: "A" },
             ]);
             const result = hasNewTestFiles("/tmp/project", "abc123");
             expect(result).toBe(true);
-            expect(mockedGetChangedFilesRange).toHaveBeenCalledWith("/tmp/project", "abc123");
+            expect(mockedGetChangedFiles).toHaveBeenCalledWith("/tmp/project", "abc123");
         });
         it("falls back to getChangedFiles without startSha", () => {
             mockedGetChangedFiles.mockReturnValueOnce([
@@ -861,17 +854,17 @@ describe("phaseRunner", () => {
             ]);
             const result = hasNewTestFiles("/tmp/project");
             expect(result).toBe(true);
-            expect(mockedGetChangedFiles).toHaveBeenCalledWith("/tmp/project");
+            expect(mockedGetChangedFiles).toHaveBeenCalledWith("/tmp/project", undefined);
         });
         it("detects modified test files with startSha", () => {
-            mockedGetChangedFilesRange.mockReturnValueOnce([
+            mockedGetChangedFiles.mockReturnValueOnce([
                 { path: "src/__tests__/app.test.js", status: "M" },
             ]);
             const result = hasNewTestFiles("/tmp/project", "abc123");
             expect(result).toBe(true);
         });
         it("returns false when no test files in changes", () => {
-            mockedGetChangedFilesRange.mockReturnValueOnce([
+            mockedGetChangedFiles.mockReturnValueOnce([
                 { path: "src/index.ts", status: "A" },
             ]);
             const result = hasNewTestFiles("/tmp/project", "abc123");
@@ -887,10 +880,10 @@ describe("phaseRunner", () => {
             const config = { ...makeDefaultConfig(tmpDir), maxRetries: 1 };
             mockedEnsureInitialCommit.mockReturnValue("baseline-sha");
             // Phase has committed changes (so judge will run)
-            mockedGetChangedFilesRange.mockReturnValue([
+            mockedGetChangedFiles.mockReturnValue([
                 { path: "package.json", status: "A" },
             ]);
-            mockedGetDiffContentRange.mockReturnValue("diff content");
+            mockedGetDiffContent.mockReturnValue("diff content");
             mockedGetCurrentSha.mockReturnValue("end-sha");
             mockedCommitAll.mockReturnValue("commit-sha");
             const mockCreateAgentLauncher = createAgentLauncher;
@@ -949,7 +942,7 @@ describe("phaseRunner", () => {
                     }),
                 ],
             ]);
-            setupMocksForSuccess(tmpDir, reports);
+            setupMocksForSuccess(tmpDir, reports, tasksJson);
             await runPhases(config, tasksJson);
             // Read tasks.json from disk and verify statuses were updated
             const written = JSON.parse(readFileSync(join(tmpDir, "tasks.json"), "utf-8"));
@@ -984,11 +977,19 @@ describe("phaseRunner", () => {
             tasksJson.phases = [tasksJson.phases[0]];
             tmpDir = setupTmpDir(tasksJson);
             const config = { ...makeDefaultConfig(tmpDir), maxRetries: 1 };
+            // Create target files so completion verifier passes
+            for (const task of tasksJson.phases[0].tasks) {
+                for (const tp of task.targetPaths) {
+                    const fullPath = join(tmpDir, tp);
+                    mkdirSync(dirname(fullPath), { recursive: true });
+                    writeFileSync(fullPath, "", "utf-8");
+                }
+            }
             mockedEnsureInitialCommit.mockReturnValue("baseline-sha");
-            mockedGetChangedFilesRange.mockReturnValue([
+            mockedGetChangedFiles.mockReturnValue([
                 { path: "package.json", status: "A" },
             ]);
-            mockedGetDiffContentRange.mockReturnValue("diff content");
+            mockedGetDiffContent.mockReturnValue("diff content");
             mockedGetCurrentSha.mockReturnValue("end-sha");
             mockedCommitAll.mockReturnValue("commit-sha");
             const mockCreateAgentLauncher = createAgentLauncher;
@@ -1028,10 +1029,10 @@ describe("phaseRunner", () => {
             // Disable judge so dispatchSubAgent is only called for the reporter
             const config = { ...makeDefaultConfig(tmpDir), maxRetries: 0, judgeMode: "never" };
             mockedEnsureInitialCommit.mockReturnValue("baseline-sha");
-            mockedGetChangedFilesRange.mockReturnValue([
+            mockedGetChangedFiles.mockReturnValue([
                 { path: "package.json", status: "A" },
             ]);
-            mockedGetDiffContentRange.mockReturnValue("diff content");
+            mockedGetDiffContent.mockReturnValue("diff content");
             const mockCreateAgentLauncher = createAgentLauncher;
             mockCreateAgentLauncher.mockImplementation(() => ({
                 dispatchSubAgent: async () => {
@@ -1052,7 +1053,7 @@ describe("phaseRunner", () => {
             const config = { ...makeDefaultConfig(tmpDir), maxRetries: 0 };
             mockedEnsureInitialCommit.mockReturnValue("baseline-sha");
             // No changes committed
-            mockedGetChangedFilesRange.mockReturnValue([]);
+            mockedGetChangedFiles.mockReturnValue([]);
             const mockCreateAgentLauncher = createAgentLauncher;
             let reporterDispatched = false;
             mockCreateAgentLauncher.mockImplementation(() => ({
@@ -1099,6 +1100,188 @@ describe("phaseRunner", () => {
             await runPhases(config, tasksJson);
             expect(capturedOptions).toBeDefined();
             expect(capturedOptions.timeout).toBe(1_200_000);
+        });
+    });
+    // ---------------------------------------------------------------------------
+    // reviewPhaseContract
+    // ---------------------------------------------------------------------------
+    describe("reviewPhaseContract", () => {
+        it("returns warning for tasks with no acceptance criteria", () => {
+            const phase = {
+                id: "phase-1",
+                name: "test",
+                description: "test phase",
+                requiresBrowserTest: false,
+                tasks: [
+                    {
+                        id: "task-1-1",
+                        title: "Do something",
+                        description: "A task",
+                        dependsOn: [],
+                        specSections: [],
+                        targetPaths: ["src/foo.ts"],
+                        acceptanceCriteria: [],
+                        subAgentType: "implement",
+                        status: "pending",
+                    },
+                ],
+            };
+            const warnings = reviewPhaseContract(phase);
+            expect(warnings).toContainEqual(expect.stringContaining("has no acceptance criteria"));
+        });
+        it("returns warning for vague criteria (< 10 chars)", () => {
+            const phase = {
+                id: "phase-1",
+                name: "test",
+                description: "test phase",
+                requiresBrowserTest: false,
+                tasks: [
+                    {
+                        id: "task-1-1",
+                        title: "Do something",
+                        description: "A task",
+                        dependsOn: [],
+                        specSections: [],
+                        targetPaths: ["src/foo.ts"],
+                        acceptanceCriteria: ["works"],
+                        subAgentType: "implement",
+                        status: "pending",
+                    },
+                ],
+            };
+            const warnings = reviewPhaseContract(phase);
+            expect(warnings).toContainEqual(expect.stringContaining("vague criterion"));
+        });
+        it("returns warning for tasks with no target paths", () => {
+            const phase = {
+                id: "phase-1",
+                name: "test",
+                description: "test phase",
+                requiresBrowserTest: false,
+                tasks: [
+                    {
+                        id: "task-1-1",
+                        title: "Do something",
+                        description: "A task",
+                        dependsOn: [],
+                        specSections: [],
+                        targetPaths: [],
+                        acceptanceCriteria: ["This criterion is long enough"],
+                        subAgentType: "implement",
+                        status: "pending",
+                    },
+                ],
+            };
+            const warnings = reviewPhaseContract(phase);
+            expect(warnings).toContainEqual(expect.stringContaining("has no target paths"));
+        });
+        it("skips corrective tasks", () => {
+            const phase = {
+                id: "phase-1",
+                name: "test",
+                description: "test phase",
+                requiresBrowserTest: false,
+                tasks: [
+                    {
+                        id: "phase-1-corrective-0",
+                        title: "Fix something",
+                        description: "A corrective task",
+                        dependsOn: [],
+                        specSections: [],
+                        targetPaths: [],
+                        acceptanceCriteria: [],
+                        subAgentType: "implement",
+                        status: "pending",
+                    },
+                ],
+            };
+            const warnings = reviewPhaseContract(phase);
+            expect(warnings).toEqual([]);
+        });
+        it("returns empty array for well-formed phase", () => {
+            const phase = {
+                id: "phase-1",
+                name: "test",
+                description: "test phase",
+                requiresBrowserTest: false,
+                tasks: [
+                    {
+                        id: "task-1-1",
+                        title: "Do something",
+                        description: "A task",
+                        dependsOn: [],
+                        specSections: [],
+                        targetPaths: ["src/foo.ts"],
+                        acceptanceCriteria: ["The file src/foo.ts should export a function"],
+                        subAgentType: "implement",
+                        status: "pending",
+                    },
+                ],
+            };
+            const warnings = reviewPhaseContract(phase);
+            expect(warnings).toEqual([]);
+        });
+    });
+    // ---------------------------------------------------------------------------
+    // detectTestCommand
+    // ---------------------------------------------------------------------------
+    describe("detectTestCommand", () => {
+        it("returns 'npm test' when package.json has a valid scripts.test", () => {
+            const dir = mkdtempSync(join(tmpdir(), "detect-test-cmd-"));
+            writeFileSync(join(dir, "package.json"), JSON.stringify({ scripts: { test: "vitest run" } }));
+            const result = detectTestCommand(dir);
+            expect(result).toBe("npm test");
+            rmSync(dir, { recursive: true, force: true });
+        });
+        it("returns null when package.json test script says 'no test specified'", () => {
+            const dir = mkdtempSync(join(tmpdir(), "detect-test-cmd-"));
+            writeFileSync(join(dir, "package.json"), JSON.stringify({
+                scripts: { test: 'echo "Error: no test specified" && exit 1' },
+            }));
+            const result = detectTestCommand(dir);
+            expect(result).toBeNull();
+            rmSync(dir, { recursive: true, force: true });
+        });
+        it("returns 'npx vitest run' when vitest.config.ts exists", () => {
+            const dir = mkdtempSync(join(tmpdir(), "detect-test-cmd-"));
+            writeFileSync(join(dir, "vitest.config.ts"), "export default {};");
+            const result = detectTestCommand(dir);
+            expect(result).toBe("npx vitest run");
+            rmSync(dir, { recursive: true, force: true });
+        });
+        it("returns 'npx jest' when jest.config.js exists", () => {
+            const dir = mkdtempSync(join(tmpdir(), "detect-test-cmd-"));
+            writeFileSync(join(dir, "jest.config.js"), "module.exports = {};");
+            const result = detectTestCommand(dir);
+            expect(result).toBe("npx jest");
+            rmSync(dir, { recursive: true, force: true });
+        });
+        it("returns null when no test runner found", () => {
+            const dir = mkdtempSync(join(tmpdir(), "detect-test-cmd-"));
+            const result = detectTestCommand(dir);
+            expect(result).toBeNull();
+            rmSync(dir, { recursive: true, force: true });
+        });
+    });
+    // ---------------------------------------------------------------------------
+    // selectJudgeModel
+    // ---------------------------------------------------------------------------
+    describe("selectJudgeModel", () => {
+        it("returns override when provided", () => {
+            const result = selectJudgeModel(10, 1, "haiku");
+            expect(result).toBe("haiku");
+        });
+        it("returns 'sonnet' for small diffs with few tasks", () => {
+            const result = selectJudgeModel(100, 2);
+            expect(result).toBe("sonnet");
+        });
+        it("returns 'opus' for large diffs", () => {
+            const result = selectJudgeModel(200, 1);
+            expect(result).toBe("opus");
+        });
+        it("returns 'opus' for many tasks even if diff is small", () => {
+            const result = selectJudgeModel(50, 5);
+            expect(result).toBe("opus");
         });
     });
 });

@@ -2,7 +2,7 @@ import { z } from "zod";
 export const CheckResultSchema = z.object({
     passed: z.boolean(),
     output: z.string().optional(),
-    exitCode: z.number().optional(),
+    exitCode: z.number(),
 });
 export const JudgeIssueObjectSchema = z.object({
     task: z.string().optional(),
@@ -10,10 +10,18 @@ export const JudgeIssueObjectSchema = z.object({
     description: z.string(),
 });
 export const JudgeIssueSchema = z.union([z.string(), JudgeIssueObjectSchema]);
+export const JudgeCorrectionSchema = z.object({
+    type: z.enum(["targetPath"]),
+    taskId: z.string(),
+    old: z.string(),
+    new: z.string(),
+    reason: z.string(),
+});
 export const JudgeAssessmentSchema = z.object({
     passed: z.boolean(),
     issues: z.array(JudgeIssueSchema),
     suggestions: z.array(JudgeIssueSchema),
+    corrections: z.array(JudgeCorrectionSchema).optional().default([]),
 });
 export const DecisionTierSchema = z.enum(["architectural", "tactical", "constraint"]);
 export const DecisionEntrySchema = z.object({
@@ -62,6 +70,5 @@ export const SharedStateSchema = z.object({
     completedPhases: z.array(z.string()),
     phaseReports: z.array(PhaseReportSchema),
     phaseRetries: z.record(z.string(), z.number()),
-    phaseReport: PhaseReportSchema.nullable().default(null),
 });
 //# sourceMappingURL=state.js.map

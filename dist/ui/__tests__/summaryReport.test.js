@@ -32,7 +32,6 @@ function makeState(overrides = {}) {
         completedPhases: [],
         phaseReports: [],
         phaseRetries: {},
-        phaseReport: null,
         ...overrides,
     };
 }
@@ -64,7 +63,7 @@ describe("formatSummaryReport", () => {
             phaseId: "phase-1",
             tasksCompleted: ["t1", "t2", "t3"],
             tasksFailed: [],
-            judgeAssessment: { passed: true, issues: [], suggestions: [] },
+            judgeAssessment: { passed: true, issues: [], suggestions: [], corrections: [] },
         });
         const result = makeResult({
             success: true,
@@ -86,7 +85,7 @@ describe("formatSummaryReport", () => {
             phaseId: "phase-1",
             tasksCompleted: ["t1", "t2"],
             tasksFailed: [],
-            judgeAssessment: { passed: true, issues: [], suggestions: [] },
+            judgeAssessment: { passed: true, issues: [], suggestions: [], corrections: [] },
         });
         const report2 = makeReport({
             phaseId: "phase-2",
@@ -100,6 +99,7 @@ describe("formatSummaryReport", () => {
                     { description: "wrong return type", severity: "medium" },
                 ],
                 suggestions: [],
+                corrections: [],
             },
         });
         const result = makeResult({

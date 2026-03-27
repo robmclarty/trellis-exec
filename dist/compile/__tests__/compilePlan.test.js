@@ -15,7 +15,7 @@ vi.mock("../prompts.js", () => ({
     buildDecomposePrompt: vi.fn(() => "decompose prompt"),
 }));
 // Import module under test and mocked modules AFTER vi.mock declarations
-import { compilePlan, stripCodeFences } from "../compilePlan.js";
+import { compilePlan, stripCodeFences, injectClaudeMdTask } from "../compilePlan.js";
 import { parsePlan } from "../planParser.js";
 import { enrichPlan } from "../planEnricher.js";
 // ---------------------------------------------------------------------------
@@ -208,6 +208,105 @@ describe("compilePlan", () => {
             const written = readFileSync(join(tmpDir, "output", "tasks.json"), "utf-8");
             expect(JSON.parse(written)).toHaveProperty("phases");
         });
+    });
+});
+describe("injectClaudeMdTask", () => {
+    it("injects a CLAUDE.md task as the last task in the first phase", () => {
+        const tj = makeValidTasksJson();
+        const result = injectClaudeMdTask(tj);
+        const firstPhase = result.phases[0];
+        expect(firstPhase.tasks).toHaveLength(2);
+        const lastTask = firstPhase.tasks[firstPhase.tasks.length - 1];
+        expect(lastTask.id).toBe("phase-1-task-claude-md");
+        expect(lastTask.targetPaths).toEqual(["CLAUDE.md"]);
+        expect(lastTask.subAgentType).toBe("scaffold");
+        expect(lastTask.status).toBe("pending");
+    });
+    it("skips injection if a CLAUDE.md targetPath already exists", () => {
+        const tj = makeValidTasksJson({
+            phases: [
+                {
+                    id: "phase-1",
+                    name: "setup",
+                    description: "Set up project",
+                    requiresBrowserTest: false,
+                    tasks: [
+                        {
+                            id: "task-1-1",
+                            title: "Create CLAUDE.md",
+                            description: "Write project docs",
+                            dependsOn: [],
+                            specSections: [],
+                            targetPaths: ["CLAUDE.md"],
+                            acceptanceCriteria: [],
+                            subAgentType: "scaffold",
+                            status: "pending",
+                        },
+                    ],
+                },
+            ],
+        });
+        const result = injectClaudeMdTask(tj);
+        expect(result.phases[0].tasks).toHaveLength(1);
+        expect(result).toBe(tj); // same reference — early return
+    });
+    it("returns unchanged input when phases array is empty", () => {
+        const tj = makeValidTasksJson({ phases: [] });
+        const result = injectClaudeMdTask(tj);
+        expect(result).toBe(tj);
+    });
+    it("does not modify other phases", () => {
+        const tj = {
+            ...makeValidTasksJson(),
+            phases: [
+                {
+                    id: "phase-1",
+                    name: "setup",
+                    description: "Set up",
+                    requiresBrowserTest: false,
+                    tasks: [
+                        {
+                            id: "task-1-1",
+                            title: "Init",
+                            description: "Initialize",
+                            dependsOn: [],
+                            specSections: [],
+                            targetPaths: [],
+                            acceptanceCriteria: [],
+                            subAgentType: "implement",
+                            status: "pending",
+                        },
+                    ],
+                },
+                {
+                    id: "phase-2",
+                    name: "build",
+                    description: "Build features",
+                    requiresBrowserTest: false,
+                    tasks: [
+                        {
+                            id: "task-2-1",
+                            title: "Feature",
+                            description: "Build feature",
+                            dependsOn: [],
+                            specSections: [],
+                            targetPaths: [],
+                            acceptanceCriteria: [],
+                            subAgentType: "implement",
+                            status: "pending",
+                        },
+                    ],
+                },
+            ],
+        };
+        const result = injectClaudeMdTask(tj);
+        expect(result.phases[0].tasks).toHaveLength(2); // original + CLAUDE.md
+        expect(result.phases[1].tasks).toHaveLength(1); // unchanged
+    });
+    it("does not mutate the original TasksJson", () => {
+        const tj = makeValidTasksJson();
+        injectClaudeMdTask(tj);
+        expect(tj.phases[0].tasks).toHaveLength(1);
     });
 });
 //# sourceMappingURL=compilePlan.test.js.map

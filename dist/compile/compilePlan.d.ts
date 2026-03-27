@@ -24,4 +24,11 @@ export declare function stripCodeFences(raw: string): string;
  * 6. Write to outputPath.
  */
 export declare function compilePlan(config: CompileConfig): Promise<TasksJson>;
+/**
+ * Injects a CLAUDE.md scaffolding task into the first phase.
+ * CLAUDE.md is auto-loaded by Claude Code at session start and survives
+ * context compaction, giving all agents (orchestrator, judge, fix) persistent
+ * project orientation derived from the spec and guidelines.
+ */
+export declare function injectClaudeMdTask(tasksJson: TasksJson): TasksJson;
 //# sourceMappingURL=compilePlan.d.ts.map

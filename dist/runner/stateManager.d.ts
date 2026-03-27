@@ -1,4 +1,4 @@
-import type { SharedState, PhaseReport } from "../types/state.js";
+import type { SharedState, PhaseReport, JudgeCorrection, DecisionEntry } from "../types/state.js";
 import type { TasksJson, Phase, TaskStatus } from "../types/tasks.js";
 /**
  * Creates initial shared state from a tasks.json file.
@@ -36,8 +36,22 @@ export declare function updateTaskStatus(tasksJson: TasksJson, phaseId: string, 
  * Marks completed tasks as "complete" and failed tasks as "failed".
  * Silently skips task IDs not found in the phase (e.g., corrective tasks
  * dynamically added during retries).
+ *
+ * Uses a single pass through the phase's tasks instead of O(n) per update.
  */
 export declare function applyReportToTasks(tasksJson: TasksJson, phaseId: string, report: PhaseReport): TasksJson;
+/**
+ * Applies judge-provided corrections to tasks.json.
+ * Currently supports targetPath renames — replacing stale spec paths
+ * with the actual paths the orchestrator created on disk.
+ *
+ * Returns the updated TasksJson and auto-generated constraint-tier
+ * decision entries so corrections propagate to future phases.
+ */
+export declare function applyCorrections(tasksJson: TasksJson, corrections: JudgeCorrection[]): {
+    tasksJson: TasksJson;
+    decisions: DecisionEntry[];
+};
 /**
  * Returns the commit range (startSha..endSha) for a completed phase,
  * or null if the phase has no recorded SHAs.

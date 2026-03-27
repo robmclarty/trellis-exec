@@ -12,51 +12,100 @@ export function getGitRoot(cwd) {
     }
 }
 /**
- * Returns the list of files changed relative to HEAD.
+ * Returns the list of files changed relative to HEAD (or since `fromSha` if provided).
  *
- * `git diff --name-status HEAD` captures what changed since the last commit.
  * Also includes untracked files (status "?").
  *
  * @param cwd - Working directory (project root)
+ * @param fromSha - Optional base SHA; when provided uses `fromSha..HEAD` range
  * @returns Array of changed files with their git status letter
  */
-export function getChangedFiles(cwd) {
+export function getChangedFiles(cwd, fromSha) {
     try {
-        const output = execFileSync("git", ["diff", "--name-status", "HEAD"], { cwd, encoding: "utf-8", stdio: "pipe" });
-        const files = output
+        if (fromSha) {
+            // Range query: must use git diff + ls-files (two spawns)
+            const output = execFileSync("git", ["diff", "--name-status", `${fromSha}..HEAD`], { cwd, encoding: "utf-8", stdio: "pipe" });
+            const files = output
+                .trim()
+                .split("\n")
+                .filter((line) => line.length > 0)
+                .map((line) => {
+                const [status, ...rest] = line.split("\t");
+                return { path: rest.join("\t"), status: status };
+            });
+            const untrackedOutput = execFileSync("git", ["ls-files", "--others", "--exclude-standard"], { cwd, encoding: "utf-8", stdio: "pipe" });
+            const untrackedFiles = untrackedOutput
+                .trim()
+                .split("\n")
+                .filter((line) => line.length > 0)
+                .map((filePath) => ({ path: filePath, status: "?" }));
+            return [...files, ...untrackedFiles];
+        }
+        // No ref range: use single git status --porcelain (one spawn instead of two)
+        const output = execFileSync("git", ["status", "--porcelain"], { cwd, encoding: "utf-8", stdio: "pipe" });
+        return output
             .trim()
             .split("\n")
             .filter((line) => line.length > 0)
             .map((line) => {
-            const [status, ...rest] = line.split("\t");
-            return { path: rest.join("\t"), status: status };
+            // Porcelain format: XY filename (or XY old -> new for renames)
+            const indexStatus = line[0];
+            const workTreeStatus = line[1];
+            const filePath = line.slice(3);
+            // Map porcelain status codes to our ChangedFile status
+            if (indexStatus === "?" && workTreeStatus === "?") {
+                return { path: filePath, status: "?" };
+            }
+            if (indexStatus === "A" || workTreeStatus === "A") {
+                return { path: filePath, status: "A" };
+            }
+            if (indexStatus === "D" || workTreeStatus === "D") {
+                return { path: filePath, status: "D" };
+            }
+            if (indexStatus === "R" || workTreeStatus === "R") {
+                // Rename: format is "R  old -> new"
+                const parts = filePath.split(" -> ");
+                return { path: parts[1] ?? filePath, status: "R" };
+            }
+            return { path: filePath, status: "M" };
         });
-        // Include untracked files (new files not yet git-added)
-        const untrackedOutput = execFileSync("git", ["ls-files", "--others", "--exclude-standard"], { cwd, encoding: "utf-8", stdio: "pipe" });
-        const untrackedFiles = untrackedOutput
-            .trim()
-            .split("\n")
-            .filter((line) => line.length > 0)
-            .map((filePath) => ({ path: filePath, status: "?" }));
-        return [...files, ...untrackedFiles];
     }
     catch {
+        if (fromSha)
+            return getChangedFiles(cwd);
         return [];
     }
 }
 /**
- * Returns the full unified diff relative to HEAD.
+ * Returns the full unified diff relative to HEAD (or since `fromSha` if provided).
+ *
+ * When `fromSha` is supplied, returns committed changes (`fromSha..HEAD`) plus
+ * any uncommitted working-tree changes concatenated together.
  *
  * @param cwd - Working directory (project root)
+ * @param fromSha - Optional base SHA; when provided includes committed + uncommitted diffs
  * @returns The unified diff string, or empty string on failure
  */
-export function getDiffContent(cwd) {
+export function getDiffContent(cwd, fromSha) {
     try {
         // Stage untracked files as intent-to-add so they appear in the diff
         execFileSync("git", ["add", "--intent-to-add", "--all"], { cwd, encoding: "utf-8", stdio: "pipe" });
+        if (fromSha) {
+            // Committed changes since the base SHA
+            const committedDiff = execFileSync("git", ["diff", `${fromSha}..HEAD`], { cwd, encoding: "utf-8", stdio: "pipe", maxBuffer: 10 * 1024 * 1024 });
+            // Uncommitted changes (working tree vs HEAD)
+            const uncommittedDiff = execFileSync("git", ["diff", "HEAD"], { cwd, encoding: "utf-8", stdio: "pipe", maxBuffer: 10 * 1024 * 1024 });
+            if (committedDiff && uncommittedDiff) {
+                return committedDiff + "\n" + uncommittedDiff;
+            }
+            return committedDiff || uncommittedDiff;
+        }
         return execFileSync("git", ["diff", "HEAD"], { cwd, encoding: "utf-8", stdio: "pipe", maxBuffer: 10 * 1024 * 1024 });
     }
     catch {
+        // When a range query fails, fall back to plain HEAD diff
+        if (fromSha)
+            return getDiffContent(cwd);
         return "";
     }
 }
@@ -94,55 +143,6 @@ export function commitAll(cwd, message) {
     }
     catch {
         return null;
-    }
-}
-/**
- * Returns files changed between a base SHA and HEAD, plus untracked files.
- * Used by the judge to see all changes in a phase (including per-task commits).
- */
-export function getChangedFilesRange(cwd, fromSha) {
-    try {
-        const output = execFileSync("git", ["diff", "--name-status", `${fromSha}..HEAD`], { cwd, encoding: "utf-8", stdio: "pipe" });
-        const files = output
-            .trim()
-            .split("\n")
-            .filter((line) => line.length > 0)
-            .map((line) => {
-            const [status, ...rest] = line.split("\t");
-            return { path: rest.join("\t"), status: status };
-        });
-        // Include untracked files (new files not yet git-added)
-        const untrackedOutput = execFileSync("git", ["ls-files", "--others", "--exclude-standard"], { cwd, encoding: "utf-8", stdio: "pipe" });
-        const untrackedFiles = untrackedOutput
-            .trim()
-            .split("\n")
-            .filter((line) => line.length > 0)
-            .map((filePath) => ({ path: filePath, status: "?" }));
-        return [...files, ...untrackedFiles];
-    }
-    catch {
-        return getChangedFiles(cwd);
-    }
-}
-/**
- * Returns the unified diff covering all changes since fromSha,
- * including both committed changes (fromSha..HEAD) and any
- * uncommitted changes in the working tree.
- */
-export function getDiffContentRange(cwd, fromSha) {
-    try {
-        // Committed changes since the phase started
-        const committedDiff = execFileSync("git", ["diff", `${fromSha}..HEAD`], { cwd, encoding: "utf-8", stdio: "pipe", maxBuffer: 10 * 1024 * 1024 });
-        // Uncommitted changes (working tree vs HEAD)
-        execFileSync("git", ["add", "--intent-to-add", "--all"], { cwd, encoding: "utf-8", stdio: "pipe" });
-        const uncommittedDiff = execFileSync("git", ["diff", "HEAD"], { cwd, encoding: "utf-8", stdio: "pipe", maxBuffer: 10 * 1024 * 1024 });
-        if (committedDiff && uncommittedDiff) {
-            return committedDiff + "\n" + uncommittedDiff;
-        }
-        return committedDiff || uncommittedDiff;
-    }
-    catch {
-        return getDiffContent(cwd);
     }
 }
 //# sourceMappingURL=git.js.map

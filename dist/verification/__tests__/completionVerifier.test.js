@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { verifyCompletion } from "../completionVerifier.js";
 // Mock git and fs modules
 vi.mock("../../git.js", () => ({
-    getChangedFilesRange: vi.fn(() => []),
+    getChangedFiles: vi.fn(() => []),
 }));
 vi.mock("node:fs", async () => {
     const actual = await vi.importActual("node:fs");
@@ -13,10 +13,10 @@ vi.mock("node:fs", async () => {
     };
 });
 import { existsSync, readFileSync } from "node:fs";
-import { getChangedFilesRange } from "../../git.js";
+import { getChangedFiles } from "../../git.js";
 const mockExistsSync = vi.mocked(existsSync);
 const mockReadFileSync = vi.mocked(readFileSync);
-const mockGetChangedFilesRange = vi.mocked(getChangedFilesRange);
+const mockGetChangedFiles = vi.mocked(getChangedFiles);
 function makePhase(overrides = {}) {
     return {
         id: "phase-1",
@@ -58,7 +58,7 @@ beforeEach(() => {
     vi.clearAllMocks();
     mockExistsSync.mockReturnValue(true);
     mockReadFileSync.mockReturnValue("");
-    mockGetChangedFilesRange.mockReturnValue([]);
+    mockGetChangedFiles.mockReturnValue([]);
 });
 describe("verifyCompletion", () => {
     describe("target path existence", () => {
@@ -69,8 +69,7 @@ describe("verifyCompletion", () => {
         });
         it("fails when a target path is missing", () => {
             mockExistsSync.mockImplementation((p) => {
-                // Reject bar.ts and all extension variants
-                return !String(p).includes("bar.");
+                return !String(p).endsWith("bar.ts");
             });
             const result = verifyCompletion("/project", makePhase(), makeReport());
             expect(result.passed).toBe(false);
@@ -116,72 +115,13 @@ describe("verifyCompletion", () => {
         });
         it("returns per-file failures when only some target paths are missing", () => {
             mockExistsSync.mockImplementation((p) => {
-                // Reject bar.ts and all extension variants
-                return !String(p).includes("bar.");
+                return !String(p).endsWith("bar.ts");
             });
             const result = verifyCompletion("/project", makePhase(), makeReport());
             expect(result.passed).toBe(false);
             // Should have individual failure, not the blanket diagnostic
             expect(result.failures).toHaveLength(1);
             expect(result.failures[0]).toContain("target path missing: src/bar.ts");
-        });
-        it("passes when target path has .js extension but .jsx variant exists", () => {
-            mockExistsSync.mockImplementation((p) => {
-                const s = String(p);
-                // .js doesn't exist, but .jsx does
-                if (s.endsWith("foo.ts"))
-                    return true;
-                if (s.endsWith("bar.ts"))
-                    return true;
-                return false;
-            });
-            const phase = makePhase({
-                tasks: [
-                    {
-                        id: "task-1",
-                        title: "Create component",
-                        description: "Create a component",
-                        dependsOn: [],
-                        specSections: [],
-                        targetPaths: ["src/context/AppContext.js"],
-                        acceptanceCriteria: [],
-                        subAgentType: "implement",
-                        status: "pending",
-                    },
-                ],
-            });
-            // .js missing, .jsx exists
-            mockExistsSync.mockImplementation((p) => {
-                const s = String(p);
-                if (s.endsWith("AppContext.js"))
-                    return false;
-                if (s.endsWith("AppContext.jsx"))
-                    return true;
-                return true;
-            });
-            const result = verifyCompletion("/project", phase, makeReport());
-            expect(result.passed).toBe(true);
-            expect(result.failures).toHaveLength(0);
-        });
-        it("still fails when neither .js nor any variant exists", () => {
-            mockExistsSync.mockReturnValue(false);
-            const phase = makePhase({
-                tasks: [
-                    {
-                        id: "task-1",
-                        title: "Create component",
-                        description: "Create a component",
-                        dependsOn: [],
-                        specSections: [],
-                        targetPaths: ["src/context/AppContext.js"],
-                        acceptanceCriteria: [],
-                        subAgentType: "implement",
-                        status: "pending",
-                    },
-                ],
-            });
-            const result = verifyCompletion("/project", phase, makeReport());
-            expect(result.passed).toBe(false);
         });
         it("skips target path check for failed tasks", () => {
             mockExistsSync.mockReturnValue(false);
@@ -195,7 +135,7 @@ describe("verifyCompletion", () => {
     });
     describe("TODO/FIXME scan", () => {
         it("flags TODO in newly added files", () => {
-            mockGetChangedFilesRange.mockReturnValue([
+            mockGetChangedFiles.mockReturnValue([
                 { path: "src/new.ts", status: "A" },
             ]);
             mockReadFileSync.mockReturnValue("const x = 1; // TODO: fix later\n");
@@ -204,7 +144,7 @@ describe("verifyCompletion", () => {
             expect(result.failures).toContainEqual(expect.stringContaining("contains TODO"));
         });
         it("ignores TODO in modified (non-added) files", () => {
-            mockGetChangedFilesRange.mockReturnValue([
+            mockGetChangedFiles.mockReturnValue([
                 { path: "src/existing.ts", status: "M" },
             ]);
             mockReadFileSync.mockReturnValue("// TODO: old todo\n");
@@ -212,7 +152,7 @@ describe("verifyCompletion", () => {
             expect(result.passed).toBe(true);
         });
         it("flags FIXME and HACK", () => {
-            mockGetChangedFilesRange.mockReturnValue([
+            mockGetChangedFiles.mockReturnValue([
                 { path: "src/a.ts", status: "A" },
                 { path: "src/b.ts", status: "A" },
             ]);
@@ -225,8 +165,34 @@ describe("verifyCompletion", () => {
         });
         it("skips scan when no startSha provided", () => {
             const result = verifyCompletion("/project", makePhase(), makeReport());
-            expect(mockGetChangedFilesRange).not.toHaveBeenCalled();
+            expect(mockGetChangedFiles).not.toHaveBeenCalled();
             expect(result.passed).toBe(true);
+        });
+    });
+    describe("TODO/FIXME scan edge cases", () => {
+        it("flags multiple TODOs in a single added file", () => {
+            mockGetChangedFiles.mockReturnValue([
+                { path: "src/multi.ts", status: "A" },
+            ]);
+            mockReadFileSync.mockReturnValue("const a = 1; // TODO: first\nconst b = 2; // TODO: second\nconst c = 3; // FIXME: third\n");
+            const result = verifyCompletion("/project", makePhase(), makeReport(), "abc123");
+            expect(result.passed).toBe(false);
+            expect(result.failures).toHaveLength(3);
+            expect(result.failures[0]).toContain("src/multi.ts:1");
+            expect(result.failures[0]).toContain("TODO");
+            expect(result.failures[1]).toContain("src/multi.ts:2");
+            expect(result.failures[1]).toContain("TODO");
+            expect(result.failures[2]).toContain("src/multi.ts:3");
+            expect(result.failures[2]).toContain("FIXME");
+        });
+        it("does NOT flag lowercase 'todo'", () => {
+            mockGetChangedFiles.mockReturnValue([
+                { path: "src/lower.ts", status: "A" },
+            ]);
+            mockReadFileSync.mockReturnValue("// todo: this should not be flagged\n// fixme: also not flagged\n// hack: also not flagged\n");
+            const result = verifyCompletion("/project", makePhase(), makeReport(), "abc123");
+            expect(result.passed).toBe(true);
+            expect(result.failures).toHaveLength(0);
         });
     });
 });
