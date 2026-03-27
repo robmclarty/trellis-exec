@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.20
+
+- Change default orchestrator model from sonnet to opus
+- Add default values to CLI reference flags in README
+
 ## 0.7.19
 
 - Make test auto-detection language-agnostic: support Python (pytest), Go, Rust, Ruby (rspec), Java (Maven/Gradle), Elixir, and Makefile projects
