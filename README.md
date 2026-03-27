@@ -226,6 +226,7 @@ For a detailed explanation of the architecture and its evolution, see [docs/nati
 The runner automatically detects several project characteristics to minimize configuration:
 
 **Web app detection** (`src/compile/detectWebApp.ts`) -- During plan compilation, the system checks whether the target project is a browser application by looking for:
+
 - Frontend build-tool configs (vite, webpack, next, nuxt, svelte, astro)
 - HTML entry points (`index.html`, `public/index.html`, `src/index.html`)
 - Frontend framework dependencies in `package.json` (react, vue, svelte, angular, solid, etc.)
@@ -233,11 +234,13 @@ The runner automatically detects several project characteristics to minimize con
 When a web app is detected, `requiresBrowserTest` flags are propagated with sticky semantics: once a phase enables browser testing, all subsequent phases inherit it, and the final phase always gets it.
 
 **Test suite detection** -- The phase runner auto-detects the project's test command when no `--check` flag is provided:
+
 1. `package.json` `"test"` script (if not the default `"no test specified"`)
 2. `vitest.config.*` → `npx vitest run`
 3. `jest.config.*` → `npx jest`
 
 **Dev server detection** (`src/verification/devServer.ts`) -- For browser testing, the dev server start command is auto-detected from:
+
 - Node.js: `npm run dev` or `npm start` from `package.json`
 - Python: Django `manage.py runserver`
 - Ruby: Rails `bin/rails server`
@@ -250,12 +253,14 @@ When a web app is detected, `requiresBrowserTest` flags are propagated with stic
 Browser testing is optional and requires Playwright as a peer dependency. It activates automatically for detected web app projects or when phases have `requiresBrowserTest: true`.
 
 **Tier 1: Smoke tests** -- Run deterministically (no LLM) after each phase that touches UI code. Playwright loads the dev server URL and checks:
+
 - No console errors or uncaught exceptions
 - Page is not blank (has text content or app root elements)
 - Up to 20 interactive elements can be clicked without crashing
 - Screenshot captured for debugging
 
 **Tier 2: Acceptance tests** -- Run once after all phases complete. An LLM-powered loop:
+
 1. The **browser-tester** agent (Opus) generates Playwright tests from the spec's acceptance criteria
 2. Tests are executed against the running dev server
 3. If failures exist, the **browser-fixer** agent (Sonnet) fixes the application code (not the tests)

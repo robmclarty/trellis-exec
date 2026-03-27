@@ -86,6 +86,7 @@ Trellis's judge receives acceptance criteria written at compile time, with no ne
 The scientific computing article identifies "agentic laziness" — agents claiming completion prematurely on multi-part tasks. Their solution is a "Ralph loop" that kicks agents back with "are you really done?" and iterates until the task truly meets specifications.
 
 **Status:** Trellis now has a **completion verifier** that runs after each phase:
+
 - Checks that all completed tasks have their `targetPath` files on disk
 - Scans new files for `TODO`/`FIXME`/`HACK` markers
 
