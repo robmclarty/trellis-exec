@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.7.15
+
+- Fix browser acceptance empty-results loop: break on unparseable tester output instead of dispatching fixer on nothing
+- Reinforce JSON output requirement in browser-tester prompt and agent definition
+- Fix judge attempt numbering off-by-one (`passed on attempt 0` → `passed on attempt 1`)
+- Add `judgeFixCycles` to PhaseReport; combine with `phaseRetries` in summary report Retries column
+- Rewrite summary table with minimal box-drawing (`│ ─ ┼` delimiters)
+- Show explicit message for empty browser acceptance results instead of `0/0 criteria passed`
+- Add constraint generalization instruction to orchestrator prompt for better cross-phase learning
+- Strengthen plain-text output instruction in phase-orchestrator agent to reduce markdown leakage
+
 ## 0.7.14
 
 - Remove dead `phaseReport` field from SharedState schema; make `exitCode` required in CheckResultSchema
