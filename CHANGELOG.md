@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.13
+
+- Add judge corrections mechanism: judge can return `corrections` (e.g., targetPath renames) that update tasks.json before the completion verifier runs, eliminating false-positive failures for `.module.css`/`.css` and `.jsx`/`.js` mismatches
+- Reorder phase runner flow: completion verifier now runs after judge (not before) so corrections are applied first
+- Remove `EXTENSION_VARIANTS` hack from completionVerifier — path reconciliation is now handled by the judge
+- Auto-inject CLAUDE.md scaffolding task into phase-1 during compilation, giving all agents persistent project orientation that survives context compaction
+- Add browser smoke and dev server integration tests with Playwright fixtures
+- Add foundational CLAUDE.md for the trellis-exec project itself
+
 ## 0.7.12
 
 - Consolidate `getChangedFiles`/`getChangedFilesRange` and `getDiffContent`/`getDiffContentRange` into single functions with optional `fromSha` parameter, eliminating duplication and simplifying callers
