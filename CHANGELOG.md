@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.5
+
+- Add `trellis-exec login` command for interactive OAuth inside Docker with credential persistence in a named volume
+- Forward host plugins and settings into containers, run as non-root `claude` user
+- Fix container auth failure caused by `--bare` flag skipping OAuth credential loading in newer Claude Code versions
+
 ## 0.8.4
 
 - Fix container mode default network: change from `none` to `bridge` so the Claude CLI can reach the Anthropic API
