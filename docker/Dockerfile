@@ -33,6 +33,8 @@ RUN useradd -m -s /bin/bash claude \
   && chown claude:claude /home/claude/.claude
 USER claude
 
+RUN git config --global --add safe.directory /workspace
+ENV CLAUDE_PLUGIN_ROOT=/opt/trellis-exec
 WORKDIR /workspace
 ENTRYPOINT ["trellis-exec"]
 
@@ -55,5 +57,7 @@ RUN useradd -m -s /bin/bash claude \
   && chown claude:claude /home/claude/.claude
 USER claude
 
+RUN git config --global --add safe.directory /workspace
+ENV CLAUDE_PLUGIN_ROOT=/opt/trellis-exec
 WORKDIR /workspace
 ENTRYPOINT ["trellis-exec"]

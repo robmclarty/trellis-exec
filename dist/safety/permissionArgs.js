@@ -63,9 +63,8 @@ export function buildPermissionArgs(config) {
     }
     // Container mode: full access for worker agents.
     // The container (bind-mount, resource limits) is the boundary.
-    // --bare skips hooks/LSP/plugins/CLAUDE.md for faster startup.
     if (containerMode) {
-        return ["--dangerously-skip-permissions", "--bare", ...budgetArgs];
+        return ["--dangerously-skip-permissions", ...budgetArgs];
     }
     // Unsafe mode: legacy behavior, explicit opt-in.
     if (unsafeMode) {

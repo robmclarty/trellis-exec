@@ -55,10 +55,10 @@ describe("buildPermissionArgs", () => {
     // Container mode (worker)
     // ---
     describe("container mode", () => {
-        it("uses dangerously-skip-permissions and bare", () => {
+        it("uses dangerously-skip-permissions without bare", () => {
             const args = buildPermissionArgs({ containerMode: true });
             expect(args).toContain("--dangerously-skip-permissions");
-            expect(args).toContain("--bare");
+            expect(args).not.toContain("--bare");
             expect(args).not.toContain("--permission-mode");
         });
         it("includes budget args", () => {
@@ -143,7 +143,8 @@ describe("buildPermissionArgs", () => {
                 containerMode: true,
                 unsafeMode: true,
             });
-            expect(args).toContain("--bare");
+            expect(args).toContain("--dangerously-skip-permissions");
+            expect(args).not.toContain("--bare");
         });
     });
 });
