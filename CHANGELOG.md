@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.2
+
+- Reject plans with phase headings but no task items, falling back to LLM decomposition instead of silently producing empty phases
+
 ## 0.8.1
 
 - Implement Docker container mode (Layer 4): `--container` launches `docker run` with the project mounted, re-invoking trellis-exec inside the container with full tool access and OS-level isolation
