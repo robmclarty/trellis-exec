@@ -207,5 +207,24 @@ export function formatSummaryReport(result: PhaseRunnerResult): string {
     lines.push(`Browser smoke checks: skipped (${reason})`);
   }
 
+  // Budget summary
+  const hasCostBudget = result.budgetState && result.budgetConfig?.maxCostUsd;
+  const hasTokenBudget = result.budgetState && result.budgetConfig?.maxTokens;
+  if (hasCostBudget || hasTokenBudget) {
+    lines.push("");
+  }
+  if (hasCostBudget) {
+    const spent = result.budgetState!.totalCostUsd;
+    const limit = result.budgetConfig!.maxCostUsd!;
+    const pct = limit > 0 ? ((spent / limit) * 100).toFixed(1) : "0.0";
+    lines.push(`Run Budget: $${spent.toFixed(2)} / $${limit.toFixed(2)} (${pct}%)`);
+  }
+  if (hasTokenBudget) {
+    const used = result.budgetState!.totalInputTokens + result.budgetState!.totalOutputTokens;
+    const limit = result.budgetConfig!.maxTokens!;
+    const pct = limit > 0 ? ((used / limit) * 100).toFixed(1) : "0.0";
+    lines.push(`Token Budget: ${used.toLocaleString()} / ${limit.toLocaleString()} (${pct}%)`);
+  }
+
   return lines.join("\n");
 }

@@ -50,6 +50,15 @@ Reads a `tasks.json` file and executes its phases through the phase runner. By d
 | `--dev-server <command>` | string | *(auto-detected)* | Dev server start command for browser testing |
 | `--save-e2e-tests` | boolean | `false` | Save generated acceptance tests to project test directory |
 | `--browser-test-retries <n>` | number | `3` | Max retries for end-of-build browser acceptance loop |
+| `--unsafe` | boolean | `false` | Legacy: skip all permission restrictions |
+| `--container` | boolean | `false` | Run inside Docker with OS-level isolation |
+| `--max-phase-budget <usd>` | number | *(none)* | Per-phase USD spending cap (passed as `--max-budget-usd` to Claude CLI) |
+| `--max-run-budget <usd>` | number | *(none)* | Cumulative USD cap across all phases |
+| `--max-run-tokens <n>` | number | *(none)* | Cumulative token cap across all phases |
+| `--container-network <mode>` | string | `"none"` | Docker network mode for container runs |
+| `--container-cpus <n>` | string | `"4"` | CPU limit for container |
+| `--container-memory <size>` | string | `"8g"` | Memory limit for container |
+| `--container-image <image>` | string | *(auto)* | Custom Docker image for container mode |
 
 **Examples:**
 
@@ -68,6 +77,15 @@ trellis-exec run tasks.json --resume --check "npm test"
 
 # Run with judge disabled for faster iteration
 trellis-exec run tasks.json --judge never --concurrency 5
+
+# Run with budget limits for unsupervised overnight execution
+trellis-exec run tasks.json --headless --max-phase-budget 5.00 --max-run-budget 25.00
+
+# Run with legacy unrestricted permissions
+trellis-exec run tasks.json --unsafe
+
+# Run inside a Docker container
+trellis-exec run tasks.json --container --container-cpus 8 --container-memory 16g
 ```
 
 **Exit codes:**
@@ -132,6 +150,23 @@ Note: 4 field(s) flagged for enrichment. Re-run with --enrich to fill gaps.
 
 ---
 
+### `init-safety` — Generate reference safety config
+
+```bash
+trellis-exec init-safety [project-root]
+```
+
+Generates reference configuration files for using the same safe mode permission restrictions in interactive Claude Code sessions. This does **not** affect trellis-exec itself -- trellis-exec applies permissions via CLI flags automatically.
+
+Creates two files in the target project:
+
+- **`.claude/settings.safe-mode-reference.json`** -- Contains the same allow/deny lists used by safe mode's `buildPermissionArgs`
+- **`.claude/hooks/repo-jail.sh`** -- A hook script that blocks file operations outside the git repository root
+
+If the project root is omitted, defaults to the current directory.
+
+---
+
 ### `status` — Inspect execution state
 
 ```bash
@@ -187,6 +222,11 @@ Environment variables serve as fallbacks when CLI flags are not provided. CLI fl
 | `TRELLIS_EXEC_LONG_RUN` | `--long-run` | *(off)* | Enable long-run mode (2-hour timeout) |
 | `TRELLIS_EXEC_DEV_SERVER` | `--dev-server` | *(auto-detect)* | Dev server start command |
 | `TRELLIS_EXEC_BROWSER_TEST_RETRIES` | `--browser-test-retries` | `3` | Max browser acceptance retries |
+| `TRELLIS_EXEC_UNSAFE` | `--unsafe` | `false` | Enable unsafe mode (skip permission restrictions) |
+| `TRELLIS_EXEC_CONTAINER` | `--container` | `false` | Enable container mode |
+| `TRELLIS_EXEC_MAX_PHASE_BUDGET` | `--max-phase-budget` | *(none)* | Per-phase USD spending cap |
+| `TRELLIS_EXEC_MAX_RUN_BUDGET` | `--max-run-budget` | *(none)* | Cumulative USD cap across the run |
+| `TRELLIS_EXEC_MAX_RUN_TOKENS` | `--max-run-tokens` | *(none)* | Cumulative token cap across the run |
 | `CLAUDE_PLUGIN_ROOT` | *(no flag)* | `process.cwd()` | Plugin directory root (auto-set by Claude Code) |
 
 **Precedence order:** CLI flag > environment variable > built-in default.

@@ -28,10 +28,25 @@ const launcher = createAgentLauncher({
   pluginRoot: process.env.CLAUDE_PLUGIN_ROOT ?? resolve(__dirname, "../.."),
   projectRoot: "/path/to/user/project",
   dryRun: false,
+  unsafeMode: false,       // --unsafe flag
+  containerMode: false,    // --container flag (inner process)
+  maxPhaseBudgetUsd: 5.0,  // per-phase budget cap (optional)
 });
 ```
 
 Returns an object with two methods: `dispatchSubAgent` and `runPhaseOrchestrator`.
+
+### Permission handling
+
+The launcher delegates permission flag assembly to `buildPermissionArgs()` from `src/safety/permissionArgs.ts`. The permission strategy depends on the execution mode and agent role:
+
+| Mode | Worker agents | Read-only agents (judge, reporter) |
+|------|---------------|-----------------------------------|
+| **Safe (default)** | `--permission-mode dontAsk` + granular allow/deny | `--permission-mode dontAsk` + read-only tools only |
+| **Container** | `--dangerously-skip-permissions --bare` | Read-only tools only |
+| **Unsafe** | `--dangerously-skip-permissions` | Read-only tools only |
+
+Role detection is automatic: agents with type `"judge"` or `"reporter"` are treated as read-only. All other agent types are workers.
 
 ## Methods
 
@@ -41,9 +56,10 @@ Dispatches a sub-agent to execute a discrete task (implement a module, write tes
 
 1. Resolves the agent file: `{pluginRoot}/agents/{config.type}.md`
 2. Assembles the prompt following the sub-agent input contract.
-3. Spawns: `claude --agent {agentFile} --print --dangerously-skip-permissions --model {model}`
-4. Pipes the prompt to stdin, collects stdout as the result.
-5. Returns `SubAgentResult` with `success`, `output`, `filesModified`, and optional `error`.
+3. Builds permission args via `buildPermissionArgs()` based on execution mode and agent role.
+4. Spawns: `claude --agent {agentFile} --print {permissionArgs} --model {model}`
+5. Pipes the prompt to stdin, collects stdout as the result.
+6. Returns `SubAgentResult` with `success`, `output`, `filesModified`, and optional `error`.
 
 ```typescript
 const result = await launcher.dispatchSubAgent({
@@ -62,10 +78,11 @@ The default model is Opus. The orchestrator can override per-task based on compl
 
 Launches a single fire-and-forget `claude` session for phase orchestration. The orchestrator receives the full phase context via stdin and uses native Claude tools (Read, Write, Edit, Bash, Glob, Grep) to complete all tasks.
 
-1. Spawns: `claude --agent {agentFile} --print --dangerously-skip-permissions [--model {model}]`
-2. Optionally adds `--output-format stream-json --verbose` for verbose mode.
-3. Pipes the phase context prompt to stdin.
-4. Returns `ExecClaudeResult` with `stdout`, `stderr`, and `exitCode`.
+1. Builds permission args via `buildPermissionArgs()` (always `readOnly: false` — orchestrator is a worker).
+2. Spawns: `claude --agent {agentFile} --print {permissionArgs} [--model {model}]`
+3. Optionally adds `--output-format stream-json --verbose` for verbose mode.
+4. Pipes the phase context prompt to stdin.
+5. Returns `ExecClaudeResult` with `stdout`, `stderr`, and `exitCode`.
 
 ```typescript
 const result = await launcher.runPhaseOrchestrator(

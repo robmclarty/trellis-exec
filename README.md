@@ -66,6 +66,11 @@ Execute phases from a tasks.json file.
 | `--guidelines <path>` | Override guidelines path from tasks.json |
 | `--judge <mode>` | Judge mode: `always`, `on-failure`, `never` (default: `always`) |
 | `--judge-model <model>` | Override judge model (default: adaptive) |
+| `--unsafe` | Legacy: skip all permission restrictions (default: `false`) |
+| `--container` | Run inside Docker with OS-level isolation (default: `false`) |
+| `--max-phase-budget <usd>` | Per-phase USD spending cap |
+| `--max-run-budget <usd>` | Cumulative USD cap across the entire run |
+| `--max-run-tokens <n>` | Cumulative token cap across the entire run |
 | `--headless` | Disable interactive prompts (default: `false`) |
 | `--timeout <ms>` | Override phase timeout in milliseconds (wins over `--long-run`) |
 | `--long-run` | Set 2-hour timeout for complex phases (default: `false`) |
@@ -73,6 +78,10 @@ Execute phases from a tasks.json file.
 | `--dev-server <cmd>` | Dev server start command for browser testing (default: auto-detected) |
 | `--save-e2e-tests` | Save generated acceptance tests to project (default: `false`) |
 | `--browser-test-retries <n>` | Max retries for browser acceptance loop (default: `3`) |
+| `--container-network <mode>` | Docker network mode (default: `none`) |
+| `--container-cpus <n>` | CPU limit for container (default: `4`) |
+| `--container-memory <size>` | Memory limit for container (default: `8g`) |
+| `--container-image <image>` | Custom Docker image for container mode |
 
 ### `trellis-exec compile <plan.md>`
 
@@ -87,9 +96,43 @@ Compile a plan.md into tasks.json.
 | `--enrich` | Run LLM enrichment to fill ambiguous fields (default: `false`) |
 | `--timeout <ms>` | Timeout for LLM calls (default: `600000`) |
 
+### `trellis-exec init-safety [project-root]`
+
+Generate reference safety configuration files for interactive Claude Code sessions. Creates `.claude/settings.safe-mode-reference.json` and `.claude/hooks/repo-jail.sh` in the target project. These are for manual adoption -- trellis-exec applies its own permissions via CLI flags automatically.
+
 ### `trellis-exec status <tasks.json>`
 
 Show execution status for all phases and tasks.
+
+## Safe Mode
+
+By default, trellis-exec runs in **safe mode**: agents operate with restricted permissions, git checkpoints are created before each phase, and budget limits can cap spending. This prevents agent misjudgment during unsupervised runs -- no accidental `git push`, no `rm -rf`, no unlimited token burn.
+
+Three execution modes are available:
+
+| Mode | Flag | Behavior |
+|------|------|----------|
+| **Safe** | *(default)* | Granular allow/deny via `--permission-mode dontAsk` |
+| **Container** | `--container` | Full tools inside Docker; OS-level isolation |
+| **Unsafe** | `--unsafe` | Legacy `--dangerously-skip-permissions` behavior |
+
+Role-constrained agents (judge, reporter) are **read-only in all modes**.
+
+### Git checkpoints
+
+Before each phase, trellis-exec commits any uncommitted changes and tags the commit (`trellis/checkpoint/<phaseId>/<timestamp>`). If a phase fails, the recovery tag is printed so you can `git reset --hard` to the last known-good state.
+
+### Budget enforcement
+
+```bash
+# Cap each phase at $5 and the total run at $25
+trellis-exec run tasks.json --max-phase-budget 5.00 --max-run-budget 25.00
+
+# Cap total tokens across the run
+trellis-exec run tasks.json --max-run-tokens 5000000
+```
+
+For full details, see [docs/safe-mode.md](docs/safe-mode.md).
 
 ## Architecture
 
@@ -293,6 +336,11 @@ All environment variables are optional.
 | `TRELLIS_EXEC_LONG_RUN` | Enable long-run mode (2-hour timeout) | *(off)* |
 | `TRELLIS_EXEC_DEV_SERVER` | Dev server start command | *(auto-detect)* |
 | `TRELLIS_EXEC_BROWSER_TEST_RETRIES` | Max browser acceptance retries | `3` |
+| `TRELLIS_EXEC_UNSAFE` | Enable unsafe mode (skip permission restrictions) | `false` |
+| `TRELLIS_EXEC_CONTAINER` | Enable container mode | `false` |
+| `TRELLIS_EXEC_MAX_PHASE_BUDGET` | Per-phase USD spending cap | *(none)* |
+| `TRELLIS_EXEC_MAX_RUN_BUDGET` | Cumulative USD cap across the run | *(none)* |
+| `TRELLIS_EXEC_MAX_RUN_TOKENS` | Cumulative token cap across the run | *(none)* |
 
 `CLAUDE_PLUGIN_ROOT` is set automatically by Claude Code in plugin contexts.
 
@@ -314,7 +362,7 @@ agents/
   your-agent.md          # add your own
 ```
 
-Each agent file uses Claude Code agent frontmatter to declare its name, description, model, and allowed tools. The phase orchestrator dispatches agents via `claude --agent`.
+Each agent file uses Claude Code agent frontmatter to declare its name, description, and model. Tool permissions are controlled by the execution mode (safe, unsafe, or container) via CLI flags -- not by agent frontmatter. The phase orchestrator dispatches agents via `claude --agent`.
 
 ## License
 

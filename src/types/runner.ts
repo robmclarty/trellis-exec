@@ -21,6 +21,13 @@ export type RunContext = {
   judgeMode: "always" | "on-failure" | "never";
   judgeModel?: string;
 
+  // Safety / permission mode
+  unsafeMode?: boolean;
+  containerMode?: boolean;
+  maxPhaseBudgetUsd?: number;
+  maxRunBudgetUsd?: number;
+  maxRunTokens?: number;
+
   // Browser testing
   devServerCommand?: string;
   saveE2eTests: boolean;

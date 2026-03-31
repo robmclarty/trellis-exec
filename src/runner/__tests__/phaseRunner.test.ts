@@ -29,6 +29,7 @@ vi.mock("../../git.js", () => ({
   ensureInitialCommit: vi.fn(() => "abc123"),
   commitAll: vi.fn(() => null),
   getGitRoot: vi.fn(() => null),
+  createTag: vi.fn(() => true),
 }));
 
 // Import module under test and mocked modules AFTER vi.mock declarations

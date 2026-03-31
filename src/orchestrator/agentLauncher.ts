@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { resolve } from "node:path";
 import type { SubAgentConfig, SubAgentResult } from "../types/agents.js";
 import { extractResultText, extractUsage } from "../ui/streamParser.js";
+import { buildPermissionArgs, isReadOnlyAgent } from "../safety/permissionArgs.js";
 
 const DEFAULT_TIMEOUT = 300_000; // 5 minutes for sub-agent execution
 const ORCHESTRATOR_TIMEOUT = 1_800_000; // 30 minutes for phase orchestration
@@ -17,7 +18,10 @@ export type ExecClaudeResult = {
 export type AgentLauncherConfig = {
   pluginRoot: string;
   projectRoot: string;
-  dryRun?: boolean;
+  dryRun?: boolean | undefined;
+  unsafeMode?: boolean | undefined;
+  containerMode?: boolean | undefined;
+  maxPhaseBudgetUsd?: number | undefined;
 };
 
 export type OrchestratorOptions = {
@@ -115,19 +119,25 @@ export function execClaude(
  * - **dryRun**: logs commands without executing, returns mock results
  */
 export function createAgentLauncher(config: AgentLauncherConfig): AgentLauncher {
-  const { pluginRoot, projectRoot, dryRun } = config;
+  const { pluginRoot, projectRoot, dryRun, unsafeMode, containerMode, maxPhaseBudgetUsd } = config;
 
   async function dispatchSubAgent(
     subAgentConfig: SubAgentConfig,
   ): Promise<SubAgentResult> {
     const agentFile = resolve(pluginRoot, "agents", subAgentConfig.type + ".md");
     const model = subAgentConfig.model ?? "opus";
+    const permissionArgs = buildPermissionArgs({
+      unsafeMode,
+      containerMode,
+      readOnly: isReadOnlyAgent(subAgentConfig.type),
+      maxBudgetUsd: maxPhaseBudgetUsd,
+    });
     const args = [
       "--agent",
       agentFile,
       "--output-format", "stream-json",
       "--verbose",
-      "--dangerously-skip-permissions",
+      ...permissionArgs,
       "--model",
       model,
     ];
@@ -204,11 +214,17 @@ export function createAgentLauncher(config: AgentLauncherConfig): AgentLauncher 
     model?: string,
     options?: OrchestratorOptions,
   ): Promise<ExecClaudeResult> {
+    const permissionArgs = buildPermissionArgs({
+      unsafeMode,
+      containerMode,
+      readOnly: false,
+      maxBudgetUsd: maxPhaseBudgetUsd,
+    });
     const args = [
       "--agent",
       agentFile,
       "--output-format", "stream-json",
-      "--dangerously-skip-permissions",
+      ...permissionArgs,
       ...(model ? ["--model", model] : []),
       ...(options?.verbose ? ["--verbose"] : []),
     ];

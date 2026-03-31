@@ -2,7 +2,6 @@
 name: browser-fixer
 description: Fix UI issues identified by browser acceptance tests
 model: sonnet
-tools: [Read, Write, Edit, Bash, Glob, Grep]
 ---
 
 # Browser Fixer Agent

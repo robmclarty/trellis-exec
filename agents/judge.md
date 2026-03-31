@@ -2,7 +2,6 @@
 name: judge
 description: Evaluate phase changes for spec compliance
 model: opus
-tools: [Read, Glob, Grep]
 ---
 
 # Judge Sub-Agent

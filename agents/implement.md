@@ -2,7 +2,6 @@
 name: implement
 description: Create or modify source files per task instructions
 model: sonnet
-tools: [Read, Write, Edit, Glob, Grep]
 ---
 
 # Implementation Sub-Agent

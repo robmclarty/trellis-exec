@@ -36,11 +36,15 @@ The key trust boundary is between the LLM-generated actions (via Claude CLI subp
 
 ## 2. Sub-Agent Permission Scoping
 
-**Risk:** Sub-agents are spawned as `claude` CLI subprocesses with `--dangerously-skip-permissions`. Without scoping, they could modify any file on disk.
+**Risk:** Sub-agents are spawned as `claude` CLI subprocesses. Without scoping, they could modify any file on disk, run destructive commands, or make unwanted network requests.
 
-**Mitigation:** Sub-agents are launched with `--agent` flags that reference agent definition files (`agents/{type}.md`). The `outputPaths` constraint is communicated in the prompt as a soft constraint — the prompt tells the sub-agent which files it may create or modify. This is a defense-in-depth layer, not a hard sandbox.
+**Mitigation (safe mode, default):** Sub-agents are launched with `--permission-mode dontAsk` and granular `--tools`, `--allowedTools`, and `--disallowedTools` flags. This restricts the tool set to a curated allow list (file operations, approved build/test commands, git read+commit) and hard-denies destructive patterns (git push, rm -rf, curl, sudo, npm publish). Role-constrained agents (judge, reporter) are further restricted to read-only tools in all modes.
 
-**Current limitation:** Both the orchestrator and sub-agents use `--dangerously-skip-permissions`, meaning Claude CLI's built-in permission system is bypassed. File access scoping relies on prompt-based instructions rather than hard enforcement.
+**Mitigation (container mode):** Worker agents receive `--dangerously-skip-permissions --bare` because the Docker container provides OS-level isolation (`--network none`, CPU/memory limits, bind-mounted workspace).
+
+**Legacy (unsafe mode):** Both the orchestrator and sub-agents use `--dangerously-skip-permissions`, meaning Claude CLI's built-in permission system is bypassed. File access scoping relies on prompt-based instructions (the `outputPaths` constraint communicated in the prompt) rather than hard enforcement. Use `--unsafe` to opt into this mode.
+
+See [safe-mode.md](safe-mode.md) for full details on the three execution modes.
 
 ---
 
@@ -90,6 +94,27 @@ Timeout errors are caught and surfaced as `SubAgentResult.success = false` with 
 
 ---
 
+## 8. Budget Exhaustion
+
+**Risk:** A runaway retry loop or verbose agent could burn unlimited tokens and dollars across a multi-phase run.
+
+**Mitigation:** Two levels of budget enforcement:
+
+- **Per-phase:** Claude CLI's native `--max-budget-usd` caps each subprocess invocation.
+- **Per-run:** A cumulative tracker monitors total cost and token consumption across all phases. When exceeded, the runner halts immediately.
+
+Budget limits are optional but recommended for unsupervised runs.
+
+---
+
+## 9. Git Checkpoint Recovery
+
+**Risk:** A failed phase could leave the project in a broken state with no easy way to roll back.
+
+**Mitigation:** Before each phase, trellis-exec commits any uncommitted changes and creates a git tag (`trellis/checkpoint/<phaseId>/<timestamp>`). On failure, the recovery tag and `git reset --hard` command are printed. trellis-exec never auto-rollbacks.
+
+---
+
 ## Trust Model Summary
 
 | Component | Trust Level | Boundary |
@@ -98,10 +123,11 @@ Timeout errors are caught and surfaced as `SubAgentResult.success = false` with 
 | User config (--check command, --model) | Trusted | User-configured |
 | Deterministic compiler (parsePlan) | Trusted | No LLM involvement |
 | LLM enrichment (compilePlan) | Semi-trusted | Output validated by Zod schema |
-| Orchestrator LLM output | Untrusted | Runs via Claude CLI subprocess with native tools |
-| Sub-agent LLM output | Untrusted | Scoped by agent definition + prompt constraints |
+| Orchestrator LLM output | Untrusted | Safe mode: granular allow/deny. Unsafe: prompt constraints only |
+| Sub-agent LLM output | Untrusted | Safe mode: role-based tool restrictions. Unsafe: prompt constraints only |
 | Git operations | Safe | `execFileSync` prevents injection |
 | Check command | User-trusted | Executed as-is; user defines it |
+| Docker container | Isolated | Network=none, resource limits, bind-mounted workspace |
 
 ---
 

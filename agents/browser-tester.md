@@ -2,7 +2,6 @@
 name: browser-tester
 description: Generate and run Playwright acceptance tests against spec criteria
 model: opus
-tools: [Read, Write, Edit, Bash, Glob, Grep]
 ---
 
 # Browser Tester Agent

@@ -23,12 +23,19 @@ import { startSpinner } from "../ui/spinner.js";
 import { createStreamHandler, extractResultText, extractUsage } from "../ui/streamParser.js";
 import type { UsageStats } from "../ui/streamParser.js";
 import {
+  createBudgetState,
+  updateBudget,
+  checkBudget,
+} from "../safety/budgetTracker.js";
+import type { BudgetConfig, BudgetState } from "../safety/budgetTracker.js";
+import {
   getChangedFiles,
   getDiffContent,
   getCurrentSha,
   ensureInitialCommit,
   commitAll,
   getGitRoot,
+  createTag,
 } from "../git.js";
 import { verifyCompletion } from "../verification/completionVerifier.js";
 import type { BrowserAcceptanceReport } from "../types/state.js";
@@ -83,6 +90,8 @@ export type PhaseRunnerResult = {
   totalDuration: number;
   browserAcceptanceReport?: BrowserAcceptanceReport;
   phaseTokens: Record<string, UsageStats>;
+  budgetState?: BudgetState;
+  budgetConfig?: BudgetConfig;
 };
 
 type PhaseExecResult = {
@@ -385,6 +394,9 @@ async function executePhase(
     pluginRoot: ctx.pluginRoot,
     projectRoot,
     dryRun: ctx.dryRun,
+    unsafeMode: ctx.unsafeMode,
+    containerMode: ctx.containerMode,
+    maxPhaseBudgetUsd: ctx.maxPhaseBudgetUsd,
   });
 
   const phaseContext = buildPhaseContext(phase, state, handoff, ctx);
@@ -736,6 +748,11 @@ export async function runPhases(
   const phasesFailed: string[] = [];
   const phaseDurations: Record<string, number> = {};
   const phaseTokens: Record<string, UsageStats> = {};
+  let budgetState = createBudgetState();
+  const budgetConfig: BudgetConfig = {
+    maxTokens: ctx.maxRunTokens,
+    maxCostUsd: ctx.maxRunBudgetUsd,
+  };
 
   const projectRoot = ctx.projectRoot;
   warnIfProjectRootSuspect(projectRoot);
@@ -759,6 +776,11 @@ export async function runPhases(
   // Shallow-copy ctx so auto-detected checkCommand doesn't mutate the caller's object
   const localCtx = { ...ctx };
 
+  // Default 30-minute timeout in safe mode when no explicit timeout is set
+  if (!localCtx.unsafeMode && !localCtx.containerMode && !localCtx.timeout) {
+    localCtx.timeout = 30 * 60 * 1000;
+  }
+
   try {
     let phaseIndex = 0;
     while (phaseIndex < mutableTasksJson.phases.length) {
@@ -778,6 +800,15 @@ export async function runPhases(
       console.log(
         `\nStarting phase "${phase.id}" (${taskCount} task${taskCount === 1 ? "" : "s"})…`,
       );
+
+      // Git checkpoint before phase execution
+      const prePhaseChanges = getChangedFiles(projectRoot);
+      if (prePhaseChanges.length > 0) {
+        commitAll(projectRoot, `trellis: checkpoint before phase ${phase.id}`);
+      }
+      const checkpointTimestamp = Math.floor(Date.now() / 1000);
+      const checkpointTag = `trellis/checkpoint/${phase.id}/${checkpointTimestamp}`;
+      createTag(projectRoot, checkpointTag);
 
       // Pre-phase contract review (advisory only)
       if (localCtx.judgeMode !== "never") {
@@ -806,6 +837,16 @@ export async function runPhases(
               costUsd: prev.costUsd + phaseResult.usage.costUsd,
             }
           : { ...phaseResult.usage };
+
+        budgetState = updateBudget(budgetState, phaseResult.usage);
+        const budgetCheck = checkBudget(budgetState, budgetConfig);
+        if (budgetCheck.exceeded) {
+          console.log(`\n${budgetCheck.reason}`);
+          console.log("Halting run.");
+          phasesFailed.push(phase.id);
+          phaseDurations[phase.id] = (phaseDurations[phase.id] ?? 0) + (Date.now() - phaseStartTime);
+          break;
+        }
       }
 
       let report = phaseResult.report;
@@ -836,6 +877,16 @@ export async function runPhases(
           };
         } else {
           phaseTokens[phase.id] = { ...pipeline.subAgentUsage };
+        }
+
+        budgetState = updateBudget(budgetState, pipeline.subAgentUsage);
+        const budgetCheck = checkBudget(budgetState, budgetConfig);
+        if (budgetCheck.exceeded) {
+          console.log(`\n${budgetCheck.reason}`);
+          console.log("Halting run.");
+          phasesFailed.push(phase.id);
+          phaseDurations[phase.id] = (phaseDurations[phase.id] ?? 0) + (Date.now() - phaseStartTime);
+          break;
         }
       }
 
@@ -913,6 +964,7 @@ export async function runPhases(
         console.log(
           `Max retries (${localCtx.maxRetries}) exceeded for phase "${phase.id}". Halting.`,
         );
+        console.log(`  Recovery: git reset --hard ${checkpointTag}`);
         phasesFailed.push(phase.id);
         state = {
           ...state,
@@ -937,6 +989,7 @@ export async function runPhases(
 
       if (action === "halt") {
         phaseDurations[phase.id] = (phaseDurations[phase.id] ?? 0) + (Date.now() - phaseStartTime);
+        console.log(`Phase "${phase.id}" halted. Recovery: git reset --hard ${checkpointTag}`);
         phasesFailed.push(phase.id);
         state = {
           ...state,
@@ -966,6 +1019,14 @@ export async function runPhases(
     logger.close();
   }
 
+  // Checkpoint cleanup hint
+  if (phasesFailed.length === 0 && !localCtx.headless) {
+    console.log(
+      "\nAll phases passed. To clean up checkpoint tags:\n" +
+      "  git tag -l 'trellis/checkpoint/*' | xargs git tag -d",
+    );
+  }
+
   // Tier 2: End-of-build browser acceptance tests (runs once after all phases pass)
   let browserAcceptanceReport: BrowserAcceptanceReport | undefined;
   if (phasesFailed.length === 0) {
@@ -983,6 +1044,8 @@ export async function runPhases(
     totalDuration: Date.now() - runStartTime,
     phaseTokens,
     ...(browserAcceptanceReport ? { browserAcceptanceReport } : {}),
+    budgetState,
+    budgetConfig,
   };
 }
 

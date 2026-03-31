@@ -2,7 +2,6 @@
 name: reporter
 description: Generate phase report from git diff and task context
 model: haiku
-tools: [Read, Write, Glob, Grep, Bash]
 ---
 
 # Reporter Agent

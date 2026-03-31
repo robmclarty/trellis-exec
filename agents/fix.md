@@ -2,7 +2,6 @@
 name: fix
 description: Apply targeted corrections from judge feedback
 model: sonnet
-tools: [Read, Write, Edit, Bash, Glob, Grep]
 ---
 
 # Fix Agent
