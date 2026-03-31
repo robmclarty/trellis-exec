@@ -151,6 +151,48 @@ export function checkDockerAvailable(): boolean {
 }
 
 // ---
+// Image existence check
+// ---
+
+export function checkImageExists(image: string): boolean {
+  try {
+    execSync(`docker image inspect ${image}`, { stdio: "pipe" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// ---
+// Image build
+// ---
+
+/**
+ * Derives the Docker build target from an image tag.
+ * "trellis-exec:slim" → "slim", "trellis-exec:browser" → "browser".
+ * Returns undefined for unrecognised or custom images.
+ */
+export function buildTargetFromImage(image: string): string | undefined {
+  const KNOWN_TARGETS = ["slim", "browser"] as const;
+  const tag = image.split(":")[1];
+  if (tag !== undefined && (KNOWN_TARGETS as readonly string[]).includes(tag)) {
+    return tag;
+  }
+  return undefined;
+}
+
+/**
+ * Builds the Docker image synchronously.
+ * Throws if the build fails.
+ */
+export function buildImage(image: string, target: string, dockerfileDir: string): void {
+  execSync(
+    `docker build --target ${target} -t ${image} -f ${dockerfileDir}/docker/Dockerfile ${dockerfileDir}`,
+    { stdio: "inherit" },
+  );
+}
+
+// ---
 // Container launcher
 // ---
 

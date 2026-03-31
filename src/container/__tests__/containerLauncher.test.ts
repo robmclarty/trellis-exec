@@ -4,6 +4,7 @@ import {
   buildInnerCliArgs,
   checkDockerAvailable,
   buildContainerConfig,
+  buildTargetFromImage,
 } from "../containerLauncher.js";
 import type { ContainerConfig } from "../containerLauncher.js";
 
@@ -282,5 +283,31 @@ describe("checkDockerAvailable", () => {
   it("returns a boolean", () => {
     const result = checkDockerAvailable();
     expect(typeof result).toBe("boolean");
+  });
+});
+
+// ---
+// buildTargetFromImage
+// ---
+
+describe("buildTargetFromImage", () => {
+  it("returns 'slim' for trellis-exec:slim", () => {
+    expect(buildTargetFromImage("trellis-exec:slim")).toBe("slim");
+  });
+
+  it("returns 'browser' for trellis-exec:browser", () => {
+    expect(buildTargetFromImage("trellis-exec:browser")).toBe("browser");
+  });
+
+  it("returns undefined for custom images", () => {
+    expect(buildTargetFromImage("my-org/trellis:custom")).toBeUndefined();
+  });
+
+  it("returns undefined for images without a tag", () => {
+    expect(buildTargetFromImage("trellis-exec")).toBeUndefined();
+  });
+
+  it("returns 'slim' regardless of registry prefix", () => {
+    expect(buildTargetFromImage("ghcr.io/foo:slim")).toBe("slim");
   });
 });

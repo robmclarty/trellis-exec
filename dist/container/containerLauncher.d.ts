@@ -23,6 +23,18 @@ export declare function buildDockerArgs(config: ContainerConfig, env: Record<str
  */
 export declare function buildInnerCliArgs(values: Record<string, string | boolean | undefined>): string[];
 export declare function checkDockerAvailable(): boolean;
+export declare function checkImageExists(image: string): boolean;
+/**
+ * Derives the Docker build target from an image tag.
+ * "trellis-exec:slim" → "slim", "trellis-exec:browser" → "browser".
+ * Returns undefined for unrecognised or custom images.
+ */
+export declare function buildTargetFromImage(image: string): string | undefined;
+/**
+ * Builds the Docker image synchronously.
+ * Throws if the build fails.
+ */
+export declare function buildImage(image: string, target: string, dockerfileDir: string): void;
 /**
  * Launches trellis-exec inside a Docker container and returns the exit code.
  * The host process delegates entirely to the container; stdio is inherited

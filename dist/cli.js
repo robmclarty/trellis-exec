@@ -2,6 +2,8 @@
 import { readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { resolve, dirname, relative } from "node:path";
+import { fileURLToPath } from "node:url";
+import { createInterface } from "node:readline";
 import { parseArgs } from "node:util";
 import { TasksJsonSchema } from "./types/tasks.js";
 import { loadState } from "./runner/stateManager.js";
@@ -12,7 +14,7 @@ import { execClaude, COMPILE_TIMEOUT, LONG_RUN_TIMEOUT } from "./orchestrator/ag
 import { runPhases, runSinglePhase, dryRunReport, } from "./runner/phaseRunner.js";
 import { startSpinner } from "./ui/spinner.js";
 import { formatSummaryReport } from "./ui/summaryReport.js";
-import { checkDockerAvailable, buildInnerCliArgs, buildContainerConfig, launchInContainer, } from "./container/containerLauncher.js";
+import { checkDockerAvailable, checkImageExists, buildTargetFromImage, buildImage, buildInnerCliArgs, buildContainerConfig, launchInContainer, } from "./container/containerLauncher.js";
 // ---------------------------------------------------------------------------
 // Help text
 // ---------------------------------------------------------------------------
@@ -334,13 +336,38 @@ async function handleRun(args) {
                 "Install Docker from: https://docs.docker.com/get-docker/");
             process.exit(1);
         }
+        const containerImage = rawValues["container-image"] ?? "trellis-exec:slim";
+        if (!checkImageExists(containerImage)) {
+            const target = buildTargetFromImage(containerImage);
+            if (target === undefined) {
+                console.error(`Error: Docker image '${containerImage}' not found and is not a built-in target.\n` +
+                    "Build or pull the image manually, or use a built-in image (trellis-exec:slim, trellis-exec:browser).");
+                process.exit(1);
+            }
+            const confirmed = await promptYesNo(`Docker image '${containerImage}' not found. Build it now?`);
+            if (!confirmed) {
+                console.error("Aborted. Build the image manually with:\n" +
+                    `  docker build --target ${target} -t ${containerImage} -f docker/Dockerfile .`);
+                process.exit(1);
+            }
+            const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+            console.log(`\nBuilding ${containerImage}...\n`);
+            try {
+                buildImage(containerImage, target, packageRoot);
+            }
+            catch {
+                console.error(`\nError: Failed to build '${containerImage}'.`);
+                process.exit(1);
+            }
+            console.log(`\nImage '${containerImage}' built successfully.\n`);
+        }
         const containerConfig = buildContainerConfig({
             projectRoot: context.projectRoot,
             tasksJsonPath: context.tasksJsonPath,
             specPath: context.specPath,
             planPath: context.planPath,
             guidelinesPath: context.guidelinesPath,
-            containerImage: rawValues["container-image"] ?? "trellis-exec:slim",
+            containerImage,
             containerNetwork: rawValues["container-network"] ?? "none",
             containerCpus: rawValues["container-cpus"] ?? "4",
             containerMemory: rawValues["container-memory"] ?? "8g",
@@ -503,6 +530,22 @@ async function main() {
             console.log(HELP);
             process.exit(1);
     }
+}
+// ---
+// Prompt helpers
+// ---
+function promptYesNo(question) {
+    if (!process.stdin.isTTY) {
+        return Promise.resolve(false);
+    }
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    return new Promise((resolve) => {
+        rl.question(`${question} [Y/n] `, (answer) => {
+            rl.close();
+            const normalised = answer.trim().toLowerCase();
+            resolve(normalised === "" || normalised === "y" || normalised === "yes");
+        });
+    });
 }
 // Detect whether this module is the entrypoint.  `npx`, `npm link`, and
 // similar runners invoke the bin through symlinks or wrapper shims, so a
