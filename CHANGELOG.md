@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.1
+
+- Implement Docker container mode (Layer 4): `--container` launches `docker run` with the project mounted, re-invoking trellis-exec inside the container with full tool access and OS-level isolation
+- Add container launcher module with pure `buildDockerArgs` and `buildInnerCliArgs` functions
+- Add multi-stage Dockerfile (`slim` ~200MB, `browser` ~1.5GB with Playwright)
+- Add container e2e tests with graceful skip when Docker is unavailable
+- Add `docs/container-mode.md` with full documentation on mounts, networking, resource limits, and troubleshooting
+
 ## 0.8.0
 
 - **BREAKING:** Safe mode is now the default. Agents run with granular permission controls instead of `--dangerously-skip-permissions`. Use `--unsafe` for legacy unrestricted access.
