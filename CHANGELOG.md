@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.3
+
+- Fix duplicate binary name in Docker inner command that caused "Unknown command: trellis-exec" when using `--container`
+- Auto-build Docker image when missing instead of failing with a cryptic pull error
+- Add `docker:slim` and `docker:browser` npm scripts for easier image builds
+
 ## 0.8.2
 
 - Reject plans with phase headings but no task items, falling back to LLM decomposition instead of silently producing empty phases
