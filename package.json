@@ -37,6 +37,8 @@
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
     "test:browser": "vitest run --config vitest.browser.config.ts",
     "typecheck": "tsc --noEmit && tsc --project tsconfig.test.json --noEmit",
+    "docker:slim": "docker build --target slim -t trellis-exec:slim -f docker/Dockerfile .",
+    "docker:browser": "docker build --target browser -t trellis-exec:browser -f docker/Dockerfile .",
     "prepublishOnly": "npm run build"
   },
   "keywords": [

@@ -68,7 +68,7 @@ export function buildDockerArgs(
 
   // Inner command
   const innerCmd: string[] = [
-    "trellis-exec", "run",
+    "run",
     `/tasks/${config.tasksJsonFilename}`,
     "--container-inner",
     "--headless",

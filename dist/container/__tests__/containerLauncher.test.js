@@ -107,9 +107,8 @@ describe("buildDockerArgs", () => {
         // Find the image in the args — everything after it is the inner command
         const imageIdx = args.indexOf("trellis-exec:slim");
         const innerCmd = args.slice(imageIdx + 1);
-        expect(innerCmd[0]).toBe("trellis-exec");
-        expect(innerCmd[1]).toBe("run");
-        expect(innerCmd[2]).toBe("/tasks/tasks.json");
+        expect(innerCmd[0]).toBe("run");
+        expect(innerCmd[1]).toBe("/tasks/tasks.json");
         expect(innerCmd).toContain("--container-inner");
         expect(innerCmd).toContain("--headless");
         expect(innerCmd).toContain("--project-root");
