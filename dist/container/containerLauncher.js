@@ -17,6 +17,10 @@ export function buildDockerArgs(config, env) {
     if (config.guidelinesPath !== undefined) {
         args.push("-v", `${config.guidelinesPath}:/refs/guidelines.md:ro`);
     }
+    // Auth mounts (volume, token, plugins, settings)
+    if (config.authMounts !== undefined) {
+        args.push(...config.authMounts);
+    }
     // Environment variables
     if (env.ANTHROPIC_API_KEY !== undefined) {
         args.push("-e", "ANTHROPIC_API_KEY");
@@ -182,6 +186,7 @@ export function buildContainerConfig(opts) {
         containerCpus: opts.containerCpus,
         containerMemory: opts.containerMemory,
         innerCliArgs: opts.innerCliArgs,
+        authMounts: opts.authMounts,
     };
 }
 //# sourceMappingURL=containerLauncher.js.map

@@ -17,6 +17,7 @@ export type ContainerConfig = {
   containerCpus: string;
   containerMemory: string;
   innerCliArgs: string[];
+  authMounts?: string[] | undefined;
 };
 
 // ---
@@ -40,6 +41,11 @@ export function buildDockerArgs(
   args.push("-v", `${config.planPath}:/refs/plan.md:ro`);
   if (config.guidelinesPath !== undefined) {
     args.push("-v", `${config.guidelinesPath}:/refs/guidelines.md:ro`);
+  }
+
+  // Auth mounts (volume, token, plugins, settings)
+  if (config.authMounts !== undefined) {
+    args.push(...config.authMounts);
   }
 
   // Environment variables
@@ -234,6 +240,7 @@ export function buildContainerConfig(opts: {
   containerCpus: string;
   containerMemory: string;
   innerCliArgs: string[];
+  authMounts?: string[] | undefined;
 }): ContainerConfig {
   return {
     projectRoot: opts.projectRoot,
@@ -247,5 +254,6 @@ export function buildContainerConfig(opts: {
     containerCpus: opts.containerCpus,
     containerMemory: opts.containerMemory,
     innerCliArgs: opts.innerCliArgs,
+    authMounts: opts.authMounts,
   };
 }

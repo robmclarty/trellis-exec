@@ -141,6 +141,30 @@ describe("buildDockerArgs", () => {
         expect(innerCmd).toContain("sonnet");
         expect(innerCmd).toContain("--verbose");
     });
+    it("includes auth mounts when authMounts is provided", () => {
+        const authMounts = [
+            "-v", "test-vol:/home/claude/.claude",
+            "-v", "/tmp/token:/home/claude/.claude.json:ro",
+        ];
+        const config = makeConfig({ authMounts });
+        const args = buildDockerArgs(config, EMPTY_ENV);
+        expect(args).toContain("test-vol:/home/claude/.claude");
+        expect(args).toContain("/tmp/token:/home/claude/.claude.json:ro");
+    });
+    it("omits auth mounts when authMounts is undefined", () => {
+        const args = buildDockerArgs(makeConfig(), EMPTY_ENV);
+        const authMount = args.find((a) => a.includes("/home/claude/.claude"));
+        expect(authMount).toBeUndefined();
+    });
+    it("places auth mounts before env vars and resource limits", () => {
+        const authMounts = ["-v", "test-vol:/home/claude/.claude"];
+        const config = makeConfig({ authMounts });
+        const env = { ANTHROPIC_API_KEY: "sk-123" };
+        const args = buildDockerArgs(config, env);
+        const authIdx = args.indexOf("test-vol:/home/claude/.claude");
+        const envIdx = args.indexOf("ANTHROPIC_API_KEY");
+        expect(authIdx).toBeLessThan(envIdx);
+    });
 });
 // ---
 // buildInnerCliArgs

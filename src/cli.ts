@@ -2,7 +2,8 @@
 
 import { readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { execSync } from "node:child_process";
-import { resolve, dirname, relative } from "node:path";
+import { resolve, dirname, join, relative } from "node:path";
+import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
 import { parseArgs } from "node:util";
@@ -33,6 +34,16 @@ import {
   buildContainerConfig,
   launchInContainer,
 } from "./container/containerLauncher.js";
+import {
+  AUTH_VOLUME_NAME,
+  ensureAuthVolume,
+  cleanAuthVolume,
+  extractAuthToken,
+  generateContainerSettings,
+  buildAuthMounts,
+  runContainerLogin,
+  cleanupTempFile,
+} from "./container/containerAuth.js";
 
 // ---------------------------------------------------------------------------
 // Help text
@@ -44,6 +55,7 @@ Commands:
   run <tasks.json>       Execute phases from a tasks.json file
   compile <plan.md>      Compile a plan.md into tasks.json
   status <tasks.json>    Show execution status
+  login                  Authenticate Claude inside Docker for container mode
   init-safety [root]     Generate reference safety config for interactive use
 
 Run options:
@@ -458,6 +470,21 @@ async function handleRun(args: string[]): Promise<void> {
       console.log(`\nImage '${containerImage}' built successfully.\n`);
     }
 
+    // Prepare auth: volume, token extraction, settings, plugin mounts
+    ensureAuthVolume(AUTH_VOLUME_NAME);
+    cleanAuthVolume(AUTH_VOLUME_NAME, containerImage);
+    const dockerClaudeJsonPath = extractAuthToken(AUTH_VOLUME_NAME, containerImage);
+    const hostClaudeDir = join(homedir(), ".claude");
+    const containerSettingsPath = generateContainerSettings(
+      join(hostClaudeDir, "settings.json"),
+    );
+    const authMounts = buildAuthMounts({
+      authVolumeName: AUTH_VOLUME_NAME,
+      dockerClaudeJsonPath,
+      hostClaudeDir,
+      containerSettingsPath,
+    });
+
     const containerConfig = buildContainerConfig({
       projectRoot: context.projectRoot,
       tasksJsonPath: context.tasksJsonPath,
@@ -469,9 +496,16 @@ async function handleRun(args: string[]): Promise<void> {
       containerCpus: (rawValues["container-cpus"] as string | undefined) ?? "4",
       containerMemory: (rawValues["container-memory"] as string | undefined) ?? "8g",
       innerCliArgs: buildInnerCliArgs(rawValues),
+      authMounts,
     });
-    const exitCode = await launchInContainer(containerConfig);
-    process.exit(exitCode);
+
+    try {
+      const exitCode = await launchInContainer(containerConfig);
+      process.exit(exitCode);
+    } finally {
+      cleanupTempFile(dockerClaudeJsonPath);
+      cleanupTempFile(containerSettingsPath);
+    }
   }
 
   if (!context.dryRun && !checkClaudeAvailable()) {
@@ -645,6 +679,75 @@ function handleStatus(args: string[]): void {
 
 }
 
+async function handleLogin(args: string[]): Promise<void> {
+  if (!checkDockerAvailable()) {
+    console.error(
+      "Error: Docker is required for login but 'docker info' failed.\n" +
+        "Install Docker from: https://docs.docker.com/get-docker/",
+    );
+    process.exit(1);
+  }
+
+  const { values } = parseArgs({
+    args,
+    options: {
+      "container-image": { type: "string" },
+    },
+    allowPositionals: false,
+  });
+
+  const containerImage = (values["container-image"] as string | undefined) ?? "trellis-exec:slim";
+
+  // Check/build image (same pattern as handleRun)
+  if (!checkImageExists(containerImage)) {
+    const target = buildTargetFromImage(containerImage);
+    if (target === undefined) {
+      console.error(
+        `Error: Docker image '${containerImage}' not found and is not a built-in target.\n` +
+          "Build or pull the image manually, or use a built-in image (trellis-exec:slim, trellis-exec:browser).",
+      );
+      process.exit(1);
+    }
+
+    const confirmed = await promptYesNo(
+      `Docker image '${containerImage}' not found. Build it now?`,
+    );
+    if (!confirmed) {
+      console.error("Aborted. Build the image manually with:\n" +
+        `  docker build --target ${target} -t ${containerImage} -f docker/Dockerfile .`);
+      process.exit(1);
+    }
+
+    const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+    console.log(`\nBuilding ${containerImage}...\n`);
+    try {
+      buildImage(containerImage, target, packageRoot);
+    } catch {
+      console.error(`\nError: Failed to build '${containerImage}'.`);
+      process.exit(1);
+    }
+    console.log(`\nImage '${containerImage}' built successfully.\n`);
+  }
+
+  ensureAuthVolume(AUTH_VOLUME_NAME);
+  cleanAuthVolume(AUTH_VOLUME_NAME, containerImage);
+
+  console.log("Opening interactive Claude login inside Docker...");
+  console.log("Complete the OAuth flow in your browser. The session will be");
+  console.log(`stored in the '${AUTH_VOLUME_NAME}' volume and reused for all container runs.\n`);
+
+  const success = runContainerLogin(containerImage, AUTH_VOLUME_NAME);
+  if (success) {
+    console.log("\nLogin complete. You can now run: trellis-exec run <tasks.json> --container");
+  } else {
+    console.error("\nLogin failed or credentials were not saved.");
+    console.error("If permissions are wrong, try:");
+    console.error(`  docker run --rm --user root -v ${AUTH_VOLUME_NAME}:/data --entrypoint sh ${containerImage} -c 'chown -R claude:claude /data'`);
+    console.error("Then re-run: trellis-exec login");
+    process.exit(1);
+  }
+}
+
 async function handleInitSafety(args: string[]): Promise<void> {
   const { scaffoldSafety } = await import("./safety/scaffoldSafety.js");
   const projectRoot = resolve(args[0] ?? ".");
@@ -673,6 +776,9 @@ async function main(): Promise<void> {
       break;
     case "status":
       handleStatus(rest);
+      break;
+    case "login":
+      await handleLogin(rest);
       break;
     case "init-safety":
       await handleInitSafety(rest);

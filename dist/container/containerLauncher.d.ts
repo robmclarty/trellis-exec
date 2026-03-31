@@ -10,6 +10,7 @@ export type ContainerConfig = {
     containerCpus: string;
     containerMemory: string;
     innerCliArgs: string[];
+    authMounts?: string[] | undefined;
 };
 /**
  * Builds the `docker run` argument list from a ContainerConfig.
@@ -56,5 +57,6 @@ export declare function buildContainerConfig(opts: {
     containerCpus: string;
     containerMemory: string;
     innerCliArgs: string[];
+    authMounts?: string[] | undefined;
 }): ContainerConfig;
 //# sourceMappingURL=containerLauncher.d.ts.map

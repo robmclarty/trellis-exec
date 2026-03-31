@@ -28,6 +28,11 @@ COPY dist/ dist/
 COPY agents/ agents/
 RUN npm link
 
+RUN useradd -m -s /bin/bash claude \
+  && mkdir -p /home/claude/.claude \
+  && chown claude:claude /home/claude/.claude
+USER claude
+
 WORKDIR /workspace
 ENTRYPOINT ["trellis-exec"]
 
@@ -44,6 +49,11 @@ RUN npm ci --omit=dev
 COPY dist/ dist/
 COPY agents/ agents/
 RUN npm link
+
+RUN useradd -m -s /bin/bash claude \
+  && mkdir -p /home/claude/.claude \
+  && chown claude:claude /home/claude/.claude
+USER claude
 
 WORKDIR /workspace
 ENTRYPOINT ["trellis-exec"]
