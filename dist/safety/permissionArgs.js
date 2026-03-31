@@ -62,7 +62,7 @@ export function buildPermissionArgs(config) {
         ];
     }
     // Container mode: full access for worker agents.
-    // The container (network=none, bind-mount, resource limits) is the boundary.
+    // The container (bind-mount, resource limits) is the boundary.
     // --bare skips hooks/LSP/plugins/CLAUDE.md for faster startup.
     if (containerMode) {
         return ["--dangerously-skip-permissions", "--bare", ...budgetArgs];

@@ -76,7 +76,7 @@ Safety options:
 
 Container options:
   --container            Run inside Docker with OS-level isolation
-  --container-network <mode>  Docker network mode (default: none)
+  --container-network <mode>  Docker network mode (default: bridge)
   --container-cpus <n>        CPU limit (default: 4)
   --container-memory <size>   Memory limit (default: 8g)
   --container-image <image>   Custom Docker image
@@ -465,7 +465,7 @@ async function handleRun(args: string[]): Promise<void> {
       planPath: context.planPath,
       guidelinesPath: context.guidelinesPath,
       containerImage,
-      containerNetwork: (rawValues["container-network"] as string | undefined) ?? "none",
+      containerNetwork: (rawValues["container-network"] as string | undefined) ?? "bridge",
       containerCpus: (rawValues["container-cpus"] as string | undefined) ?? "4",
       containerMemory: (rawValues["container-memory"] as string | undefined) ?? "8g",
       innerCliArgs: buildInnerCliArgs(rawValues),

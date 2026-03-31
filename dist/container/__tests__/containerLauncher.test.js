@@ -12,7 +12,7 @@ function makeConfig(overrides) {
         planPath: "/home/user/specs/plan.md",
         guidelinesPath: undefined,
         containerImage: "trellis-exec:slim",
-        containerNetwork: "none",
+        containerNetwork: "bridge",
         containerCpus: "4",
         containerMemory: "8g",
         innerCliArgs: [],
@@ -29,7 +29,7 @@ describe("buildDockerArgs", () => {
         expect(args[0]).toBe("run");
         expect(args[1]).toBe("--rm");
         expect(args).toContain("--network");
-        expect(args[args.indexOf("--network") + 1]).toBe("none");
+        expect(args[args.indexOf("--network") + 1]).toBe("bridge");
         expect(args).toContain("--cpus");
         expect(args[args.indexOf("--cpus") + 1]).toBe("4");
         expect(args).toContain("--memory");
@@ -226,7 +226,7 @@ describe("buildContainerConfig", () => {
             specPath: "/specs/spec.md",
             planPath: "/specs/plan.md",
             containerImage: "trellis-exec:slim",
-            containerNetwork: "none",
+            containerNetwork: "bridge",
             containerCpus: "4",
             containerMemory: "8g",
             innerCliArgs: [],
