@@ -142,40 +142,32 @@ Run Budget: $4.23 / $10.00 (42.3%)
 
 ## Layer 4: Docker Container Mode
 
-Container mode runs the entire trellis-exec pipeline inside a single Docker container, providing OS-level isolation as the security boundary.
-
-### How it works
+Container mode runs the entire trellis-exec pipeline inside a single Docker container, providing OS-level isolation as the security boundary. The host process launches `docker run` with the project mounted at `/workspace`; the inner process runs `--container-inner` with full tool access since the container itself enforces the boundary.
 
 ```bash
 trellis-exec run tasks.json --container
 ```
 
-This:
+For full details on the two-process architecture, mount strategy, network isolation, resource limits, image variants, and troubleshooting, see [container-mode.md](container-mode.md).
 
-1. Checks Docker availability
-2. Selects image variant: `slim` (~200MB) by default, `browser` (~1.5GB) if browser testing is enabled
-3. Launches `docker run` with the project mounted at `/workspace`
-4. The inner trellis-exec process runs with `--container-inner`, which enables `containerMode` and gives worker agents full tool access
-5. Role-constrained agents (judge, reporter) remain read-only inside the container
-
-### Container configuration
+### Quick reference
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--container-network <mode>` | `none` | Docker network mode (`none` = no network) |
 | `--container-cpus <n>` | `4` | CPU limit |
 | `--container-memory <size>` | `8g` | Memory limit |
-| `--container-image <image>` | auto-built | Use a custom Docker image |
+| `--container-image <image>` | `trellis-exec:slim` | Custom Docker image |
 
 ### Bind mounts
 
 | Host path | Container path | Mode |
 |-----------|---------------|------|
 | Project root | `/workspace` | read-write |
-| tasks.json | `/inputs/tasks.json` | read-only |
-| spec.md | `/inputs/spec.md` | read-only |
-| plan.md | `/inputs/plan.md` | read-only |
-| guidelines.md | `/inputs/guidelines.md` | read-only (if exists) |
+| tasks.json dir | `/tasks` | read-write |
+| spec.md | `/refs/spec.md` | read-only |
+| plan.md | `/refs/plan.md` | read-only |
+| guidelines.md | `/refs/guidelines.md` | read-only (if exists) |
 
 Git checkpoints work identically inside the container since the same `.git` directory is mounted.
 

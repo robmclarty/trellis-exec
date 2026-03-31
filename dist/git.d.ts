@@ -42,4 +42,9 @@ export declare function ensureInitialCommit(cwd: string): string;
  * Returns the new commit SHA, or null if there was nothing to commit.
  */
 export declare function commitAll(cwd: string, message: string): string | null;
+/**
+ * Creates a lightweight git tag. Returns true on success, false on failure
+ * (e.g. tag already exists or not a git repo).
+ */
+export declare function createTag(cwd: string, tagName: string): boolean;
 //# sourceMappingURL=git.d.ts.map

@@ -2,6 +2,7 @@ import type { TasksJson, Phase } from "../types/tasks.js";
 import type { SharedState, PhaseReport, CheckResult } from "../types/state.js";
 import type { RunContext } from "../types/runner.js";
 import type { UsageStats } from "../ui/streamParser.js";
+import type { BudgetConfig, BudgetState } from "../safety/budgetTracker.js";
 import type { BrowserAcceptanceReport } from "../types/state.js";
 export type PhaseRunnerResult = {
     success: boolean;
@@ -12,6 +13,8 @@ export type PhaseRunnerResult = {
     totalDuration: number;
     browserAcceptanceReport?: BrowserAcceptanceReport;
     phaseTokens: Record<string, UsageStats>;
+    budgetState?: BudgetState;
+    budgetConfig?: BudgetConfig;
 };
 /**
  * Lightweight pre-phase contract review. Checks acceptance criteria for

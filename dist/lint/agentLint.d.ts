@@ -13,9 +13,9 @@ export declare const AgentFrontmatterSchema: z.ZodObject<{
     model: z.ZodOptional<z.ZodString>;
     permissionMode: z.ZodOptional<z.ZodEnum<{
         default: "default";
+        dontAsk: "dontAsk";
         plan: "plan";
         acceptEdits: "acceptEdits";
-        dontAsk: "dontAsk";
         bypassPermissions: "bypassPermissions";
     }>>;
     maxTurns: z.ZodOptional<z.ZodNumber>;

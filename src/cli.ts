@@ -22,6 +22,13 @@ import { formatSummaryReport } from "./ui/summaryReport.js";
 import type { RunContext } from "./types/runner.js";
 export type { RunContext } from "./types/runner.js";
 
+import {
+  checkDockerAvailable,
+  buildInnerCliArgs,
+  buildContainerConfig,
+  launchInContainer,
+} from "./container/containerLauncher.js";
+
 // ---------------------------------------------------------------------------
 // Help text
 // ---------------------------------------------------------------------------
@@ -115,7 +122,7 @@ function loadAndValidateTasksJson(tasksJsonPath: string): TasksJson {
 export function buildRunContext(
   args: string[],
   env: Record<string, string | undefined> = process.env,
-): { context: RunContext; tasksJson: TasksJson; phaseId?: string } {
+): { context: RunContext; tasksJson: TasksJson; phaseId?: string; rawValues: Record<string, string | boolean | undefined> } {
   const { values, positionals } = parseArgs({
     args,
     options: {
@@ -298,6 +305,7 @@ export function buildRunContext(
     context,
     tasksJson,
     ...(values.phase !== undefined ? { phaseId: values.phase } : {}),
+    rawValues: values as Record<string, string | boolean | undefined>,
   };
 }
 
@@ -399,7 +407,34 @@ export function checkClaudeAvailable(): boolean {
 // ---------------------------------------------------------------------------
 
 async function handleRun(args: string[]): Promise<void> {
-  const { context, tasksJson, phaseId } = buildRunContext(args);
+  const { context, tasksJson, phaseId, rawValues } = buildRunContext(args);
+
+  // Container dispatch: short-circuit before phase loop — the host process
+  // delegates entirely to `docker run` which re-invokes trellis-exec inside
+  // the container with --container-inner.
+  if (rawValues.container && !rawValues["container-inner"]) {
+    if (!checkDockerAvailable()) {
+      console.error(
+        "Error: Docker is required for --container but 'docker info' failed.\n" +
+          "Install Docker from: https://docs.docker.com/get-docker/",
+      );
+      process.exit(1);
+    }
+    const containerConfig = buildContainerConfig({
+      projectRoot: context.projectRoot,
+      tasksJsonPath: context.tasksJsonPath,
+      specPath: context.specPath,
+      planPath: context.planPath,
+      guidelinesPath: context.guidelinesPath,
+      containerImage: (rawValues["container-image"] as string | undefined) ?? "trellis-exec:slim",
+      containerNetwork: (rawValues["container-network"] as string | undefined) ?? "none",
+      containerCpus: (rawValues["container-cpus"] as string | undefined) ?? "4",
+      containerMemory: (rawValues["container-memory"] as string | undefined) ?? "8g",
+      innerCliArgs: buildInnerCliArgs(rawValues),
+    });
+    const exitCode = await launchInContainer(containerConfig);
+    process.exit(exitCode);
+  }
 
   if (!context.dryRun && !checkClaudeAvailable()) {
     console.error(

@@ -147,4 +147,17 @@ export function commitAll(cwd, message) {
         return null;
     }
 }
+/**
+ * Creates a lightweight git tag. Returns true on success, false on failure
+ * (e.g. tag already exists or not a git repo).
+ */
+export function createTag(cwd, tagName) {
+    try {
+        execFileSync("git", ["tag", tagName], { cwd, encoding: "utf-8", stdio: "pipe" });
+        return true;
+    }
+    catch {
+        return false;
+    }
+}
 //# sourceMappingURL=git.js.map

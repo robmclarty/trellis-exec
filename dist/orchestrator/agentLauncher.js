@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { resolve } from "node:path";
 import { extractResultText, extractUsage } from "../ui/streamParser.js";
+import { buildPermissionArgs, isReadOnlyAgent } from "../safety/permissionArgs.js";
 const DEFAULT_TIMEOUT = 300_000; // 5 minutes for sub-agent execution
 const ORCHESTRATOR_TIMEOUT = 1_800_000; // 30 minutes for phase orchestration
 export const COMPILE_TIMEOUT = 600_000; // 10 minutes for plan decomposition
@@ -56,16 +57,22 @@ export function execClaude(args, cwd, options = {}) {
  * - **dryRun**: logs commands without executing, returns mock results
  */
 export function createAgentLauncher(config) {
-    const { pluginRoot, projectRoot, dryRun } = config;
+    const { pluginRoot, projectRoot, dryRun, unsafeMode, containerMode, maxPhaseBudgetUsd } = config;
     async function dispatchSubAgent(subAgentConfig) {
         const agentFile = resolve(pluginRoot, "agents", subAgentConfig.type + ".md");
         const model = subAgentConfig.model ?? "opus";
+        const permissionArgs = buildPermissionArgs({
+            unsafeMode,
+            containerMode,
+            readOnly: isReadOnlyAgent(subAgentConfig.type),
+            maxBudgetUsd: maxPhaseBudgetUsd,
+        });
         const args = [
             "--agent",
             agentFile,
             "--output-format", "stream-json",
             "--verbose",
-            "--dangerously-skip-permissions",
+            ...permissionArgs,
             "--model",
             model,
         ];
@@ -128,11 +135,17 @@ export function createAgentLauncher(config) {
         };
     }
     async function runPhaseOrchestrator(prompt, agentFile, model, options) {
+        const permissionArgs = buildPermissionArgs({
+            unsafeMode,
+            containerMode,
+            readOnly: false,
+            maxBudgetUsd: maxPhaseBudgetUsd,
+        });
         const args = [
             "--agent",
             agentFile,
             "--output-format", "stream-json",
-            "--dangerously-skip-permissions",
+            ...permissionArgs,
             ...(model ? ["--model", model] : []),
             ...(options?.verbose ? ["--verbose"] : []),
         ];

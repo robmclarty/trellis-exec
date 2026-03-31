@@ -6,6 +6,7 @@ export declare function buildRunContext(args: string[], env?: Record<string, str
     context: RunContext;
     tasksJson: TasksJson;
     phaseId?: string;
+    rawValues: Record<string, string | boolean | undefined>;
 };
 export declare function parseCompileArgs(args: string[]): {
     planPath: string;

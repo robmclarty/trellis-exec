@@ -25,6 +25,7 @@ vi.mock("../git.js", () => ({
     ensureInitialCommit: vi.fn(() => "abc123"),
     commitAll: vi.fn(() => null),
     getGitRoot: vi.fn(() => null),
+    createTag: vi.fn(() => true),
 }));
 // Import modules under test AFTER vi.mock declarations
 import { parsePlan } from "../compile/planParser.js";

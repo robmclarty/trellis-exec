@@ -9,7 +9,10 @@ export type ExecClaudeResult = {
 export type AgentLauncherConfig = {
     pluginRoot: string;
     projectRoot: string;
-    dryRun?: boolean;
+    dryRun?: boolean | undefined;
+    unsafeMode?: boolean | undefined;
+    containerMode?: boolean | undefined;
+    maxPhaseBudgetUsd?: number | undefined;
 };
 export type OrchestratorOptions = {
     /** Stream NDJSON events via --output-format stream-json */

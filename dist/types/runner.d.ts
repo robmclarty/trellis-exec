@@ -17,6 +17,11 @@ export type RunContext = {
     timeout?: number;
     judgeMode: "always" | "on-failure" | "never";
     judgeModel?: string;
+    unsafeMode?: boolean;
+    containerMode?: boolean;
+    maxPhaseBudgetUsd?: number;
+    maxRunBudgetUsd?: number;
+    maxRunTokens?: number;
     devServerCommand?: string;
     saveE2eTests: boolean;
     browserTestRetries: number;

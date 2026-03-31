@@ -12,6 +12,7 @@ import { execClaude, COMPILE_TIMEOUT, LONG_RUN_TIMEOUT } from "./orchestrator/ag
 import { runPhases, runSinglePhase, dryRunReport, } from "./runner/phaseRunner.js";
 import { startSpinner } from "./ui/spinner.js";
 import { formatSummaryReport } from "./ui/summaryReport.js";
+import { checkDockerAvailable, buildInnerCliArgs, buildContainerConfig, launchInContainer, } from "./container/containerLauncher.js";
 // ---------------------------------------------------------------------------
 // Help text
 // ---------------------------------------------------------------------------
@@ -21,6 +22,7 @@ Commands:
   run <tasks.json>       Execute phases from a tasks.json file
   compile <plan.md>      Compile a plan.md into tasks.json
   status <tasks.json>    Show execution status
+  init-safety [root]     Generate reference safety config for interactive use
 
 Run options:
   --phase <id>           Run a specific phase only
@@ -44,6 +46,19 @@ Run options:
   --save-e2e-tests       Save generated acceptance tests to project
   --browser-test-retries <n>  Max retries for browser acceptance (default: 3)
 
+Safety options:
+  --unsafe               Legacy: skip all permission restrictions
+  --max-phase-budget <usd>    Per-phase USD spending cap
+  --max-run-budget <usd>      Cumulative USD cap across the run
+  --max-run-tokens <n>        Cumulative token cap across the run
+
+Container options:
+  --container            Run inside Docker with OS-level isolation
+  --container-network <mode>  Docker network mode (default: none)
+  --container-cpus <n>        CPU limit (default: 4)
+  --container-memory <size>   Memory limit (default: 8g)
+  --container-image <image>   Custom Docker image
+
 Compile options:
   --spec <spec.md>       Path to the spec (required)
   --guidelines <path>    Path to project guidelines (optional)
@@ -61,6 +76,11 @@ Environment variables:
   TRELLIS_EXEC_LONG_RUN             Enable long-run mode (2-hour timeout)
   TRELLIS_EXEC_DEV_SERVER           Dev server start command
   TRELLIS_EXEC_BROWSER_TEST_RETRIES Max browser acceptance retries
+  TRELLIS_EXEC_UNSAFE               Enable unsafe mode
+  TRELLIS_EXEC_CONTAINER            Enable container mode
+  TRELLIS_EXEC_MAX_PHASE_BUDGET     Per-phase USD spending cap
+  TRELLIS_EXEC_MAX_RUN_BUDGET       Cumulative USD cap across the run
+  TRELLIS_EXEC_MAX_RUN_TOKENS       Cumulative token cap across the run
 `;
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -101,6 +121,16 @@ export function buildRunContext(args, env = process.env) {
             "dev-server": { type: "string" },
             "save-e2e-tests": { type: "boolean", default: false },
             "browser-test-retries": { type: "string" },
+            unsafe: { type: "boolean", default: false },
+            container: { type: "boolean", default: false },
+            "container-inner": { type: "boolean", default: false },
+            "container-network": { type: "string" },
+            "container-cpus": { type: "string" },
+            "container-memory": { type: "string" },
+            "container-image": { type: "string" },
+            "max-phase-budget": { type: "string" },
+            "max-run-budget": { type: "string" },
+            "max-run-tokens": { type: "string" },
         },
         allowPositionals: true,
     });
@@ -167,6 +197,20 @@ export function buildRunContext(args, env = process.env) {
     const browserTestRetries = (values["browser-test-retries"] !== undefined ? Number(values["browser-test-retries"]) : undefined) ??
         (env.TRELLIS_EXEC_BROWSER_TEST_RETRIES !== undefined ? Number(env.TRELLIS_EXEC_BROWSER_TEST_RETRIES) : undefined) ??
         3;
+    // Safety / permission mode
+    const unsafeMode = values.unsafe || values["container-inner"] ||
+        env.TRELLIS_EXEC_UNSAFE === "true" || env.TRELLIS_EXEC_UNSAFE === "1";
+    const containerMode = values["container-inner"] ||
+        env.TRELLIS_EXEC_CONTAINER === "true" || env.TRELLIS_EXEC_CONTAINER === "1";
+    const parseOptionalNumber = (v) => {
+        if (v === undefined)
+            return undefined;
+        const n = Number(v);
+        return isNaN(n) ? undefined : n;
+    };
+    const maxPhaseBudgetUsd = parseOptionalNumber(values["max-phase-budget"] ?? env.TRELLIS_EXEC_MAX_PHASE_BUDGET);
+    const maxRunBudgetUsd = parseOptionalNumber(values["max-run-budget"] ?? env.TRELLIS_EXEC_MAX_RUN_BUDGET);
+    const maxRunTokens = parseOptionalNumber(values["max-run-tokens"] ?? env.TRELLIS_EXEC_MAX_RUN_TOKENS);
     const context = {
         projectRoot,
         specPath,
@@ -189,6 +233,11 @@ export function buildRunContext(args, env = process.env) {
         ...(devServerCommand !== undefined ? { devServerCommand } : {}),
         saveE2eTests: values["save-e2e-tests"] ?? false,
         browserTestRetries,
+        ...(unsafeMode ? { unsafeMode } : {}),
+        ...(containerMode ? { containerMode } : {}),
+        ...(maxPhaseBudgetUsd !== undefined ? { maxPhaseBudgetUsd } : {}),
+        ...(maxRunBudgetUsd !== undefined ? { maxRunBudgetUsd } : {}),
+        ...(maxRunTokens !== undefined ? { maxRunTokens } : {}),
         // Pre-read spec/guidelines content once to avoid repeated disk I/O during prompt building
         specContent: readFileSync(specPath, "utf-8"),
         ...(guidelinesPath !== undefined ? { guidelinesContent: readFileSync(guidelinesPath, "utf-8") } : {}),
@@ -197,6 +246,7 @@ export function buildRunContext(args, env = process.env) {
         context,
         tasksJson,
         ...(values.phase !== undefined ? { phaseId: values.phase } : {}),
+        rawValues: values,
     };
 }
 // ---------------------------------------------------------------------------
@@ -274,7 +324,31 @@ export function checkClaudeAvailable() {
 // Subcommand handlers
 // ---------------------------------------------------------------------------
 async function handleRun(args) {
-    const { context, tasksJson, phaseId } = buildRunContext(args);
+    const { context, tasksJson, phaseId, rawValues } = buildRunContext(args);
+    // Container dispatch: short-circuit before phase loop — the host process
+    // delegates entirely to `docker run` which re-invokes trellis-exec inside
+    // the container with --container-inner.
+    if (rawValues.container && !rawValues["container-inner"]) {
+        if (!checkDockerAvailable()) {
+            console.error("Error: Docker is required for --container but 'docker info' failed.\n" +
+                "Install Docker from: https://docs.docker.com/get-docker/");
+            process.exit(1);
+        }
+        const containerConfig = buildContainerConfig({
+            projectRoot: context.projectRoot,
+            tasksJsonPath: context.tasksJsonPath,
+            specPath: context.specPath,
+            planPath: context.planPath,
+            guidelinesPath: context.guidelinesPath,
+            containerImage: rawValues["container-image"] ?? "trellis-exec:slim",
+            containerNetwork: rawValues["container-network"] ?? "none",
+            containerCpus: rawValues["container-cpus"] ?? "4",
+            containerMemory: rawValues["container-memory"] ?? "8g",
+            innerCliArgs: buildInnerCliArgs(rawValues),
+        });
+        const exitCode = await launchInContainer(containerConfig);
+        process.exit(exitCode);
+    }
     if (!context.dryRun && !checkClaudeAvailable()) {
         console.error("Error: Claude Code CLI is required but not found on PATH.\n" +
             "Install it from: https://docs.anthropic.com/en/docs/claude-code");
@@ -395,6 +469,11 @@ function handleStatus(args) {
         }
     }
 }
+async function handleInitSafety(args) {
+    const { scaffoldSafety } = await import("./safety/scaffoldSafety.js");
+    const projectRoot = resolve(args[0] ?? ".");
+    scaffoldSafety(projectRoot);
+}
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -415,6 +494,9 @@ async function main() {
             break;
         case "status":
             handleStatus(rest);
+            break;
+        case "init-safety":
+            await handleInitSafety(rest);
             break;
         default:
             console.error(`Unknown command: ${subcommand}\n`);

@@ -80,6 +80,9 @@ export async function runEndOfBuildAcceptance(ctx, tasksJson, projectRoot) {
         const launcher = createAgentLauncher({
             pluginRoot: ctx.pluginRoot,
             projectRoot,
+            unsafeMode: ctx.unsafeMode,
+            containerMode: ctx.containerMode,
+            maxPhaseBudgetUsd: ctx.maxPhaseBudgetUsd,
         });
         const report = await runBrowserAcceptance({
             specPath: ctx.specPath,

@@ -132,7 +132,7 @@ trellis-exec run tasks.json --max-phase-budget 5.00 --max-run-budget 25.00
 trellis-exec run tasks.json --max-run-tokens 5000000
 ```
 
-For full details, see [docs/safe-mode.md](docs/safe-mode.md).
+For full details, see [docs/safe-mode.md](docs/safe-mode.md). For container mode specifics (Docker image variants, mount strategy, resource limits, troubleshooting), see [docs/container-mode.md](docs/container-mode.md).
 
 ## Architecture
 

@@ -41,6 +41,9 @@ export async function judgePhase(config) {
         pluginRoot: ctx.pluginRoot,
         projectRoot,
         dryRun: ctx.dryRun,
+        unsafeMode: ctx.unsafeMode,
+        containerMode: ctx.containerMode,
+        maxPhaseBudgetUsd: ctx.maxPhaseBudgetUsd,
     });
     let assessment = { passed: true, issues: [], suggestions: [], corrections: [] };
     let previousIssues;
