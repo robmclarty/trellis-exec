@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.4
+
+- Fix container mode default network: change from `none` to `bridge` so the Claude CLI can reach the Anthropic API
+
 ## 0.8.3
 
 - Fix duplicate binary name in Docker inner command that caused "Unknown command: trellis-exec" when using `--container`
