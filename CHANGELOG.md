@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.8.0
+
+- **BREAKING:** Safe mode is now the default. Agents run with granular permission controls instead of `--dangerously-skip-permissions`. Use `--unsafe` for legacy unrestricted access.
+- Add permission controls: `buildPermissionArgs()` with safe, unsafe, and container modes. Judge and reporter agents are read-only in all modes.
+- Add git checkpoints: automatic commit + tag before each phase for recovery on failure
+- Add budget enforcement: per-phase cap via `--max-phase-budget` and cumulative run-level caps via `--max-run-budget` and `--max-run-tokens`
+- Add container mode plumbing (`--container` flag and related options) for Docker-based isolation
+- Add `init-safety` subcommand to generate reference safety config for interactive Claude Code sessions
+- Strip `tools:` from all agent frontmatter; tool permissions are now controlled entirely by the execution mode via CLI flags
+- Add default 30-minute phase timeout in safe mode when no explicit timeout is set
+- Display budget usage in summary report when limits are configured
+
 ## 0.7.21
 
 - Fix browser acceptance tester output parsing when CLI returns content block arrays instead of plain strings

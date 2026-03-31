@@ -1,6 +1,6 @@
 {
   "name": "trellis-exec",
-  "version": "0.7.21",
+  "version": "0.8.0",
   "description": "Implementation executor. Runs phased task plans with sub-agent dispatch, verification, and iterative refinement.",
   "license": "MIT",
   "author": {
