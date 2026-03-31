@@ -394,6 +394,17 @@ export function parsePlan(planContent, specRef, planRef, projectRoot) {
             ],
         };
     }
+    const totalTasks = rawPhases.reduce((sum, p) => sum + p.rawTasks.length, 0);
+    if (totalTasks === 0) {
+        return {
+            success: false,
+            tasksJson: null,
+            enrichmentNeeded: [],
+            errors: [
+                "Found phase boundaries but no task items. Tasks must be formatted as list items (\"- \" or \"1. \"). Falling back to LLM decomposition.",
+            ],
+        };
+    }
     const { tasksJson, enrichmentNeeded } = buildTasksJson(rawPhases, specRef, planRef, projectRoot);
     return {
         success: true,

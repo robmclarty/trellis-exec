@@ -143,7 +143,7 @@ Some more paragraphs here and there.
     expect(result.errors.length).toBeGreaterThan(0);
   });
 
-  it("handles document with headings but no tasks", () => {
+  it("fails when phases exist but contain no task items", () => {
     const content = `## Phase 1: Setup
 
 Some description text but no list items.
@@ -154,10 +154,9 @@ More text without any tasks.
 `;
     const result = parsePlan(content, SPEC_REF, PLAN_REF);
 
-    expect(result.success).toBe(true);
-    expect(result.tasksJson!.phases).toHaveLength(2);
-    expect(result.tasksJson!.phases[0]!.tasks).toHaveLength(0);
-    expect(result.tasksJson!.phases[1]!.tasks).toHaveLength(0);
+    expect(result.success).toBe(false);
+    expect(result.tasksJson).toBeNull();
+    expect(result.errors[0]).toMatch(/no task items/i);
   });
 
   it("extracts acceptance criteria from checkboxes and labels", () => {
